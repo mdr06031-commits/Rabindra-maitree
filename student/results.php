@@ -1,0 +1,187 @@
+<?php
+/**
+ * Student Portal - Academic Results & Official Grade Sheet
+ */
+$portalTitle = 'Academic Results & Grade Sheet';
+require_once __DIR__ . '/includes/student-header.php';
+
+$db = getDb();
+$studentId = $student['id'];
+
+// Retrieve all results grouped by semester
+$stmt = $db->prepare("
+  SELECT * FROM student_results 
+  WHERE student_id = ? 
+  ORDER BY id ASC
+");
+$stmt->execute([$studentId]);
+$allResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Group results by semester
+$semesters = [];
+foreach ($allResults as $r) {
+    $semesters[$r['semester']][] = $r;
+}
+?>
+
+<div class="sp-main-container">
+
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1.5rem; padding-bottom:1rem; border-bottom:1px solid #e2e8f0;" class="no-print">
+    <div>
+      <h2 style="margin:0 0 0.3rem; font-size:1.45rem; font-weight:700; color:#0f172a;">
+        <i class="fas fa-file-invoice" style="color:var(--sp-primary);"></i> Academic Results &amp; Grade Transcript
+      </h2>
+      <p style="margin:0; font-size:0.88rem; color:#64748b;">
+        Official Semester Final Results • Cumulative GPA: <strong><?= number_format((float)$student['cgpa'], 2) ?></strong>
+      </p>
+    </div>
+
+    <div>
+      <button type="button" onclick="window.print()" class="sp-btn-back-website" style="background:#1e73be; color:#fff; border-color:#1e73be; cursor:pointer;">
+        <i class="fas fa-print"></i> Print Official Grade Sheet
+      </button>
+    </div>
+  </div>
+
+  <!-- Official Transcript Document Box (Printable) -->
+  <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:2.5rem; box-shadow:0 4px 15px rgba(0,0,0,0.04); margin-bottom:2.5rem;" id="printableTranscript">
+    
+    <!-- University Seal Header -->
+    <div style="text-align:center; padding-bottom:1.5rem; margin-bottom:1.5rem; border-bottom:2px solid #0f172a;">
+      <img src="<?= APP_URL ?>/assets/images/logo.jpg" alt="RMU Monogram" style="width:65px; height:65px; border-radius:8px; margin-bottom:0.5rem;" onerror="this.src='<?= APP_URL ?>/assets/images/logo.svg'">
+      <h1 style="margin:0 0 0.2rem; font-size:1.5rem; font-weight:800; color:#0f172a; text-transform:uppercase; letter-spacing:0.5px;">Rabindra Maitree University</h1>
+      <div style="font-size:0.85rem; color:#475569; font-weight:500;">Kushtia, Bangladesh • Approved by UGC &amp; Govt. of Bangladesh</div>
+      <div style="display:inline-block; margin-top:0.6rem; padding:4px 16px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:20px; font-weight:700; font-size:0.9rem; color:#1e73be; text-transform:uppercase;">
+        OFFICIAL ACADEMIC TRANSCRIPT &amp; GRADE RECORD
+      </div>
+    </div>
+
+    <!-- Student Information Block -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1.25rem; margin-bottom:2rem; font-size:0.88rem;">
+      <div>
+        <div><span style="color:#64748b;">Student Name:</span> <strong><?= e($student['full_name']) ?></strong></div>
+        <div style="margin-top:4px;"><span style="color:#64748b;">Student ID:</span> <strong style="font-family:monospace; color:var(--sp-primary);"><?= e($student['student_id']) ?></strong></div>
+        <div style="margin-top:4px;"><span style="color:#64748b;">Program:</span> <strong><?= e($student['program_name']) ?></strong></div>
+      </div>
+      <div>
+        <div><span style="color:#64748b;">Academic Department:</span> <strong><?= e($student['department_name']) ?></strong></div>
+        <div style="margin-top:4px;"><span style="color:#64748b;">Batch &amp; Session:</span> <strong><?= e($student['batch']) ?></strong></div>
+        <div style="margin-top:4px;"><span style="color:#64748b;">Cumulative CGPA:</span> <strong style="color:#16a34a; font-size:1.05rem;"><?= number_format((float)$student['cgpa'], 2) ?></strong> / 4.00</div>
+      </div>
+    </div>
+
+    <!-- Semester-wise Tables -->
+    <?php if (empty($semesters)): ?>
+      <p style="text-align:center; padding:2rem; color:#64748b;">No published semester results yet.</p>
+    <?php else: ?>
+      <?php foreach ($semesters as $semTitle => $results): ?>
+        <?php 
+          $semCredits = array_sum(array_column($results, 'credit'));
+          $totalWeightedPoints = 0;
+          foreach ($results as $res) {
+              $totalWeightedPoints += ($res['credit'] * $res['grade_point']);
+          }
+          $sgpa = ($semCredits > 0) ? ($totalWeightedPoints / $semCredits) : 0;
+        ?>
+        <div style="margin-bottom:2rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:#1e73be; color:#ffffff; padding:0.6rem 1rem; border-radius:6px 6px 0 0; font-size:0.9rem; font-weight:700;">
+            <span><i class="fas fa-calendar-check"></i> <?= e($semTitle) ?></span>
+            <span>Semester GPA (SGPA): <?= number_format($sgpa, 2) ?></span>
+          </div>
+
+          <table class="sp-table" style="border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px;">
+            <thead>
+              <tr>
+                <th style="width:110px;">Course Code</th>
+                <th>Course Title</th>
+                <th style="width:80px; text-align:center;">Credit</th>
+                <th style="width:100px; text-align:center;">Letter Grade</th>
+                <th style="width:100px; text-align:center;">Grade Point</th>
+                <th style="width:90px; text-align:center;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($results as $r): ?>
+                <tr>
+                  <td style="font-family:monospace; font-weight:700; color:#1e293b;"><?= e($r['course_code']) ?></td>
+                  <td><?= e($r['course_name']) ?></td>
+                  <td style="text-align:center;"><?= number_format((float)$r['credit'], 1) ?></td>
+                  <td style="text-align:center;"><strong style="color:var(--sp-primary); font-size:0.95rem;"><?= e($r['letter_grade']) ?></strong></td>
+                  <td style="text-align:center;"><?= number_format((float)$r['grade_point'], 2) ?></td>
+                  <td style="text-align:center;"><span style="color:#16a34a; font-weight:700; font-size:0.75rem;">PASS</span></td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+            <tfoot>
+              <tr style="background:#f8fafc; font-weight:700;">
+                <td colspan="2" style="text-align:right;">Total Credits Earned:</td>
+                <td style="text-align:center;"><?= number_format((float)$semCredits, 1) ?></td>
+                <td colspan="2" style="text-align:right;">Semester Grade Point Average:</td>
+                <td style="text-align:center; color:#1e73be; font-size:1rem;"><?= number_format($sgpa, 2) ?></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      <?php endforeach; ?>
+    <?php endif; ?>
+
+    <!-- Signature / Verification Footer -->
+    <div style="margin-top:3.5rem; padding-top:2rem; border-top:1px dashed #cbd5e1; display:flex; justify-content:space-between; align-items:flex-end;">
+      <div style="text-align:center; width:220px;">
+        <div style="border-bottom:1px solid #475569; padding-bottom:5px; margin-bottom:5px; font-size:0.85rem; font-weight:600;">
+          Office of Registrar
+        </div>
+        <small style="color:#64748b;">Prepared &amp; Verified By</small>
+      </div>
+
+      <div style="text-align:center;">
+        <div style="border:2px dashed #94a3b8; border-radius:50%; width:90px; height:90px; display:inline-flex; align-items:center; justify-content:center; color:#64748b; font-size:0.7rem; font-weight:700; text-transform:uppercase;">
+          OFFICIAL<br>RMU SEAL
+        </div>
+      </div>
+
+      <div style="text-align:center; width:220px;">
+        <div style="border-bottom:1px solid #475569; padding-bottom:5px; margin-bottom:5px; font-size:0.85rem; font-weight:700; color:#0f172a;">
+          Controller of Examinations
+        </div>
+        <small style="color:#64748b;">Rabindra Maitree University</small>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Grading System Standard Reference Table -->
+  <div class="sp-card no-print">
+    <div class="sp-card-header">
+      <h3><i class="fas fa-chart-bar" style="color:var(--sp-primary);"></i> UGC Uniform Grading Scale Reference</h3>
+    </div>
+    <div class="sp-card-body" style="padding:0;">
+      <table class="sp-table">
+        <thead>
+          <tr>
+            <th>Numerical Marks</th>
+            <th>Letter Grade</th>
+            <th>Grade Point</th>
+            <th>Performance Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>80% and above</td><td><strong>A+</strong></td><td>4.00</td><td>Outstanding</td></tr>
+          <tr><td>75% to less than 80%</td><td><strong>A</strong></td><td>3.75</td><td>Excellent</td></tr>
+          <tr><td>70% to less than 75%</td><td><strong>A-</strong></td><td>3.50</td><td>Very Good</td></tr>
+          <tr><td>65% to less than 70%</td><td><strong>B+</strong></td><td>3.25</td><td>Good</td></tr>
+          <tr><td>60% to less than 65%</td><td><strong>B</strong></td><td>3.00</td><td>Satisfactory</td></tr>
+          <tr><td>55% to less than 60%</td><td><strong>B-</strong></td><td>2.75</td><td>Above Average</td></tr>
+          <tr><td>50% to less than 55%</td><td><strong>C+</strong></td><td>2.50</td><td>Average</td></tr>
+          <tr><td>45% to less than 50%</td><td><strong>C</strong></td><td>2.25</td><td>Pass</td></tr>
+          <tr><td>40% to less than 45%</td><td><strong>D</strong></td><td>2.00</td><td>Conditional Pass</td></tr>
+          <tr><td>Less than 40%</td><td><strong style="color:#dc2626;">F</strong></td><td>0.00</td><td>Fail</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<?php require_once __DIR__ . '/includes/student-footer.php'; ?>
+

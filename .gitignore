@@ -1,0 +1,18 @@
+# Environment & Local Configuration
+config/database.local.php
+
+# Storage Uploads & Temporary Files
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/downloads/*
+!storage/downloads/.gitkeep
+
+# Operating System & IDE Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+.vscode/
+.idea/
+scratch/
+

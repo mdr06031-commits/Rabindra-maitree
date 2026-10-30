@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e73be;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0f4c81;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="100" fill="url(#grad)" />
+  <circle cx="100" cy="78" r="38" fill="#ffffff" opacity="0.95" />
+  <path d="M 35 178 C 35 132, 65 125, 100 125 C 135 125, 165 132, 165 178 Z" fill="#ffffff" opacity="0.95" />
+  <!-- Academic Cap Badge -->
+  <polygon points="100,28 135,42 100,56 65,42" fill="#f59e0b" />
+  <polygon points="135,42 135,55 131,57 131,43.5" fill="#d97706" />
+</svg>
