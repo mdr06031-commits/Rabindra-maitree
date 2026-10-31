@@ -2,30 +2,56 @@
 /**
  * Admin Panel: Admissions Management & Review Workflow
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Admissions Review';
 $db = getDb();
 
-// Handle Status Update POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_status') {
+// Handle Status & Action POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         flash_set('error', 'CSRF verification failed.');
     } else {
+        $action = $_POST['action'] ?? '';
         $id = (int)($_POST['id'] ?? 0);
-        $newStatus = trim($_POST['status'] ?? '');
-        $adminNotes = trim($_POST['admin_notes'] ?? '');
 
-        $validStatuses = ['Submitted', 'Under Review', 'Additional Information Required', 'Accepted', 'Rejected'];
-        if (in_array($newStatus, $validStatuses, true) && $id > 0) {
-            $update = $db->prepare("UPDATE admissions SET status = ?, admin_notes = ? WHERE id = ?");
-            $update->execute([$newStatus, $adminNotes, $id]);
-            log_audit('ADMISSION_STATUS_UPDATED', "Updated application ID {$id} to status '{$newStatus}' with notes: '{$adminNotes}'");
-            flash_set('success', "Application #{$id} status updated to '{$newStatus}' successfully.");
-        } else {
-            flash_set('error', 'Invalid status selection.');
+        if ($action === 'update_status' && $id > 0) {
+            $newStatus = trim($_POST['status'] ?? '');
+            $adminNotes = trim($_POST['admin_notes'] ?? '');
+
+            $validStatuses = ['Submitted', 'Under Review', 'Additional Information Required', 'Accepted', 'Rejected'];
+            if (in_array($newStatus, $validStatuses, true)) {
+                $update = $db->prepare("UPDATE admissions SET status = ?, admin_notes = ? WHERE id = ?");
+                $update->execute([$newStatus, $adminNotes, $id]);
+
+                // If accepted and not yet provisioned, auto-provision student account
+                if ($newStatus === 'Accepted') {
+                    $chk = $db->prepare("SELECT student_id FROM admissions WHERE id = ?");
+                    $chk->execute([$id]);
+                    if (empty($chk->fetchColumn())) {
+                        provision_student_from_admission($id);
+                    }
+                }
+
+                log_audit('ADMISSION_STATUS_UPDATED', "Updated application ID {$id} to status '{$newStatus}' with notes: '{$adminNotes}'");
+                flash_set('success', "Application #{$id} status updated to '{$newStatus}' successfully.");
+            } else {
+                flash_set('error', 'Invalid status selection.');
+            }
+        } elseif ($action === 'verify_payment' && $id > 0) {
+            $trx = trim($_POST['transaction_id'] ?? 'RMU-VERIFIED-' . rand(10000, 99999));
+            $upd = $db->prepare("UPDATE admissions SET payment_status = 'Paid', payment_amount = 150.00, transaction_id = COALESCE(NULLIF(transaction_id, ''), ?), paid_at = NOW(), status = 'Accepted' WHERE id = ?");
+            $upd->execute([$trx, $id]);
+            provision_student_from_admission($id);
+            log_audit('ADMISSION_PAYMENT_VERIFIED', "Admin manually verified payment for application ID #{$id} (Trx: {$trx})");
+            flash_set('success', "Payment for application #{$id} verified and student account provisioned.");
+        } elseif ($action === 'delete' && $id > 0) {
+            $del = $db->prepare("DELETE FROM admissions WHERE id = ?");
+            $del->execute([$id]);
+            log_audit('ADMISSION_DELETED', "Admin deleted admission application ID #{$id}");
+            flash_set('success', "Application #{$id} deleted successfully.");
         }
     }
     header("Location: " . APP_URL . "/admin/admissions.php");
@@ -237,6 +263,32 @@ include __DIR__ . '/includes/admin-header.php';
                     Save Update
                   </button>
                 </form>
+
+                <div style="display: flex; gap: 0.3rem; margin-top: 0.4rem; justify-content: space-between; align-items: center;">
+                  <?php if (($adm['payment_status'] ?? '') !== 'Paid'): ?>
+                    <form action="<?= APP_URL ?>/admin/admissions.php" method="POST" style="display: inline;">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="action" value="verify_payment">
+                      <input type="hidden" name="id" value="<?= (int)$adm['id'] ?>">
+                      <button type="submit" class="btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.72rem; background: #16a34a;" title="Mark Paid & Approve">
+                        ✓ Verify Pay
+                      </button>
+                    </form>
+                  <?php endif; ?>
+
+                  <a href="<?= APP_URL ?>/admission-status.php?ref=<?= urlencode($adm['application_ref']) ?>" target="_blank" style="font-size: 0.75rem; color: #0284c7; font-weight: 600;" title="View Admit/Application Card">
+                    <i class="fas fa-id-card"></i> Card
+                  </a>
+
+                  <form action="<?= APP_URL ?>/admin/admissions.php" method="POST" style="display: inline;" onsubmit="return confirm('Delete application for <?= addslashes(e($adm['full_name'])) ?>?');">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="id" value="<?= (int)$adm['id'] ?>">
+                    <button type="submit" style="background: none; border: none; color: #ef4444; font-size: 0.8rem; cursor: pointer; padding: 2px;" title="Delete Application">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  </form>
+                </div>
               </td>
             </tr>
           <?php endforeach; ?>

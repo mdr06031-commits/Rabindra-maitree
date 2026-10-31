@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Departments Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Departments';
@@ -15,38 +15,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $facultyId = (int)($_POST['faculty_id'] ?? 0);
-        $nameEn = trim($_POST['name_en'] ?? '');
-        $nameBn = trim($_POST['name_bn'] ?? '');
-        $code = strtoupper(trim($_POST['code'] ?? ''));
-        $headName = trim($_POST['head_name'] ?? '');
-        $email = trim($_POST['email'] ?? '');
-        $phone = trim($_POST['phone'] ?? '');
-        $overview = trim($_POST['overview'] ?? '');
-        $sortOrder = (int)($_POST['sort_order'] ?? 0);
 
-        if (empty($nameEn) || empty($code) || $facultyId <= 0) {
-            flash_set('error', 'Faculty, department name, and code are required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT name_en FROM departments WHERE id = ?");
+                $st->execute([$id]);
+                $dData = $st->fetch();
+                $del = $db->prepare("DELETE FROM departments WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('DEPARTMENT_DELETED', "Deleted department: {$dData['name_en']}");
+                flash_set('success', "Department deleted successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $slug = slugify($nameEn);
-                $stmt = $db->prepare("
-                    INSERT INTO departments (faculty_id, slug, name_en, name_bn, code, head_name, email, phone, overview, sort_order)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$facultyId, $slug, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder]);
-                log_audit('DEPARTMENT_ADDED', "Added department: {$nameEn} ({$code})");
-                flash_set('success', "Department '{$nameEn}' added successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("
-                    UPDATE departments 
-                    SET faculty_id = ?, name_en = ?, name_bn = ?, code = ?, head_name = ?, email = ?, phone = ?, overview = ?, sort_order = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$facultyId, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder, $id]);
-                log_audit('DEPARTMENT_EDITED', "Updated department ID {$id}: {$nameEn}");
-                flash_set('success', "Department '{$nameEn}' updated successfully.");
+            $facultyId = (int)($_POST['faculty_id'] ?? 0);
+            $nameEn = trim($_POST['name_en'] ?? '');
+            $nameBn = trim($_POST['name_bn'] ?? '');
+            $code = strtoupper(trim($_POST['code'] ?? ''));
+            $headName = trim($_POST['head_name'] ?? '');
+            $email = trim($_POST['email'] ?? '');
+            $phone = trim($_POST['phone'] ?? '');
+            $overview = trim($_POST['overview'] ?? '');
+            $sortOrder = (int)($_POST['sort_order'] ?? 0);
+
+            if (empty($nameEn) || empty($code) || $facultyId <= 0) {
+                flash_set('error', 'Faculty, department name, and code are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($nameEn);
+                    $stmt = $db->prepare("
+                        INSERT INTO departments (faculty_id, slug, name_en, name_bn, code, head_name, email, phone, overview, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$facultyId, $slug, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder]);
+                    log_audit('DEPARTMENT_ADDED', "Added department: {$nameEn} ({$code})");
+                    flash_set('success', "Department '{$nameEn}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE departments 
+                        SET faculty_id = ?, name_en = ?, name_bn = ?, code = ?, head_name = ?, email = ?, phone = ?, overview = ?, sort_order = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$facultyId, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder, $id]);
+                    log_audit('DEPARTMENT_EDITED', "Updated department ID {$id}: {$nameEn}");
+                    flash_set('success', "Department '{$nameEn}' updated successfully.");
+                }
             }
         }
     }
@@ -196,10 +210,18 @@ include __DIR__ . '/includes/admin-header.php';
               <td style="font-size: 0.85rem;">
                 <span class="notice-category-badge badge-admission"><?= (int)$d['program_count'] ?> Programs</span>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/departments.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/departments.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/departments.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete department <?= addslashes(e($d['name_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

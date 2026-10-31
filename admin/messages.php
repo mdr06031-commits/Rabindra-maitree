@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Contact Inquiries Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Inquiries & Messages';
@@ -24,6 +24,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare("UPDATE contact_messages SET replied = 1 - replied WHERE id = ?")->execute([$id]);
             log_audit('MESSAGE_TOGGLE_REPLIED', "Toggled replied status for message ID {$id}");
             flash_set('success', "Message replied flag updated.");
+        } elseif ($action === 'delete') {
+            $db->prepare("DELETE FROM contact_messages WHERE id = ?")->execute([$id]);
+            log_audit('MESSAGE_DELETED', "Deleted contact message ID {$id}");
+            flash_set('success', "Message deleted successfully.");
         }
     }
     header("Location: " . APP_URL . "/admin/messages.php");
@@ -98,8 +102,17 @@ include __DIR__ . '/includes/admin-header.php';
                   <?= csrf_field() ?>
                   <input type="hidden" name="id" value="<?= (int)$msg['id'] ?>">
                   <input type="hidden" name="action" value="toggle_replied">
-                  <button type="submit" class="btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.78rem; background: #10b981;">
+                  <button type="submit" class="btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.78rem; background: #10b981; margin-right: 0.4rem;">
                     <?= $msg['replied'] ? 'Unmark Replied' : 'Mark Replied' ?>
+                  </button>
+                </form>
+
+                <form action="<?= APP_URL ?>/admin/messages.php" method="POST" style="display: inline-block;" onsubmit="return confirm('Delete this message?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="id" value="<?= (int)$msg['id'] ?>">
+                  <input type="hidden" name="action" value="delete">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
                   </button>
                 </form>
               </td>

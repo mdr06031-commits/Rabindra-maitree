@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Campus News Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage News';
@@ -15,34 +15,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $titleEn = trim($_POST['title_en'] ?? '');
-        $titleBn = trim($_POST['title_bn'] ?? '');
-        $pubDate = trim($_POST['published_date'] ?? date('Y-m-d'));
-        $summary = trim($_POST['summary'] ?? '');
-        $content = trim($_POST['content'] ?? '');
 
-        if (empty($titleEn) || empty($summary) || empty($content)) {
-            flash_set('error', 'Title, summary, and full content are required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title_en FROM news WHERE id = ?");
+                $st->execute([$id]);
+                $nData = $st->fetch();
+                $del = $db->prepare("DELETE FROM news WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('NEWS_DELETED', "Deleted news article: {$nData['title_en']}");
+                flash_set('success', "News article deleted successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $slug = slugify($titleEn) . '-' . time();
-                $stmt = $db->prepare("
-                    INSERT INTO news (slug, title_en, title_bn, published_date, summary, content)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$slug, $titleEn, $titleBn, $pubDate, $summary, $content]);
-                log_audit('NEWS_ADDED', "Added news: {$titleEn}");
-                flash_set('success', "News article '{$titleEn}' published successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("
-                    UPDATE news 
-                    SET title_en = ?, title_bn = ?, published_date = ?, summary = ?, content = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$titleEn, $titleBn, $pubDate, $summary, $content, $id]);
-                log_audit('NEWS_EDITED', "Updated news ID {$id}: {$titleEn}");
-                flash_set('success', "News article '{$titleEn}' updated successfully.");
+            $titleEn = trim($_POST['title_en'] ?? '');
+            $titleBn = trim($_POST['title_bn'] ?? '');
+            $pubDate = trim($_POST['published_date'] ?? date('Y-m-d'));
+            $summary = trim($_POST['summary'] ?? '');
+            $content = trim($_POST['content'] ?? '');
+
+            if (empty($titleEn) || empty($summary) || empty($content)) {
+                flash_set('error', 'Title, summary, and full content are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($titleEn) . '-' . time();
+                    $stmt = $db->prepare("
+                        INSERT INTO news (slug, title_en, title_bn, published_date, summary, content)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$slug, $titleEn, $titleBn, $pubDate, $summary, $content]);
+                    log_audit('NEWS_ADDED', "Added news: {$titleEn}");
+                    flash_set('success', "News article '{$titleEn}' published successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE news 
+                        SET title_en = ?, title_bn = ?, published_date = ?, summary = ?, content = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$titleEn, $titleBn, $pubDate, $summary, $content, $id]);
+                    log_audit('NEWS_EDITED', "Updated news ID {$id}: {$titleEn}");
+                    flash_set('success', "News article '{$titleEn}' updated successfully.");
+                }
             }
         }
     }
@@ -146,10 +160,18 @@ include __DIR__ . '/includes/admin-header.php';
               <td style="font-size: 0.82rem; color: #475569;">
                 <?= e(truncate_words($item['summary'], 12)) ?>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/news.php?edit=<?= (int)$item['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/news.php?edit=<?= (int)$item['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/news.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete news <?= addslashes(e($item['title_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$item['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

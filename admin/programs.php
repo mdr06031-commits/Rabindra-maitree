@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Degree Programs Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Degree Programs';
@@ -15,39 +15,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $deptId = (int)($_POST['department_id'] ?? 0);
-        $titleEn = trim($_POST['title_en'] ?? '');
-        $titleBn = trim($_POST['title_bn'] ?? '');
-        $level = trim($_POST['degree_level'] ?? 'Undergraduate');
-        $duration = trim($_POST['duration'] ?? '4 Years (8 Semesters)');
-        $credits = (int)($_POST['total_credits'] ?? 140);
-        $eligibility = trim($_POST['eligibility'] ?? '');
-        $description = trim($_POST['description'] ?? '');
-        $tuitionFee = trim($_POST['tuition_fee'] ?? '');
-        $sortOrder = (int)($_POST['sort_order'] ?? 0);
 
-        if (empty($titleEn) || $deptId <= 0) {
-            flash_set('error', 'Department and program title are required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title_en FROM programs WHERE id = ?");
+                $st->execute([$id]);
+                $pData = $st->fetch();
+                $del = $db->prepare("DELETE FROM programs WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('PROGRAM_DELETED', "Deleted program: {$pData['title_en']}");
+                flash_set('success', "Degree program deleted successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $slug = slugify($titleEn);
-                $stmt = $db->prepare("
-                    INSERT INTO programs (department_id, slug, title_en, title_bn, degree_level, duration, total_credits, eligibility, description, tuition_fee, sort_order)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$deptId, $slug, $titleEn, $titleBn, $level, $duration, $credits, $eligibility, $description, $tuitionFee, $sortOrder]);
-                log_audit('PROGRAM_ADDED', "Added program: {$titleEn}");
-                flash_set('success', "Program '{$titleEn}' added successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("
-                    UPDATE programs 
-                    SET department_id = ?, title_en = ?, title_bn = ?, degree_level = ?, duration = ?, total_credits = ?, eligibility = ?, description = ?, tuition_fee = ?, sort_order = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$deptId, $titleEn, $titleBn, $level, $duration, $credits, $eligibility, $description, $tuitionFee, $sortOrder, $id]);
-                log_audit('PROGRAM_EDITED', "Updated program ID {$id}: {$titleEn}");
-                flash_set('success', "Program '{$titleEn}' updated successfully.");
+            $deptId = (int)($_POST['department_id'] ?? 0);
+            $titleEn = trim($_POST['title_en'] ?? '');
+            $titleBn = trim($_POST['title_bn'] ?? '');
+            $level = trim($_POST['degree_level'] ?? 'Undergraduate');
+            $duration = trim($_POST['duration'] ?? '4 Years (8 Semesters)');
+            $credits = (int)($_POST['total_credits'] ?? 140);
+            $eligibility = trim($_POST['eligibility'] ?? '');
+            $description = trim($_POST['description'] ?? '');
+            $tuitionFee = trim($_POST['tuition_fee'] ?? '');
+            $sortOrder = (int)($_POST['sort_order'] ?? 0);
+
+            if (empty($titleEn) || $deptId <= 0) {
+                flash_set('error', 'Department and program title are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($titleEn);
+                    $stmt = $db->prepare("
+                        INSERT INTO programs (department_id, slug, title_en, title_bn, degree_level, duration, total_credits, eligibility, description, tuition_fee, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$deptId, $slug, $titleEn, $titleBn, $level, $duration, $credits, $eligibility, $description, $tuitionFee, $sortOrder]);
+                    log_audit('PROGRAM_ADDED', "Added program: {$titleEn}");
+                    flash_set('success', "Program '{$titleEn}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE programs 
+                        SET department_id = ?, title_en = ?, title_bn = ?, degree_level = ?, duration = ?, total_credits = ?, eligibility = ?, description = ?, tuition_fee = ?, sort_order = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$deptId, $titleEn, $titleBn, $level, $duration, $credits, $eligibility, $description, $tuitionFee, $sortOrder, $id]);
+                    log_audit('PROGRAM_EDITED', "Updated program ID {$id}: {$titleEn}");
+                    flash_set('success', "Program '{$titleEn}' updated successfully.");
+                }
             }
         }
     }
@@ -201,10 +215,18 @@ include __DIR__ . '/includes/admin-header.php';
               <td style="font-size: 0.82rem; font-weight: 600; color: var(--rmu-primary);">
                 <?= e($p['tuition_fee'] ?? 'Standard') ?>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/programs.php?edit=<?= (int)$p['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/programs.php?edit=<?= (int)$p['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/programs.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete program <?= addslashes(e($p['title_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

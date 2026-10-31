@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Faculties Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Faculties';
@@ -15,28 +15,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $nameEn = trim($_POST['name_en'] ?? '');
-        $nameBn = trim($_POST['name_bn'] ?? '');
-        $deanName = trim($_POST['dean_name'] ?? '');
-        $overview = trim($_POST['overview'] ?? '');
-        $icon = trim($_POST['icon'] ?? 'fa-university');
-        $sortOrder = (int)($_POST['sort_order'] ?? 0);
 
-        if (empty($nameEn)) {
-            flash_set('error', 'Faculty name in English is required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT name_en FROM faculties WHERE id = ?");
+                $st->execute([$id]);
+                $fData = $st->fetch();
+                $del = $db->prepare("DELETE FROM faculties WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('FACULTY_DELETED', "Deleted faculty: {$fData['name_en']}");
+                flash_set('success', "Faculty deleted successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $slug = slugify($nameEn);
-                $stmt = $db->prepare("INSERT INTO faculties (slug, name_en, name_bn, dean_name, overview, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$slug, $nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder]);
-                log_audit('FACULTY_ADDED', "Added new faculty: {$nameEn}");
-                flash_set('success', "Faculty '{$nameEn}' added successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("UPDATE faculties SET name_en = ?, name_bn = ?, dean_name = ?, overview = ?, icon = ?, sort_order = ? WHERE id = ?");
-                $stmt->execute([$nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder, $id]);
-                log_audit('FACULTY_EDITED', "Updated faculty ID {$id}: {$nameEn}");
-                flash_set('success', "Faculty '{$nameEn}' updated successfully.");
+            $nameEn = trim($_POST['name_en'] ?? '');
+            $nameBn = trim($_POST['name_bn'] ?? '');
+            $deanName = trim($_POST['dean_name'] ?? '');
+            $overview = trim($_POST['overview'] ?? '');
+            $icon = trim($_POST['icon'] ?? 'fa-university');
+            $sortOrder = (int)($_POST['sort_order'] ?? 0);
+
+            if (empty($nameEn)) {
+                flash_set('error', 'Faculty name in English is required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($nameEn);
+                    $stmt = $db->prepare("INSERT INTO faculties (slug, name_en, name_bn, dean_name, overview, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$slug, $nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder]);
+                    log_audit('FACULTY_ADDED', "Added new faculty: {$nameEn}");
+                    flash_set('success', "Faculty '{$nameEn}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("UPDATE faculties SET name_en = ?, name_bn = ?, dean_name = ?, overview = ?, icon = ?, sort_order = ? WHERE id = ?");
+                    $stmt->execute([$nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder, $id]);
+                    log_audit('FACULTY_EDITED', "Updated faculty ID {$id}: {$nameEn}");
+                    flash_set('success', "Faculty '{$nameEn}' updated successfully.");
+                }
             }
         }
     }
@@ -152,10 +166,18 @@ include __DIR__ . '/includes/admin-header.php';
               <td style="font-size: 0.88rem;">
                 <span class="notice-category-badge badge-academic"><?= (int)$f['dept_count'] ?> Depts</span>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/faculties.php?edit=<?= (int)$f['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 0.6rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/faculties.php?edit=<?= (int)$f['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/faculties.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete faculty <?= addslashes(e($f['name_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

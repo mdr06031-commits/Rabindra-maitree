@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Downloads Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Downloads';
@@ -15,68 +15,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $title = trim($_POST['title'] ?? '');
-        $category = trim($_POST['category'] ?? 'General');
-        $fileSize = trim($_POST['file_size'] ?? '1.0 MB');
-        $filePath = null;
-        $fileName = '';
 
-        // Handle File Upload if provided
-        if (!empty($_FILES['file']['name'])) {
-            $allowedExts = ['pdf', 'doc', 'docx', 'zip', 'xls', 'xlsx'];
-            $fileInfo = pathinfo($_FILES['file']['name']);
-            $ext = strtolower($fileInfo['extension'] ?? '');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title, file_path FROM downloads WHERE id = ?");
+                $st->execute([$id]);
+                $dData = $st->fetch();
+                if ($dData && !empty($dData['file_path'])) {
+                    $fullPath = __DIR__ . '/../' . $dData['file_path'];
+                    if (file_exists($fullPath)) {
+                        @unlink($fullPath);
+                    }
+                }
+                $del = $db->prepare("DELETE FROM downloads WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('DOWNLOAD_DELETED', "Deleted download: {$dData['title']}");
+                flash_set('success', "Document deleted successfully.");
+            }
+        } else {
+            $title = trim($_POST['title'] ?? '');
+            $category = trim($_POST['category'] ?? 'General');
+            $fileSize = trim($_POST['file_size'] ?? '1.0 MB');
+            $filePath = null;
+            $fileName = '';
 
-            if (!in_array($ext, $allowedExts, true)) {
-                flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, XLS, XLSX, ZIP.');
-                header("Location: " . APP_URL . "/admin/downloads.php");
-                exit;
-            } elseif ($_FILES['file']['size'] > 15 * 1024 * 1024) {
-                flash_set('error', 'File size exceeds maximum limit of 15 MB.');
-                header("Location: " . APP_URL . "/admin/downloads.php");
-                exit;
-            } else {
-                $newFilename = 'doc_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
-                $targetDir = STORAGE_PATH . '/downloads';
-                if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
-                if (move_uploaded_file($_FILES['file']['tmp_name'], $targetDir . '/' . $newFilename)) {
-                    $filePath = 'storage/downloads/' . $newFilename;
-                    $fileName = $_FILES['file']['name'];
-                    $fileSize = round($_FILES['file']['size'] / 1024) . ' KB';
+            // Handle File Upload if provided
+            if (!empty($_FILES['file']['name'])) {
+                $allowedExts = ['pdf', 'doc', 'docx', 'zip', 'xls', 'xlsx'];
+                $fileInfo = pathinfo($_FILES['file']['name']);
+                $ext = strtolower($fileInfo['extension'] ?? '');
+
+                if (!in_array($ext, $allowedExts, true)) {
+                    flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, XLS, XLSX, ZIP.');
+                    header("Location: " . APP_URL . "/admin/downloads.php");
+                    exit;
+                } elseif ($_FILES['file']['size'] > 15 * 1024 * 1024) {
+                    flash_set('error', 'File size exceeds maximum limit of 15 MB.');
+                    header("Location: " . APP_URL . "/admin/downloads.php");
+                    exit;
+                } else {
+                    $newFilename = 'doc_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
+                    $targetDir = STORAGE_PATH . '/downloads';
+                    if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
+                    if (move_uploaded_file($_FILES['file']['tmp_name'], $targetDir . '/' . $newFilename)) {
+                        $filePath = 'storage/downloads/' . $newFilename;
+                        $fileName = $_FILES['file']['name'];
+                        $fileSize = round($_FILES['file']['size'] / 1024) . ' KB';
+                    }
                 }
             }
-        }
 
-        if (empty($title)) {
-            flash_set('error', 'Document title is required.');
-        } else {
-            if ($action === 'add') {
-                if (!$filePath) {
-                    $filePath = 'storage/downloads/rmu_undergrad_admission_form.pdf';
-                    $fileName = 'document.pdf';
-                }
-                $stmt = $db->prepare("
-                    INSERT INTO downloads (title, category, file_name, file_path, file_size)
-                    VALUES (?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$title, $category, $fileName, $filePath, $fileSize]);
-                log_audit('DOWNLOAD_ADDED', "Added download: {$title}");
-                flash_set('success', "Document '{$title}' added successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                if ($filePath) {
+            if (empty($title)) {
+                flash_set('error', 'Document title is required.');
+            } else {
+                if ($action === 'add') {
+                    if (!$filePath) {
+                        $filePath = 'storage/downloads/rmu_undergrad_admission_form.pdf';
+                        $fileName = 'document.pdf';
+                    }
                     $stmt = $db->prepare("
-                        UPDATE downloads 
-                        SET title = ?, category = ?, file_name = ?, file_path = ?, file_size = ?
-                        WHERE id = ?
+                        INSERT INTO downloads (title, category, file_name, file_path, file_size)
+                        VALUES (?, ?, ?, ?, ?)
                     ");
-                    $stmt->execute([$title, $category, $fileName, $filePath, $fileSize, $id]);
-                } else {
-                    $stmt = $db->prepare("UPDATE downloads SET title = ?, category = ? WHERE id = ?");
-                    $stmt->execute([$title, $category, $id]);
+                    $stmt->execute([$title, $category, $fileName, $filePath, $fileSize]);
+                    log_audit('DOWNLOAD_ADDED', "Added download: {$title}");
+                    flash_set('success', "Document '{$title}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    if ($filePath) {
+                        $stmt = $db->prepare("
+                            UPDATE downloads 
+                            SET title = ?, category = ?, file_name = ?, file_path = ?, file_size = ?
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$title, $category, $fileName, $filePath, $fileSize, $id]);
+                    } else {
+                        $stmt = $db->prepare("UPDATE downloads SET title = ?, category = ? WHERE id = ?");
+                        $stmt->execute([$title, $category, $id]);
+                    }
+                    log_audit('DOWNLOAD_EDITED', "Updated download ID {$id}: {$title}");
+                    flash_set('success', "Document '{$title}' updated successfully.");
                 }
-                log_audit('DOWNLOAD_EDITED', "Updated download ID {$id}: {$title}");
-                flash_set('success', "Document '{$title}' updated successfully.");
             }
         }
     }
@@ -177,10 +197,18 @@ include __DIR__ . '/includes/admin-header.php';
                 <span class="notice-category-badge badge-academic"><?= e($d['category']) ?></span>
               </td>
               <td style="font-size: 0.85rem; color: #64748b;"><?= e($d['file_size']) ?></td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/downloads.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/downloads.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/downloads.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete document <?= addslashes(e($d['title'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

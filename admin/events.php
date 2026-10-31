@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Events Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Events';
@@ -15,35 +15,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $titleEn = trim($_POST['title_en'] ?? '');
-        $titleBn = trim($_POST['title_bn'] ?? '');
-        $eventDate = trim($_POST['event_date'] ?? date('Y-m-d'));
-        $eventTime = trim($_POST['event_time'] ?? '');
-        $location = trim($_POST['location'] ?? 'RMU Campus, Kushtia');
-        $desc = trim($_POST['description'] ?? '');
 
-        if (empty($titleEn) || empty($desc)) {
-            flash_set('error', 'Event title and description are required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title_en FROM events WHERE id = ?");
+                $st->execute([$id]);
+                $eData = $st->fetch();
+                $del = $db->prepare("DELETE FROM events WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('EVENT_DELETED', "Deleted event: {$eData['title_en']}");
+                flash_set('success', "Event deleted successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $slug = slugify($titleEn) . '-' . time();
-                $stmt = $db->prepare("
-                    INSERT INTO events (slug, title_en, title_bn, event_date, event_time, location, description)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$slug, $titleEn, $titleBn, $eventDate, $eventTime, $location, $desc]);
-                log_audit('EVENT_ADDED', "Added event: {$titleEn}");
-                flash_set('success', "Event '{$titleEn}' added successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("
-                    UPDATE events 
-                    SET title_en = ?, title_bn = ?, event_date = ?, event_time = ?, location = ?, description = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$titleEn, $titleBn, $eventDate, $eventTime, $location, $desc, $id]);
-                log_audit('EVENT_EDITED', "Updated event ID {$id}: {$titleEn}");
-                flash_set('success', "Event '{$titleEn}' updated successfully.");
+            $titleEn = trim($_POST['title_en'] ?? '');
+            $titleBn = trim($_POST['title_bn'] ?? '');
+            $eventDate = trim($_POST['event_date'] ?? date('Y-m-d'));
+            $eventTime = trim($_POST['event_time'] ?? '');
+            $location = trim($_POST['location'] ?? 'RMU Campus, Kushtia');
+            $desc = trim($_POST['description'] ?? '');
+
+            if (empty($titleEn) || empty($desc)) {
+                flash_set('error', 'Event title and description are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($titleEn) . '-' . time();
+                    $stmt = $db->prepare("
+                        INSERT INTO events (slug, title_en, title_bn, event_date, event_time, location, description)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$slug, $titleEn, $titleBn, $eventDate, $eventTime, $location, $desc]);
+                    log_audit('EVENT_ADDED', "Added event: {$titleEn}");
+                    flash_set('success', "Event '{$titleEn}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE events 
+                        SET title_en = ?, title_bn = ?, event_date = ?, event_time = ?, location = ?, description = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$titleEn, $titleBn, $eventDate, $eventTime, $location, $desc, $id]);
+                    log_audit('EVENT_EDITED', "Updated event ID {$id}: {$titleEn}");
+                    flash_set('success', "Event '{$titleEn}' updated successfully.");
+                }
             }
         }
     }
@@ -152,10 +166,18 @@ include __DIR__ . '/includes/admin-header.php';
                 <span style="font-size: 0.8rem; color: var(--rmu-muted); font-family: 'Hind Siliguri', sans-serif;"><?= e($evt['title_bn']) ?></span>
               </td>
               <td style="font-size: 0.82rem; color: #475569;"><?= e($evt['location']) ?></td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/events.php?edit=<?= (int)$evt['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/events.php?edit=<?= (int)$evt['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/events.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete event <?= addslashes(e($evt['title_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$evt['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

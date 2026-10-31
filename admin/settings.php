@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Site Settings Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_role(['superadmin']);
 $adminPageTitle = 'Site Settings';

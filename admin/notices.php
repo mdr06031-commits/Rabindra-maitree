@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Official Notices Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Manage Notices';
@@ -15,69 +15,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $titleEn = trim($_POST['title_en'] ?? '');
-        $titleBn = trim($_POST['title_bn'] ?? '');
-        $category = trim($_POST['category'] ?? 'General');
-        $content = trim($_POST['content'] ?? '');
-        $pubDate = trim($_POST['published_date'] ?? date('Y-m-d'));
-        $isPinned = isset($_POST['is_pinned']) ? 1 : 0;
-        $filePath = null;
 
-        // Handle File Upload
-        if (!empty($_FILES['attachment']['name'])) {
-            $allowedExts = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
-            $fileInfo = pathinfo($_FILES['attachment']['name']);
-            $ext = strtolower($fileInfo['extension'] ?? '');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title_en, file_path FROM notices WHERE id = ?");
+                $st->execute([$id]);
+                $nData = $st->fetch();
+                if ($nData && !empty($nData['file_path'])) {
+                    $fullPath = __DIR__ . '/../' . $nData['file_path'];
+                    if (file_exists($fullPath)) {
+                        @unlink($fullPath);
+                    }
+                }
+                $del = $db->prepare("DELETE FROM notices WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('NOTICE_DELETED', "Deleted notice: {$nData['title_en']}");
+                flash_set('success', "Notice deleted successfully.");
+            }
+        } else {
+            $titleEn = trim($_POST['title_en'] ?? '');
+            $titleBn = trim($_POST['title_bn'] ?? '');
+            $category = trim($_POST['category'] ?? 'General');
+            $content = trim($_POST['content'] ?? '');
+            $pubDate = trim($_POST['published_date'] ?? date('Y-m-d'));
+            $isPinned = isset($_POST['is_pinned']) ? 1 : 0;
+            $filePath = null;
 
-            if (!in_array($ext, $allowedExts, true)) {
-                flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, JPG, PNG.');
-                header("Location: " . APP_URL . "/admin/notices.php");
-                exit;
-            } elseif ($_FILES['attachment']['size'] > 10 * 1024 * 1024) {
-                flash_set('error', 'File size exceeds maximum limit of 10 MB.');
-                header("Location: " . APP_URL . "/admin/notices.php");
-                exit;
-            } else {
-                $newFilename = 'notice_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                $targetDir = STORAGE_PATH . '/uploads';
-                if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
-                if (move_uploaded_file($_FILES['attachment']['tmp_name'], $targetDir . '/' . $newFilename)) {
-                    $filePath = 'storage/uploads/' . $newFilename;
+            // Handle File Upload
+            if (!empty($_FILES['attachment']['name'])) {
+                $allowedExts = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+                $fileInfo = pathinfo($_FILES['attachment']['name']);
+                $ext = strtolower($fileInfo['extension'] ?? '');
+
+                if (!in_array($ext, $allowedExts, true)) {
+                    flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, JPG, PNG.');
+                    header("Location: " . APP_URL . "/admin/notices.php");
+                    exit;
+                } elseif ($_FILES['attachment']['size'] > 10 * 1024 * 1024) {
+                    flash_set('error', 'File size exceeds maximum limit of 10 MB.');
+                    header("Location: " . APP_URL . "/admin/notices.php");
+                    exit;
+                } else {
+                    $newFilename = 'notice_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                    $targetDir = STORAGE_PATH . '/uploads';
+                    if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
+                    if (move_uploaded_file($_FILES['attachment']['tmp_name'], $targetDir . '/' . $newFilename)) {
+                        $filePath = 'storage/uploads/' . $newFilename;
+                    }
                 }
             }
-        }
 
-        if (empty($titleEn) || empty($content)) {
-            flash_set('error', 'Notice title and content are required.');
-        } else {
-            if ($action === 'add') {
-                $slug = slugify($titleEn) . '-' . time();
-                $stmt = $db->prepare("
-                    INSERT INTO notices (slug, title_en, title_bn, category, content, file_path, published_date, is_pinned)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$slug, $titleEn, $titleBn, $category, $content, $filePath, $pubDate, $isPinned]);
-                log_audit('NOTICE_ADDED', "Added notice: {$titleEn}");
-                flash_set('success', "Notice '{$titleEn}' created successfully.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                if ($filePath) {
+            if (empty($titleEn) || empty($content)) {
+                flash_set('error', 'Notice title and content are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($titleEn) . '-' . time();
                     $stmt = $db->prepare("
-                        UPDATE notices 
-                        SET title_en = ?, title_bn = ?, category = ?, content = ?, file_path = ?, published_date = ?, is_pinned = ?
-                        WHERE id = ?
+                        INSERT INTO notices (slug, title_en, title_bn, category, content, file_path, published_date, is_pinned)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ");
-                    $stmt->execute([$titleEn, $titleBn, $category, $content, $filePath, $pubDate, $isPinned, $id]);
-                } else {
-                    $stmt = $db->prepare("
-                        UPDATE notices 
-                        SET title_en = ?, title_bn = ?, category = ?, content = ?, published_date = ?, is_pinned = ?
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$titleEn, $titleBn, $category, $content, $pubDate, $isPinned, $id]);
+                    $stmt->execute([$slug, $titleEn, $titleBn, $category, $content, $filePath, $pubDate, $isPinned]);
+                    log_audit('NOTICE_ADDED', "Added notice: {$titleEn}");
+                    flash_set('success', "Notice '{$titleEn}' created successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    if ($filePath) {
+                        $stmt = $db->prepare("
+                            UPDATE notices 
+                            SET title_en = ?, title_bn = ?, category = ?, content = ?, file_path = ?, published_date = ?, is_pinned = ?
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$titleEn, $titleBn, $category, $content, $filePath, $pubDate, $isPinned, $id]);
+                    } else {
+                        $stmt = $db->prepare("
+                            UPDATE notices 
+                            SET title_en = ?, title_bn = ?, category = ?, content = ?, published_date = ?, is_pinned = ?
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$titleEn, $titleBn, $category, $content, $pubDate, $isPinned, $id]);
+                    }
+                    log_audit('NOTICE_EDITED', "Updated notice ID {$id}: {$titleEn}");
+                    flash_set('success', "Notice '{$titleEn}' updated successfully.");
                 }
-                log_audit('NOTICE_EDITED', "Updated notice ID {$id}: {$titleEn}");
-                flash_set('success', "Notice '{$titleEn}' updated successfully.");
             }
         }
     }
@@ -214,10 +234,18 @@ include __DIR__ . '/includes/admin-header.php';
                   <span style="color: #cbd5e1;">None</span>
                 <?php endif; ?>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/notices.php?edit=<?= (int)$n['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/notices.php?edit=<?= (int)$n['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/notices.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete notice <?= addslashes(e($n['title_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$n['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

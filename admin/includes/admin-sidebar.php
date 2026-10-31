@@ -9,7 +9,7 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     <img src="<?= APP_URL ?>/assets/images/logo.jpg" alt="RMU Logo" onerror="this.src='<?= APP_URL ?>/assets/images/logo.svg'">
     <div>
       <strong style="display: block; font-size: 0.95rem; line-height: 1.2;">RMU Admin</strong>
-      <small style="color: #64748b; font-size: 0.75rem;">Portal Control Panel</small>
+      <small style="color: #64748b; font-size: 0.75rem;">Master Control Panel</small>
     </div>
   </a>
 
@@ -20,14 +20,30 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
+    <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
+      Admissions &amp; Students
+    </li>
+
     <li class="admin-nav-item <?= ($adminCurrentPage === 'admissions.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/admissions.php" class="admin-nav-link">
         <i class="fas fa-user-graduate"></i> Admission Intake
       </a>
     </li>
 
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'students.php' || $adminCurrentPage === 'student-detail.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/students.php" class="admin-nav-link">
+        <i class="fas fa-users-cog"></i> Enrolled Students
+      </a>
+    </li>
+
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'portal-notices.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/portal-notices.php" class="admin-nav-link">
+        <i class="fas fa-broadcast-tower"></i> Portal Notices
+      </a>
+    </li>
+
     <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Academics
+      Academics &amp; Faculty
     </li>
 
     <li class="admin-nav-item <?= ($adminCurrentPage === 'faculties.php') ? 'active' : '' ?>">
@@ -55,12 +71,12 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     </li>
 
     <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Updates &amp; Media
+      Campus Content
     </li>
 
     <li class="admin-nav-item <?= ($adminCurrentPage === 'notices.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/notices.php" class="admin-nav-link">
-        <i class="fas fa-bullhorn"></i> Notices
+        <i class="fas fa-bullhorn"></i> Public Notices
       </a>
     </li>
 
@@ -83,12 +99,18 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     </li>
 
     <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Administration
+      Administration &amp; System
     </li>
 
     <li class="admin-nav-item <?= ($adminCurrentPage === 'messages.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/messages.php" class="admin-nav-link">
         <i class="fas fa-envelope-open-text"></i> Inquiries
+      </a>
+    </li>
+
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'users.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/users.php" class="admin-nav-link">
+        <i class="fas fa-user-shield"></i> Admin Users
       </a>
     </li>
 
@@ -111,4 +133,3 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     </li>
   </ul>
 </aside>
-

@@ -2,8 +2,8 @@
 /**
  * Admin Panel: Faculty Members Management
  */
-require_once __DIR__ . '/../../config/app.php';
-require_once __DIR__ . '/../../includes/functions.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
 $adminPageTitle = 'Faculty Members';
@@ -15,36 +15,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('error', 'CSRF verification failed.');
     } else {
         $action = $_POST['action'] ?? '';
-        $deptId = (int)($_POST['department_id'] ?? 0);
-        $fullName = trim($_POST['full_name'] ?? '');
-        $designation = trim($_POST['designation'] ?? '');
-        $email = trim($_POST['email'] ?? '');
-        $phone = trim($_POST['phone'] ?? '');
-        $qualification = trim($_POST['qualification'] ?? '');
-        $bio = trim($_POST['bio'] ?? '');
-        $sortOrder = (int)($_POST['sort_order'] ?? 0);
 
-        if (empty($fullName) || empty($designation) || $deptId <= 0) {
-            flash_set('error', 'Department, full name, and designation are required.');
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT full_name FROM faculty_members WHERE id = ?");
+                $st->execute([$id]);
+                $tData = $st->fetch();
+                $del = $db->prepare("DELETE FROM faculty_members WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('FACULTY_MEMBER_DELETED', "Deleted faculty member: {$tData['full_name']}");
+                flash_set('success', "Faculty member removed successfully.");
+            }
         } else {
-            if ($action === 'add') {
-                $stmt = $db->prepare("
-                    INSERT INTO faculty_members (department_id, full_name, designation, email, phone, qualification, bio, sort_order)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([$deptId, $fullName, $designation, $email, $phone, $qualification, $bio, $sortOrder]);
-                log_audit('FACULTY_MEMBER_ADDED', "Added teacher: {$fullName}");
-                flash_set('success', "Teacher profile for '{$fullName}' created.");
-            } elseif ($action === 'edit') {
-                $id = (int)($_POST['id'] ?? 0);
-                $stmt = $db->prepare("
-                    UPDATE faculty_members 
-                    SET department_id = ?, full_name = ?, designation = ?, email = ?, phone = ?, qualification = ?, bio = ?, sort_order = ?
-                    WHERE id = ?
-                ");
-                $stmt->execute([$deptId, $fullName, $designation, $email, $phone, $qualification, $bio, $sortOrder, $id]);
-                log_audit('FACULTY_MEMBER_EDITED', "Updated teacher ID {$id}: {$fullName}");
-                flash_set('success', "Teacher profile for '{$fullName}' updated.");
+            $deptId = (int)($_POST['department_id'] ?? 0);
+            $fullName = trim($_POST['full_name'] ?? '');
+            $designation = trim($_POST['designation'] ?? '');
+            $email = trim($_POST['email'] ?? '');
+            $phone = trim($_POST['phone'] ?? '');
+            $qualification = trim($_POST['qualification'] ?? '');
+            $bio = trim($_POST['bio'] ?? '');
+            $sortOrder = (int)($_POST['sort_order'] ?? 0);
+
+            if (empty($fullName) || empty($designation) || $deptId <= 0) {
+                flash_set('error', 'Department, full name, and designation are required.');
+            } else {
+                if ($action === 'add') {
+                    $stmt = $db->prepare("
+                        INSERT INTO faculty_members (department_id, full_name, designation, email, phone, qualification, bio, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$deptId, $fullName, $designation, $email, $phone, $qualification, $bio, $sortOrder]);
+                    log_audit('FACULTY_MEMBER_ADDED', "Added teacher: {$fullName}");
+                    flash_set('success', "Teacher profile for '{$fullName}' created.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE faculty_members 
+                        SET department_id = ?, full_name = ?, designation = ?, email = ?, phone = ?, qualification = ?, bio = ?, sort_order = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$deptId, $fullName, $designation, $email, $phone, $qualification, $bio, $sortOrder, $id]);
+                    log_audit('FACULTY_MEMBER_EDITED', "Updated teacher ID {$id}: {$fullName}");
+                    flash_set('success', "Teacher profile for '{$fullName}' updated.");
+                }
             }
         }
     }
@@ -173,10 +187,18 @@ include __DIR__ . '/includes/admin-header.php';
                 <div><?= e($t['email'] ?? 'info@rmu.ac.bd') ?></div>
                 <small style="color: #64748b;"><?= e($t['phone'] ?? '') ?></small>
               </td>
-              <td style="text-align: right;">
-                <a href="<?= APP_URL ?>/admin/faculty-members.php?edit=<?= (int)$t['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem;">
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/faculty-members.php?edit=<?= (int)$t['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
+                <form action="<?= APP_URL ?>/admin/faculty-members.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete teacher profile <?= addslashes(e($t['full_name'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>
