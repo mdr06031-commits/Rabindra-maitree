@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $stmt = $db->prepare("
                 SELECT * FROM students 
-                WHERE (student_id = ? OR email = ?) AND status = 'Active' 
+                WHERE (student_id = ? OR email = ?) AND status != 'Suspended' 
                 LIMIT 1
             ");
             $stmt->execute([$studentId, $studentId]);

@@ -157,6 +157,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash_set('success', "Fee invoice deleted.");
             }
         }
+
+        // 4. Semester Progress & Promotion Control
+        elseif ($action === 'update_semester_progress') {
+            $year = trim($_POST['current_year'] ?? '1st Year');
+            $semester = trim($_POST['current_semester'] ?? '1st Semester');
+            $cgpa = (float)($_POST['cgpa'] ?? 0.00);
+            $credits = (int)($_POST['credits_completed'] ?? 0);
+            $status = in_array($_POST['status'] ?? '', ['Active', 'Graduated', 'Suspended']) ? $_POST['status'] : 'Active';
+
+            $upd = $db->prepare("UPDATE students SET current_year = ?, current_semester = ?, cgpa = ?, credits_completed = ?, status = ? WHERE id = ?");
+            $upd->execute([$year, $semester, $cgpa, $credits, $status, $studentId]);
+            log_audit('SEMESTER_PROGRESS_UPDATED', "Updated semester progress for {$student['student_id']}: Year={$year}, Sem={$semester}, CGPA={$cgpa}, Status={$status}");
+            flash_set('success', "Semester progress updated! Student is now in {$year} ({$semester}) with CGPA {$cgpa}.");
+        }
+
+        // 5. One-Click Complete All 8 Semesters & Graduate
+        elseif ($action === 'complete_all_semesters') {
+            $finalCgpa = (float)($_POST['final_cgpa'] ?? 3.85);
+            $finalCgpa = max(2.50, min(4.00, $finalCgpa));
+
+            // 5.1 Update student record
+            $upd = $db->prepare("
+                UPDATE students 
+                SET current_year = '4th Year', 
+                    current_semester = '8th Semester (Completed)', 
+                    status = 'Graduated', 
+                    credits_completed = 140, 
+                    cgpa = ?
+                WHERE id = ?
+            ");
+            $upd->execute([$finalCgpa, $studentId]);
+
+            // 5.2 Mark all current courses as Completed
+            $db->prepare("UPDATE student_courses SET status = 'Completed' WHERE student_id = ?")->execute([$studentId]);
+
+            // 5.3 Mark all fee dues as Paid
+            $db->prepare("UPDATE student_fees SET status = 'Paid', transaction_id = COALESCE(NULLIF(transaction_id, ''), CONCAT('RMU-COMP-', FLOOR(RAND()*89999+10000))), paid_at = COALESCE(paid_at, NOW()) WHERE student_id = ?")->execute([$studentId]);
+
+            // 5.4 Check existing results count. If student has fewer than 10 results, seed complete 8 semesters of transcript
+            $resCount = (int)$db->query("SELECT COUNT(*) FROM student_results WHERE student_id = {$studentId}")->fetchColumn();
+            if ($resCount < 10) {
+                $transcriptCourses = [
+                    ['1st Semester (Spring)', 'CSE 101', 'Structured Programming Language', 3.0, 'A+', 4.00],
+                    ['1st Semester (Spring)', 'CSE 102', 'Structured Programming Lab', 1.5, 'A+', 4.00],
+                    ['1st Semester (Spring)', 'ENG 101', 'English Reading & Writing Skills', 3.0, 'A', 3.75],
+                    ['1st Semester (Spring)', 'MAT 101', 'Differential and Integral Calculus', 3.0, 'A+', 4.00],
+                    ['2nd Semester (Fall)', 'CSE 103', 'Discrete Mathematics', 3.0, 'A+', 4.00],
+                    ['2nd Semester (Fall)', 'CSE 104', 'Object Oriented Programming (Java)', 3.0, 'A', 3.75],
+                    ['2nd Semester (Fall)', 'PHY 101', 'Physics (Mechanics, Waves & Optics)', 3.0, 'A', 3.75],
+                    ['2nd Semester (Fall)', 'BAN 105', 'Bangla Language & Tagore Literary Studies', 2.0, 'A+', 4.00],
+                    ['3rd Semester (Spring)', 'CSE 201', 'Data Structures & Algorithms', 3.0, 'A+', 4.00],
+                    ['3rd Semester (Spring)', 'CSE 202', 'Data Structures & Algorithms Lab', 1.5, 'A+', 4.00],
+                    ['3rd Semester (Spring)', 'CSE 203', 'Digital Logic Design & Microprocessors', 3.0, 'A', 3.75],
+                    ['3rd Semester (Spring)', 'MAT 102', 'Coordinate Geometry & Linear Algebra', 3.0, 'A', 3.75],
+                    ['4th Semester (Fall)', 'CSE 205', 'Database Management Systems', 3.0, 'A+', 4.00],
+                    ['4th Semester (Fall)', 'CSE 206', 'Database Management Systems Lab', 1.5, 'A+', 4.00],
+                    ['4th Semester (Fall)', 'CSE 207', 'Computer Architecture & Organization', 3.0, 'A', 3.75],
+                    ['4th Semester (Fall)', 'STA 201', 'Statistics & Probability for Engineers', 3.0, 'A', 3.75],
+                    ['5th Semester (Spring)', 'CSE 301', 'Software Engineering & System Analysis', 3.0, 'A+', 4.00],
+                    ['5th Semester (Spring)', 'CSE 302', 'Operating Systems & System Programming', 3.0, 'A', 3.75],
+                    ['5th Semester (Spring)', 'CSE 303', 'Operating Systems Lab (Linux/Unix)', 1.5, 'A+', 4.00],
+                    ['5th Semester (Spring)', 'CSE 304', 'Theory of Computation & Automata', 3.0, 'A', 3.75],
+                    ['6th Semester (Fall)', 'CSE 305', 'Computer Networks & Internet Protocols', 3.0, 'A+', 4.00],
+                    ['6th Semester (Fall)', 'CSE 306', 'Computer Networks Laboratory', 1.5, 'A+', 4.00],
+                    ['6th Semester (Fall)', 'CSE 307', 'Web Engineering & Full-Stack Development', 3.0, 'A+', 4.00],
+                    ['6th Semester (Fall)', 'CSE 308', 'Microcontroller & Embedded Systems Lab', 1.5, 'A', 3.75],
+                    ['7th Semester (Spring)', 'CSE 401', 'Artificial Intelligence & Machine Learning', 3.0, 'A+', 4.00],
+                    ['7th Semester (Spring)', 'CSE 402', 'Compiler Design & Construction', 3.0, 'A', 3.75],
+                    ['7th Semester (Spring)', 'CSE 403', 'Cyber Security & Cryptography', 3.0, 'A', 3.75],
+                    ['7th Semester (Spring)', 'CSE 499A', 'Capstone Project & Thesis (Part I)', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall)', 'CSE 405', 'Cloud Computing & Distributed Systems', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall)', 'CSE 406', 'Digital Image Processing & Vision', 3.0, 'A', 3.75],
+                    ['8th Semester (Fall)', 'CSE 499B', 'Capstone Project & Defense (Part II)', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall)', 'MGT 401', 'Industrial Management & Professional Ethics', 2.0, 'A+', 4.00]
+                ];
+
+                $rIns = $db->prepare("
+                    INSERT INTO student_results 
+                    (student_id, semester, course_code, course_name, credit, letter_grade, grade_point, exam_term)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Semester Final Examination')
+                ");
+
+                foreach ($transcriptCourses as $tc) {
+                    $rIns->execute([$studentId, $tc[0], $tc[1], $tc[2], $tc[3], $tc[4], $tc[5]]);
+                }
+            }
+
+            log_audit('STUDENT_GRADUATED_ALL_SEMESTERS', "Admin marked all 8 semesters completed and graduated student {$student['student_id']} (CGPA: {$finalCgpa})");
+            flash_set('success', "🎉 Student {$student['student_id']} ({$student['full_name']}) has successfully completed ALL 8 Semesters (140 Credits) and is officially GRADUATED with CGPA {$finalCgpa}!");
+        }
+
+        // 6. Login Directly to Student Portal
+        elseif ($action === 'login_as_student') {
+            $_SESSION['student_pk_id'] = $student['id'];
+            $_SESSION['student_id'] = $student['student_id'];
+            $_SESSION['student_name'] = $student['full_name'];
+            $_SESSION['student_email'] = $student['email'];
+
+            flash_set('success', "Logged in as student {$student['full_name']} ({$student['student_id']})!");
+            header("Location: " . APP_URL . "/student/dashboard.php");
+            exit;
+        }
     }
     header("Location: " . APP_URL . "/admin/student-detail.php?id=" . $studentId);
     exit;
@@ -190,7 +292,14 @@ include __DIR__ . '/includes/admin-header.php';
       Student: <?= e($student['full_name']) ?> <span style="font-family: monospace; color: var(--rmu-primary); font-size: 1.2rem;">(<?= e($student['student_id']) ?>)</span>
     </h2>
   </div>
-  <div style="display: flex; gap: 0.75rem;">
+  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+    <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $student['id'] ?>" method="POST" target="_blank" style="display:inline;">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="login_as_student">
+      <button type="submit" class="btn-primary" style="padding: 0.6rem 1.2rem; font-size: 0.88rem; background: #059669; border: none; cursor: pointer;" title="Directly log into student dashboard in new tab">
+        <i class="fas fa-sign-in-alt"></i> Login As Student (সরাসরি পোর্টালে ঢুকুন)
+      </button>
+    </form>
     <a href="<?= APP_URL ?>/admin/students.php?edit=<?= $student['id'] ?>" class="btn-primary" style="padding: 0.6rem 1.2rem; font-size: 0.88rem;">
       <i class="fas fa-edit"></i> Edit Profile
     </a>
@@ -198,6 +307,86 @@ include __DIR__ . '/includes/admin-header.php';
       <i class="fas fa-external-link-alt"></i> View Portal Login
     </a>
   </div>
+</div>
+
+<!-- Semester Progress & Graduation Master Control Panel -->
+<div style="background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%); border: 2px solid #bfdbfe; border-radius: 12px; padding: 1.75rem; margin-bottom: 2rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+    <div>
+      <h3 style="margin: 0 0 0.3rem; font-size: 1.25rem; font-weight: 700; color: #1e3a8a;">
+        <i class="fas fa-tasks" style="color: var(--rmu-primary);"></i> সেমিস্টার অগ্রগতি ও গ্র্যাজুয়েশন নিয়ন্ত্রণ (Semester Progress &amp; Graduation)
+      </h3>
+      <span style="font-size: 0.88rem; color: #475569;">
+        এখান থেকে আপনি এই ছাত্রের সেমিস্টার প্রমোট করতে পারেন অথবা <strong>এক ক্লিকে সম্পূর্ণ ৮টি সেমিস্টার কমপ্লিট করে গ্র্যাজুয়েট</strong> করাতে পারেন।
+      </span>
+    </div>
+
+    <!-- 1-Click Complete All Semesters Button -->
+    <div>
+      <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $student['id'] ?>" method="POST" onsubmit="return confirm('এই শিক্ষার্থীর সকল ৮টি সেমিস্টার কি সম্পন্ন (Complete) ঘোষণা করতে চান? এর ফলে ছাত্রের প্রোফাইলে সমস্ত ৮টি সেমিস্টার ও গ্রেড অটোমেটিক যুক্ত হবে এবং ছাত্রটি গ্র্যাজুয়েট হিসেবে উত্তীর্ণ হবে!');">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="complete_all_semesters">
+        <input type="hidden" name="final_cgpa" value="3.85">
+        <button type="submit" class="btn-primary" style="padding: 0.75rem 1.5rem; font-size: 0.95rem; background: #15803d; font-weight: 700; box-shadow: 0 4px 8px rgba(21, 128, 61, 0.3); border: none; cursor: pointer;">
+          <i class="fas fa-graduation-cap"></i> সব সেমিস্টার সম্পন্ন করুন (Graduate All 8 Semesters)
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Manual Custom Semester Update Form -->
+  <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $student['id'] ?>" method="POST" style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1.25rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) auto; gap: 1rem; align-items: flex-end;">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="update_semester_progress">
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">বর্তমান বর্ষ (Academic Year)</label>
+      <select name="current_year" class="form-select" style="font-size: 0.88rem;">
+        <option value="1st Year" <?= ($student['current_year'] === '1st Year') ? 'selected' : '' ?>>1st Year (প্রথম বর্ষ)</option>
+        <option value="2nd Year" <?= ($student['current_year'] === '2nd Year') ? 'selected' : '' ?>>2nd Year (দ্বিতীয় বর্ষ)</option>
+        <option value="3rd Year" <?= ($student['current_year'] === '3rd Year') ? 'selected' : '' ?>>3rd Year (তৃতীয় বর্ষ)</option>
+        <option value="4th Year" <?= ($student['current_year'] === '4th Year') ? 'selected' : '' ?>>4th Year (চতুর্থ বর্ষ)</option>
+      </select>
+    </div>
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">বর্তমান সেমিস্টার (Semester)</label>
+      <select name="current_semester" class="form-select" style="font-size: 0.88rem;">
+        <option value="Fall 2026 (1st Semester)" <?= (strpos($student['current_semester'], '1st') !== false) ? 'selected' : '' ?>>1st Semester</option>
+        <option value="Spring 2027 (2nd Semester)" <?= (strpos($student['current_semester'], '2nd') !== false) ? 'selected' : '' ?>>2nd Semester</option>
+        <option value="Fall 2027 (3rd Semester)" <?= (strpos($student['current_semester'], '3rd') !== false) ? 'selected' : '' ?>>3rd Semester</option>
+        <option value="Spring 2028 (4th Semester)" <?= (strpos($student['current_semester'], '4th') !== false) ? 'selected' : '' ?>>4th Semester</option>
+        <option value="Fall 2028 (5th Semester)" <?= (strpos($student['current_semester'], '5th') !== false) ? 'selected' : '' ?>>5th Semester</option>
+        <option value="Spring 2029 (6th Semester)" <?= (strpos($student['current_semester'], '6th') !== false) ? 'selected' : '' ?>>6th Semester</option>
+        <option value="Fall 2029 (7th Semester)" <?= (strpos($student['current_semester'], '7th') !== false) ? 'selected' : '' ?>>7th Semester</option>
+        <option value="Spring 2030 (8th Semester)" <?= (strpos($student['current_semester'], '8th') !== false) ? 'selected' : '' ?>>8th Semester (Final)</option>
+        <option value="8th Semester (Completed)" <?= ($student['status'] === 'Graduated') ? 'selected' : '' ?>>Completed (All 8 Semesters)</option>
+      </select>
+    </div>
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">অর্জিত CGPA</label>
+      <input type="number" step="0.01" min="0" max="4.00" name="cgpa" value="<?= e($student['cgpa']) ?>" class="form-control" style="font-size: 0.88rem;">
+    </div>
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">অর্জিত ক্রেডিট (Credits)</label>
+      <input type="number" min="0" max="160" name="credits_completed" value="<?= (int)$student['credits_completed'] ?>" class="form-control" style="font-size: 0.88rem;">
+    </div>
+
+    <div class="form-group" style="margin-bottom: 0;">
+      <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">ছাত্রের অবস্থা (Status)</label>
+      <select name="status" class="form-select" style="font-size: 0.88rem;">
+        <option value="Active" <?= ($student['status'] === 'Active') ? 'selected' : '' ?>>Active (নিয়মিত অধ্যয়নরত)</option>
+        <option value="Graduated" <?= ($student['status'] === 'Graduated') ? 'selected' : '' ?>>Graduated (উত্তীর্ণ / পাসকৃত)</option>
+        <option value="Suspended" <?= ($student['status'] === 'Suspended') ? 'selected' : '' ?>>Suspended (সাময়িক বরখাস্ত)</option>
+      </select>
+    </div>
+
+    <button type="submit" class="btn-primary" style="padding: 0.65rem 1.25rem; font-size: 0.88rem; white-space: nowrap;">
+      <i class="fas fa-save"></i> সেমিস্টার আপডেট
+    </button>
+  </form>
 </div>
 
 <!-- Student Profile Overview Card -->

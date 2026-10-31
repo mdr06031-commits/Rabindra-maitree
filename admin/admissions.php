@@ -90,7 +90,14 @@ $countStmt->execute($params);
 $total = (int)$countStmt->fetchColumn();
 
 // Fetch Data
-$query = "SELECT * FROM admissions $whereSql ORDER BY id DESC LIMIT ? OFFSET ?";
+$query = "
+    SELECT a.*, s.id AS student_table_id, s.cgpa AS student_cgpa, s.current_semester AS student_sem 
+    FROM admissions a 
+    LEFT JOIN students s ON a.student_id = s.student_id 
+    $whereSql 
+    ORDER BY a.id DESC 
+    LIMIT ? OFFSET ?
+";
 $stmt = $db->prepare($query);
 foreach ($params as $k => $v) {
     $stmt->bindValue($k + 1, $v);
@@ -289,6 +296,14 @@ include __DIR__ . '/includes/admin-header.php';
                     </button>
                   </form>
                 </div>
+
+                <?php if (!empty($adm['student_table_id'])): ?>
+                  <div style="margin-top: 5px;">
+                    <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= $adm['student_table_id'] ?>" class="btn-primary" style="padding: 0.3rem 0.5rem; font-size: 0.72rem; background: #0284c7; display: flex; align-items: center; justify-content: center; gap: 4px; text-decoration: none;" title="Manage Student Portal & Semesters">
+                      <i class="fas fa-graduation-cap"></i> সেমিস্টার কন্ট্রোল &rarr;
+                    </a>
+                  </div>
+                <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>
