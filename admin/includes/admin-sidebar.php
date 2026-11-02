@@ -36,6 +36,12 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'results-manager.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/results-manager.php" class="admin-nav-link">
+        <i class="fas fa-award"></i> Results &amp; CGPA Manager
+      </a>
+    </li>
+
     <li class="admin-nav-item <?= ($adminCurrentPage === 'portal-notices.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/portal-notices.php" class="admin-nav-link">
         <i class="fas fa-broadcast-tower"></i> Portal Notices

@@ -99,3 +99,4 @@ $db->prepare("
 ")->execute([$finalCgpa, (int)$totalCredits, $studentId]);
 
 echo "Successfully seeded all 8 Semesters (32 Courses, {$totalCredits} Credits, CGPA {$finalCgpa}) for student {$student['student_id']}.\n";
+

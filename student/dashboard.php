@@ -5,8 +5,16 @@
 $portalTitle = 'Dashboard Overview';
 require_once __DIR__ . '/includes/student-header.php';
 
+$student = get_logged_in_student();
+
 $db = getDb();
-$studentId = $student['id'];
+$studentId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
+
+// Retrieve academic summary (only published results)
+$academicSummary = get_student_academic_summary($studentId, true);
+$hasPublishedResults = $academicSummary['has_results'];
+$studentCgpa = $hasPublishedResults ? number_format($academicSummary['final_cgpa'], 2) : '0.00';
+$studentEarnedCredits = $hasPublishedResults ? (int)$academicSummary['total_earned_credits'] : 0;
 
 // Retrieve enrolled courses for current semester
 $enrolledCourses = $db->prepare("
@@ -24,10 +32,10 @@ if (!empty($courses)) {
     $avgAttendance = round($totalAtt / count($courses));
 }
 
-// Retrieve recent results
+// Retrieve recent published results
 $recentResultsStmt = $db->prepare("
   SELECT * FROM student_results 
-  WHERE student_id = ? 
+  WHERE student_id = ? AND is_published = 1
   ORDER BY id DESC LIMIT 5
 ");
 $recentResultsStmt->execute([$studentId]);
@@ -85,8 +93,13 @@ $notices = $db->query("
         <i class="fas fa-award"></i>
       </div>
       <div>
-        <div class="sp-kpi-val"><?= number_format((float)$student['cgpa'], 2) ?></div>
-        <div class="sp-kpi-label">Cumulative GPA (out of 4.00)</div>
+        <?php if ($hasPublishedResults): ?>
+          <div class="sp-kpi-val" style="color:#15803d;"><?= $studentCgpa ?></div>
+          <div class="sp-kpi-label">Cumulative GPA (out of 4.00)</div>
+        <?php else: ?>
+          <div class="sp-kpi-val" style="color:#64748b; font-size:1.35rem;">N/A</div>
+          <div class="sp-kpi-label">No published results yet</div>
+        <?php endif; ?>
       </div>
     </div>
 
@@ -96,8 +109,8 @@ $notices = $db->query("
         <i class="fas fa-check-double"></i>
       </div>
       <div>
-        <div class="sp-kpi-val"><?= (int)$student['credits_completed'] ?> <small style="font-size:0.9rem; color:#64748b; font-weight:500;">/ <?= (int)$student['total_credits_required'] ?></small></div>
-        <div class="sp-kpi-label">Credits Completed</div>
+        <div class="sp-kpi-val"><?= $studentEarnedCredits ?> <small style="font-size:0.9rem; color:#64748b; font-weight:500;">/ <?= (int)$student['total_credits_required'] ?></small></div>
+        <div class="sp-kpi-label"><?= $hasPublishedResults ? 'Earned Credits' : 'Credits Completed' ?></div>
       </div>
     </div>
 

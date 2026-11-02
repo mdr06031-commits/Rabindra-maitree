@@ -77,34 +77,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // 2. Academic Result Actions
         elseif ($action === 'add_result') {
             $semester = trim($_POST['semester'] ?? '');
-            $courseCode = trim($_POST['course_code'] ?? '');
+            $courseCode = strtoupper(trim($_POST['course_code'] ?? ''));
             $courseName = trim($_POST['course_name'] ?? '');
             $credit = (float)($_POST['credit'] ?? 3.0);
-            $grade = trim($_POST['letter_grade'] ?? 'A+');
-            $point = (float)($_POST['grade_point'] ?? 4.00);
-            $term = trim($_POST['exam_term'] ?? 'Semester Final Exam');
+            $fullMarks = (int)($_POST['full_marks'] ?? 100);
+            $marks = isset($_POST['marks']) && $_POST['marks'] !== '' ? (float)$_POST['marks'] : null;
+            $term = trim($_POST['exam_term'] ?? 'Semester Final Examination');
+            $isPublished = !empty($_POST['is_published']) ? 1 : 0;
 
             if (!empty($semester) && !empty($courseCode)) {
-                $rStmt = $db->prepare("
-                    INSERT INTO student_results 
-                    (student_id, semester, course_code, course_name, credit, letter_grade, grade_point, exam_term)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $rStmt->execute([$studentId, $semester, $courseCode, $courseName, $credit, $grade, $point, $term]);
-
-                // Auto-recalculate CGPA & total credits completed
-                $calc = $db->prepare("SELECT SUM(credit * grade_point) / SUM(credit) AS new_cgpa, SUM(credit) AS total_cr FROM student_results WHERE student_id = ?");
-                $calc->execute([$studentId]);
-                $cData = $calc->fetch();
-                if ($cData && $cData['total_cr'] > 0) {
-                    $newCgpa = round($cData['new_cgpa'], 2);
-                    $newCr = (int)$cData['total_cr'];
-                    $upd = $db->prepare("UPDATE students SET cgpa = ?, credits_completed = ? WHERE id = ?");
-                    $upd->execute([$newCgpa, $newCr, $studentId]);
+                if ($marks !== null) {
+                    $gradeInfo = calculate_grade_from_marks($marks);
+                    $grade = $gradeInfo['letter_grade'];
+                    $point = $gradeInfo['grade_point'];
+                } else {
+                    $grade = trim($_POST['letter_grade'] ?? 'A+');
+                    $point = (float)($_POST['grade_point'] ?? 4.00);
                 }
 
-                log_audit('STUDENT_RESULT_ADDED', "Added result for {$student['student_id']}: {$courseCode} ({$grade})");
-                flash_set('success', "Result for '{$courseCode}' recorded and CGPA updated.");
+                $rStmt = $db->prepare("
+                    INSERT INTO student_results 
+                    (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $rStmt->execute([$studentId, $semester, $courseCode, $courseName, $credit, $fullMarks, $marks, $grade, $point, $term, $isPublished]);
+
+                $resMetrics = recalculate_student_cgpa($studentId);
+                log_audit('STUDENT_RESULT_ADDED', "Added result for {$student['student_id']}: {$courseCode} ({$grade}, {$marks} marks)");
+                flash_set('success', "Result for '{$courseCode}' saved successfully! Updated CGPA: {$resMetrics['cgpa']}.");
             } else {
                 flash_set('error', 'Semester and Course code are required.');
             }
@@ -113,8 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($rid > 0) {
                 $del = $db->prepare("DELETE FROM student_results WHERE id = ? AND student_id = ?");
                 $del->execute([$rid, $studentId]);
+                $resMetrics = recalculate_student_cgpa($studentId);
                 log_audit('STUDENT_RESULT_DELETED', "Deleted result ID #{$rid} from student {$student['student_id']}");
-                flash_set('success', "Academic result record deleted.");
+                flash_set('success', "Academic result record deleted. Updated CGPA: {$resMetrics['cgpa']}.");
             }
         }
 
@@ -646,12 +647,15 @@ include __DIR__ . '/includes/admin-header.php';
                 <table class="rmu-table" style="box-shadow: none; margin: 0;">
                   <thead>
                     <tr>
-                      <th>Course Code &bull; Title</th>
-                      <th style="width: 85px; text-align: center;">Credit</th>
-                      <th style="width: 100px; text-align: center;">Letter Grade</th>
-                      <th style="width: 100px; text-align: center;">Grade Point</th>
-                      <th style="width: 110px; text-align: center;">Points Earned</th>
-                      <th style="text-align: right; width: 80px;">Action</th>
+                      <th>Subject Code &bull; Title</th>
+                      <th style="width: 70px; text-align: center;">Credit</th>
+                      <th style="width: 80px; text-align: center;">Full Marks</th>
+                      <th style="width: 85px; text-align: center;">Obtained</th>
+                      <th style="width: 75px; text-align: center;">Grade</th>
+                      <th style="width: 85px; text-align: center;">Grade Point</th>
+                      <th style="width: 95px; text-align: center;">Points Earned</th>
+                      <th style="width: 75px; text-align: center;">Status</th>
+                      <th style="text-align: right; width: 65px;">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -660,6 +664,9 @@ include __DIR__ . '/includes/admin-header.php';
                         $cr = (float)$res['credit'];
                         $gp = (float)$res['grade_point'];
                         $pts = round($cr * $gp, 2);
+                        $status = ($gp >= 2.00) ? 'PASS' : 'FAIL';
+                        $fullMarks = isset($res['full_marks']) ? (int)$res['full_marks'] : 100;
+                        $obtMarks = isset($res['marks']) && $res['marks'] !== null ? number_format((float)$res['marks'], 1) : '—';
                       ?>
                       <tr>
                         <td>
@@ -668,6 +675,8 @@ include __DIR__ . '/includes/admin-header.php';
                           <small style="color: #64748b;"><?= e($res['exam_term']) ?></small>
                         </td>
                         <td style="text-align: center; font-weight: 600;"><?= number_format($cr, 1) ?></td>
+                        <td style="text-align: center; color: #64748b;"><?= $fullMarks ?></td>
+                        <td style="text-align: center; font-weight: 700; color: #0f172a;"><?= $obtMarks ?></td>
                         <td style="text-align: center;">
                           <span style="font-weight: 700; color: #1e40af; font-size: 0.95rem;"><?= e($res['letter_grade']) ?></span>
                         </td>
@@ -676,6 +685,11 @@ include __DIR__ . '/includes/admin-header.php';
                         </td>
                         <td style="text-align: center; font-weight: 700; color: #0f172a;">
                           <?= number_format($pts, 2) ?>
+                        </td>
+                        <td style="text-align: center;">
+                          <span style="font-size: 0.75rem; font-weight: 800; color: <?= ($status === 'PASS') ? '#15803d' : '#dc2626' ?>;">
+                            <?= $status ?>
+                          </span>
                         </td>
                         <td style="text-align: right;">
                           <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;" onsubmit="return confirm('Delete result for <?= e($res['course_code']) ?>?');">
@@ -694,8 +708,9 @@ include __DIR__ . '/includes/admin-header.php';
                     <tr style="background: #f8fafc; font-weight: 700; font-size: 0.85rem; border-top: 1.5px solid #cbd5e1;">
                       <td style="text-align: right; color: #475569;">Semester Summary (<?= e($semTitle) ?>):</td>
                       <td style="text-align: center; color: #0f172a;"><?= number_format((float)$st['sem_credits'], 1) ?> Cr</td>
-                      <td colspan="2" style="text-align: right; color: #1e3a8a;">Semester GPA (SGPA): <strong><?= number_format((float)$st['sgpa'], 2) ?></strong></td>
-                      <td colspan="2" style="text-align: center; color: #15803d; font-weight: 800; font-size: 0.95rem;">Cumulative CGPA: <?= number_format((float)$st['cgpa'], 2) ?></td>
+                      <td colspan="2" style="text-align: center; color: #0f2c59;">Earned: <?= number_format((float)$st['sem_credits'], 1) ?> Cr</td>
+                      <td colspan="2" style="text-align: right; color: #1e3a8a;">Semester SGPA: <strong><?= number_format((float)$st['sgpa'], 2) ?></strong></td>
+                      <td colspan="3" style="text-align: center; color: #15803d; font-weight: 800; font-size: 0.95rem;">Cumulative CGPA: <?= number_format((float)$st['cgpa'], 2) ?></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -709,16 +724,30 @@ include __DIR__ . '/includes/admin-header.php';
       </div>
     </div>
 
-    <!-- Record New Result Form -->
+    <!-- Record New Result Form with Live Auto-Grader -->
     <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-      <h4 style="margin: 0 0 1.25rem; font-size: 1.1rem; color: #0f172a;"><i class="fas fa-award" style="color: var(--rmu-primary);"></i> Publish Grade Result</h4>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+        <h4 style="margin: 0; font-size: 1.1rem; color: #0f172a;"><i class="fas fa-award" style="color: var(--rmu-primary);"></i> Publish Grade Result</h4>
+        <a href="<?= APP_URL ?>/admin/results-manager.php?student_id=<?= $studentId ?>" style="font-size:0.8rem; font-weight:700; color:#1e73be; text-decoration:none;">
+          Advanced 8-Semester Results Manager &rarr;
+        </a>
+      </div>
       <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST">
         <?= csrf_field() ?>
         <input type="hidden" name="action" value="add_result">
 
         <div class="form-group">
-          <label class="form-label">Semester Session *</label>
-          <input type="text" name="semester" placeholder="e.g. Fall 2026 (1st Semester)" class="form-control" required>
+          <label class="form-label">Semester (১ম থেকে ৮ম সেমিস্টার) *</label>
+          <select name="semester" class="form-select" required>
+            <option value="1st Semester">1st Semester (১ম সেমিস্টার)</option>
+            <option value="2nd Semester">2nd Semester (২য় সেমিস্টার)</option>
+            <option value="3rd Semester">3rd Semester (৩য় সেমিস্টার)</option>
+            <option value="4th Semester">4th Semester (৪র্থ সেমিস্টার)</option>
+            <option value="5th Semester">5th Semester (৫ম সেমিস্টার)</option>
+            <option value="6th Semester">6th Semester (৬ষ্ঠ সেমিস্টার)</option>
+            <option value="7th Semester">7th Semester (৭ম সেমিস্টার)</option>
+            <option value="8th Semester">8th Semester (৮ম সেমিস্টার)</option>
+          </select>
         </div>
 
         <div class="form-group">
@@ -731,38 +760,61 @@ include __DIR__ . '/includes/admin-header.php';
           <input type="text" name="course_name" placeholder="e.g. Structured Programming in C" class="form-control">
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
           <div class="form-group">
-            <label class="form-label">Credit</label>
-            <input type="number" step="0.5" name="credit" value="3.0" class="form-control" required>
+            <label class="form-label">Credit Hours *</label>
+            <input type="number" step="0.5" min="0.5" max="6.0" name="credit" value="3.0" class="form-control" required>
           </div>
           <div class="form-group">
-            <label class="form-label">Grade</label>
-            <select name="letter_grade" class="form-select" onchange="autoGradePoint(this.value)">
-              <option value="A+">A+</option>
-              <option value="A">A</option>
-              <option value="A-">A-</option>
-              <option value="B+">B+</option>
-              <option value="B">B</option>
-              <option value="B-">B-</option>
-              <option value="C+">C+</option>
-              <option value="C">C</option>
-              <option value="D">D</option>
-              <option value="F">F</option>
-            </select>
+            <label class="form-label">Full Marks</label>
+            <input type="number" name="full_marks" value="100" class="form-control" readonly>
           </div>
-          <div class="form-group">
-            <label class="form-label">Point</label>
-            <input type="number" step="0.01" min="0" max="4.00" name="grade_point" id="gradePointInput" value="4.00" class="form-control" required>
+        </div>
+
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:0.85rem; margin-bottom:1rem;">
+          <div style="font-size:0.82rem; font-weight:700; color:#0f2c59; margin-bottom:0.5rem;">
+            <i class="fas fa-magic" style="color:#d97706;"></i> Live Auto-Grading (UGC 4.00 Scale)
+          </div>
+          <div style="display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 0.75rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Obtained Marks (out of 100)</label>
+              <input type="number" step="0.5" min="0" max="100" name="marks" id="marksInput" placeholder="e.g. 85" class="form-control" oninput="autoGradeFromMarks(this.value)">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Letter Grade</label>
+              <select name="letter_grade" id="letterGradeSelect" class="form-select" onchange="autoGradePoint(this.value)">
+                <option value="A+">A+</option>
+                <option value="A">A</option>
+                <option value="A-">A-</option>
+                <option value="B+">B+</option>
+                <option value="B">B</option>
+                <option value="B-">B-</option>
+                <option value="C+">C+</option>
+                <option value="C">C</option>
+                <option value="D">D</option>
+                <option value="F">F</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Grade Point</label>
+              <input type="number" step="0.01" min="0" max="4.00" name="grade_point" id="gradePointInput" value="4.00" class="form-control" required>
+            </div>
           </div>
         </div>
 
         <div class="form-group">
-          <label class="form-label">Exam Examination Term</label>
-          <input type="text" name="exam_term" value="Semester Final Exam" class="form-control">
+          <label class="form-label">Examination Term</label>
+          <input type="text" name="exam_term" value="Semester Final Examination" class="form-control">
         </div>
 
-        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;">
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:0.88rem; cursor:pointer;">
+            <input type="checkbox" name="is_published" value="1" checked style="width:16px; height:16px;">
+            <span style="font-weight:600; color:#0f172a;">Publish result immediately (visible in Student Portal)</span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; margin-top: 0.5rem;">
           <i class="fas fa-check-circle"></i> Save Result &amp; Recalculate CGPA
         </button>
       </form>
@@ -917,6 +969,27 @@ function autoGradePoint(grade) {
   if (map[grade] !== undefined) {
     document.getElementById('gradePointInput').value = map[grade].toFixed(2);
   }
+}
+
+function autoGradeFromMarks(val) {
+  const m = parseFloat(val);
+  if (isNaN(m) || val === '') return;
+  let grade = 'F', point = 0.00;
+  if (m >= 80) { grade = 'A+'; point = 4.00; }
+  else if (m >= 75) { grade = 'A'; point = 3.75; }
+  else if (m >= 70) { grade = 'A-'; point = 3.50; }
+  else if (m >= 65) { grade = 'B+'; point = 3.25; }
+  else if (m >= 60) { grade = 'B'; point = 3.00; }
+  else if (m >= 55) { grade = 'B-'; point = 2.75; }
+  else if (m >= 50) { grade = 'C+'; point = 2.50; }
+  else if (m >= 45) { grade = 'C'; point = 2.25; }
+  else if (m >= 40) { grade = 'D'; point = 2.00; }
+  else { grade = 'F'; point = 0.00; }
+
+  const sel = document.getElementById('letterGradeSelect');
+  if (sel) sel.value = grade;
+  const pInput = document.getElementById('gradePointInput');
+  if (pInput) pInput.value = point.toFixed(2);
 }
 </script>
 

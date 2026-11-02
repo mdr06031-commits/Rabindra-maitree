@@ -688,7 +688,7 @@ function get_logged_in_student(): ?array {
         return null;
     }
     static $studentCache = null;
-    if ($studentCache !== null) {
+    if ($studentCache !== null && isset($studentCache['id']) && $studentCache['id'] == (int)$_SESSION['student_pk_id']) {
         return $studentCache;
     }
     $db = getDb();
@@ -729,6 +729,219 @@ function get_semester_number(string $name): int {
     if (preg_match('/8(?:th)?\s*Semester/i', $name)) return 8;
     if (preg_match('/\b([1-8])\b/', $name, $m)) return (int)$m[1];
     return 99;
+}
+
+/**
+ * Calculate UGC Uniform Letter Grade, Grade Point, and Result Status from Marks (out of 100)
+ */
+function calculate_grade_from_marks(float $marks): array {
+    $marks = max(0.00, min(100.00, $marks));
+    if ($marks >= 80.00) {
+        return ['letter_grade' => 'A+', 'grade_point' => 4.00, 'status' => 'Pass', 'remarks' => 'Outstanding'];
+    } elseif ($marks >= 75.00) {
+        return ['letter_grade' => 'A',  'grade_point' => 3.75, 'status' => 'Pass', 'remarks' => 'Excellent'];
+    } elseif ($marks >= 70.00) {
+        return ['letter_grade' => 'A-', 'grade_point' => 3.50, 'status' => 'Pass', 'remarks' => 'Very Good'];
+    } elseif ($marks >= 65.00) {
+        return ['letter_grade' => 'B+', 'grade_point' => 3.25, 'status' => 'Pass', 'remarks' => 'Good'];
+    } elseif ($marks >= 60.00) {
+        return ['letter_grade' => 'B',  'grade_point' => 3.00, 'status' => 'Pass', 'remarks' => 'Satisfactory'];
+    } elseif ($marks >= 55.00) {
+        return ['letter_grade' => 'B-', 'grade_point' => 2.75, 'status' => 'Pass', 'remarks' => 'Above Average'];
+    } elseif ($marks >= 50.00) {
+        return ['letter_grade' => 'C+', 'grade_point' => 2.50, 'status' => 'Pass', 'remarks' => 'Average'];
+    } elseif ($marks >= 45.00) {
+        return ['letter_grade' => 'C',  'grade_point' => 2.25, 'status' => 'Pass', 'remarks' => 'Pass'];
+    } elseif ($marks >= 40.00) {
+        return ['letter_grade' => 'D',  'grade_point' => 2.00, 'status' => 'Pass', 'remarks' => 'Conditional Pass'];
+    } else {
+        return ['letter_grade' => 'F',  'grade_point' => 0.00, 'status' => 'Fail', 'remarks' => 'Fail'];
+    }
+}
+
+/**
+ * Recalculate credit-weighted CGPA & completed credits for a student and sync with database
+ */
+function recalculate_student_cgpa(int $studentId): array {
+    $db = getDb();
+    $stmt = $db->prepare("
+        SELECT 
+            COUNT(*) AS total_courses,
+            SUM(credit) AS total_registered_credits,
+            SUM(CASE WHEN grade_point >= 2.00 THEN credit ELSE 0 END) AS total_earned_credits,
+            SUM(credit * grade_point) AS total_grade_points
+        FROM student_results
+        WHERE student_id = ? AND is_published = 1
+    ");
+    $stmt->execute([$studentId]);
+    $stats = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $totalCourses = (int)($stats['total_courses'] ?? 0);
+    $totalRegCredits = (float)($stats['total_registered_credits'] ?? 0);
+    $totalEarnedCredits = (float)($stats['total_earned_credits'] ?? 0);
+    $totalGradePoints = (float)($stats['total_grade_points'] ?? 0);
+
+    $cgpa = ($totalCourses > 0 && $totalRegCredits > 0)
+        ? round($totalGradePoints / $totalRegCredits, 2)
+        : 0.00;
+
+    $upd = $db->prepare("UPDATE students SET cgpa = ?, credits_completed = ? WHERE id = ?");
+    $upd->execute([$cgpa, (int)$totalEarnedCredits, $studentId]);
+
+    return [
+        'cgpa' => $cgpa,
+        'credits_completed' => (int)$totalEarnedCredits,
+        'total_registered_credits' => $totalRegCredits,
+        'total_grade_points' => $totalGradePoints,
+        'total_courses' => $totalCourses,
+    ];
+}
+
+/**
+ * Get comprehensive 8-semester breakdown and cumulative statistics for a student
+ */
+function get_student_academic_summary(int $studentId, bool $publishedOnly = true): array {
+    $db = getDb();
+    
+    // Fetch student profile
+    $stStmt = $db->prepare("
+        SELECT s.*, p.title_en AS program_name, d.name_en AS department_name, f.name_en AS faculty_name
+        FROM students s
+        LEFT JOIN programs p ON s.program_id = p.id
+        LEFT JOIN departments d ON s.department_id = d.id
+        LEFT JOIN faculties f ON d.faculty_id = f.id
+        WHERE s.id = ?
+        LIMIT 1
+    ");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['has_results' => false, 'student' => null, 'semesters' => []];
+    }
+
+    $sql = "SELECT * FROM student_results WHERE student_id = ?";
+    if ($publishedOnly) {
+        $sql .= " AND is_published = 1";
+    }
+    $sql .= " ORDER BY id ASC";
+
+    $rStmt = $db->prepare($sql);
+    $rStmt->execute([$studentId]);
+    $allResults = $rStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($allResults)) {
+        return [
+            'has_results' => false,
+            'student' => $student,
+            'semesters' => [],
+            'semester_gpas' => [],
+            'final_cgpa' => 0.00,
+            'total_registered_credits' => 0.0,
+            'total_earned_credits' => 0.0,
+            'total_grade_points' => 0.0,
+        ];
+    }
+
+    // Group by semester
+    $grouped = [];
+    foreach ($allResults as $res) {
+        $semKey = trim($res['semester']);
+        $grouped[$semKey][] = $res;
+    }
+
+    // Sort chronologically 1 to 8
+    uksort($grouped, function($a, $b) {
+        return get_semester_number($a) <=> get_semester_number($b);
+    });
+
+    $runningRegCredits = 0.0;
+    $runningEarnedCredits = 0.0;
+    $runningGradePoints = 0.0;
+    $semestersData = [];
+    $semesterGpas = [];
+
+    foreach ($grouped as $semName => $coursesList) {
+        $semNum = get_semester_number($semName);
+        $semRegCr = 0.0;
+        $semEarnedCr = 0.0;
+        $semPts = 0.0;
+        $processedCourses = [];
+        $hasFailedCourse = false;
+
+        foreach ($coursesList as $c) {
+            $cr = (float)$c['credit'];
+            $obtainedMarks = isset($c['marks']) && $c['marks'] !== null ? (float)$c['marks'] : null;
+            $fullMarks = isset($c['full_marks']) ? (int)$c['full_marks'] : 100;
+            $gp = (float)$c['grade_point'];
+            $grade = trim($c['letter_grade']);
+            $ptsSecured = round($cr * $gp, 2);
+            $status = ($gp >= 2.00) ? 'Pass' : 'Fail';
+
+            if ($status === 'Fail') {
+                $hasFailedCourse = true;
+            }
+
+            $semRegCr += $cr;
+            if ($status === 'Pass') {
+                $semEarnedCr += $cr;
+            }
+            $semPts += $ptsSecured;
+
+            $processedCourses[] = [
+                'id' => (int)$c['id'],
+                'course_code' => $c['course_code'],
+                'course_name' => $c['course_name'],
+                'credit' => $cr,
+                'full_marks' => $fullMarks,
+                'marks' => $obtainedMarks,
+                'letter_grade' => $grade,
+                'grade_point' => $gp,
+                'points_secured' => $ptsSecured,
+                'status' => $status,
+                'exam_term' => $c['exam_term'],
+                'is_published' => (bool)$c['is_published'],
+            ];
+        }
+
+        $sgpa = ($semRegCr > 0) ? round($semPts / $semRegCr, 2) : 0.00;
+        $semResultStatus = $hasFailedCourse ? 'PROMOTED (WITH CARRY)' : 'PASSED';
+
+        $runningRegCredits += $semRegCr;
+        $runningEarnedCredits += $semEarnedCr;
+        $runningGradePoints += $semPts;
+        $runningCgpa = ($runningRegCredits > 0) ? round($runningGradePoints / $runningRegCredits, 2) : 0.00;
+
+        $semestersData[$semName] = [
+            'semester_number' => $semNum,
+            'semester_name' => $semName,
+            'courses' => $processedCourses,
+            'registered_credits' => $semRegCr,
+            'earned_credits' => $semEarnedCr,
+            'semester_points' => $semPts,
+            'sgpa' => $sgpa,
+            'status' => $semResultStatus,
+            'cumulative_reg_credits' => $runningRegCredits,
+            'cumulative_earned_credits' => $runningEarnedCredits,
+            'cumulative_points' => $runningGradePoints,
+            'cumulative_cgpa' => $runningCgpa,
+        ];
+
+        $semesterGpas[$semNum] = $sgpa;
+    }
+
+    $finalCgpa = ($runningRegCredits > 0) ? round($runningGradePoints / $runningRegCredits, 2) : 0.00;
+
+    return [
+        'has_results' => true,
+        'student' => $student,
+        'semesters' => $semestersData,
+        'semester_gpas' => $semesterGpas,
+        'final_cgpa' => $finalCgpa,
+        'total_registered_credits' => $runningRegCredits,
+        'total_earned_credits' => $runningEarnedCredits,
+        'total_grade_points' => $runningGradePoints,
+    ];
 }
 
 function get_student_avatar_url(?array $student): string {

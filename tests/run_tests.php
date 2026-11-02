@@ -607,6 +607,257 @@ run_test("Per-Semester Academic Transcript Generation & Download Verification", 
     return true;
 });
 
+// 51. UGC Uniform Grading Scale Auto-Calculation Function Verification
+run_test("UGC Uniform Grading Scale 4.00 Auto-Calculation Rules", function() {
+    $cases = [
+        ['marks' => 85, 'expected_grade' => 'A+', 'expected_gp' => 4.00, 'expected_status' => 'Pass'],
+        ['marks' => 78, 'expected_grade' => 'A',  'expected_gp' => 3.75, 'expected_status' => 'Pass'],
+        ['marks' => 72, 'expected_grade' => 'A-', 'expected_gp' => 3.50, 'expected_status' => 'Pass'],
+        ['marks' => 67, 'expected_grade' => 'B+', 'expected_gp' => 3.25, 'expected_status' => 'Pass'],
+        ['marks' => 61, 'expected_grade' => 'B',  'expected_gp' => 3.00, 'expected_status' => 'Pass'],
+        ['marks' => 56, 'expected_grade' => 'B-', 'expected_gp' => 2.75, 'expected_status' => 'Pass'],
+        ['marks' => 51, 'expected_grade' => 'C+', 'expected_gp' => 2.50, 'expected_status' => 'Pass'],
+        ['marks' => 46, 'expected_grade' => 'C',  'expected_gp' => 2.25, 'expected_status' => 'Pass'],
+        ['marks' => 42, 'expected_grade' => 'D',  'expected_gp' => 2.00, 'expected_status' => 'Pass'],
+        ['marks' => 38, 'expected_grade' => 'F',  'expected_gp' => 0.00, 'expected_status' => 'Fail'],
+    ];
+
+    foreach ($cases as $c) {
+        $result = calculate_grade_from_marks($c['marks']);
+        if ($result['letter_grade'] !== $c['expected_grade']) {
+            return "Failed for marks {$c['marks']}: expected grade {$c['expected_grade']}, got {$result['letter_grade']}";
+        }
+        if (abs($result['grade_point'] - $c['expected_gp']) > 0.001) {
+            return "Failed for marks {$c['marks']}: expected point {$c['expected_gp']}, got {$result['grade_point']}";
+        }
+        if ($result['status'] !== $c['expected_status']) {
+            return "Failed for marks {$c['marks']}: expected status {$c['expected_status']}, got {$result['status']}";
+        }
+    }
+    return true;
+});
+
+// 52. Eight-Semester Credit-Weighted CGPA Recalculation Accuracy
+run_test("Credit-Weighted CGPA Formula vs Simple Average Integrity", function() {
+    $db = getDb();
+    // Student 4 has all 8 semesters seeded
+    $studentId = 4;
+    $summary = get_student_academic_summary($studentId, true);
+
+    if (!$summary['has_results']) {
+        return "Student #4 does not have published results for test.";
+    }
+
+    if (count($summary['semesters']) < 8) {
+        return "Expected 8 semesters for Student #4, found " . count($summary['semesters']);
+    }
+
+    // Verify credit-weighted formula: Sum(Credit * Grade Point) / Sum(Credit)
+    $manualWeightedPoints = 0.0;
+    $manualCredits = 0.0;
+    $sgpaList = [];
+
+    foreach ($summary['semesters'] as $sem) {
+        $sgpaList[] = $sem['sgpa'];
+        foreach ($sem['courses'] as $c) {
+            $manualCredits += (float)$c['credit'];
+            $manualWeightedPoints += ((float)$c['credit'] * (float)$c['grade_point']);
+        }
+    }
+
+    $expectedCgpa = round($manualWeightedPoints / $manualCredits, 2);
+    if (abs($summary['final_cgpa'] - $expectedCgpa) > 0.01) {
+        return "CGPA discrepancy: calculated {$summary['final_cgpa']} vs expected {$expectedCgpa}";
+    }
+
+    // Ensure all 8 semester GPAs are present in summary
+    for ($i = 1; $i <= 8; $i++) {
+        if (!isset($summary['semester_gpas'][$i])) {
+            return "Missing Semester {$i} GPA in summary.";
+        }
+    }
+
+    return true;
+});
+
+// 53. Render Student Results Page with 8 Semesters, Marks & Transcript Summary
+run_test("Render student/results.php: Full Marks, Obtained Marks, 8-Semester Strip & Summary", function() {
+    $db = getDb();
+    $student = $db->query("SELECT * FROM students WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    $_SESSION['student_pk_id'] = $student['id'];
+    $_SESSION['student_id'] = $student['student_id'];
+    $_SESSION['student_name'] = $student['full_name'];
+
+    ob_start();
+    require BASE_PATH . '/student/results.php';
+    $output = ob_get_clean();
+
+    if (empty($output)) {
+        return "student/results.php generated empty output.";
+    }
+
+    $expectedSnippets = [
+        'Rabindra Maitree University',
+        'OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD',
+        'Subject Code',
+        'Subject Name',
+        'Credit',
+        'Full Marks',
+        'Obtained',
+        'Grade Point',
+        'Eight-Semester GPA Progression',
+        'Academic Transcript Summary &amp; Degree Status',
+        'Office of Registrar',
+        'Controller of Examinations',
+        'RMU SEAL'
+    ];
+
+    foreach ($expectedSnippets as $snip) {
+        if (strpos($output, $snip) === false) {
+            return "student/results.php missing required snippet: '$snip'";
+        }
+    }
+
+    return true;
+});
+
+// 54. Render Consolidated 8-Semester Transcript (PDF Printable)
+run_test("Render student/semester-transcript.php (Consolidated 8-Semester Mode)", function() {
+    $db = getDb();
+    $student = $db->query("SELECT * FROM students WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    $_SESSION['student_pk_id'] = $student['id'];
+    $_SESSION['student_id'] = $student['student_id'];
+    $_SESSION['student_name'] = $student['full_name'];
+    $_GET['semester'] = 'all';
+
+    ob_start();
+    require BASE_PATH . '/student/semester-transcript.php';
+    $output = ob_get_clean();
+    unset($_GET['semester']);
+
+    if (empty($output)) {
+        return "student/semester-transcript.php generated empty output.";
+    }
+
+    $requiredFields = [
+        'Rabindra Maitree University',
+        'Consolidated Academic Transcript',
+        'Student Name',
+        'Student ID / Roll No',
+        'Program of Study',
+        'Department',
+        'Faculty',
+        'Academic Session',
+        'Semester / Term',
+        'Current Academic Status',
+        'Medium of Instruction',
+        'English',
+        'Full Marks',
+        'Obtained',
+        'Eight-Semester Academic GPA Breakdown',
+        'Official Academic Transcript Summary',
+        'Controller of Examinations',
+        'Office of the Registrar'
+    ];
+
+    foreach ($requiredFields as $field) {
+        if (strpos($output, $field) === false) {
+            return "semester-transcript.php missing required field: '$field'";
+        }
+    }
+
+    return true;
+});
+
+// 55. Zero Published Results Handling: No Dummy 3.33 CGPA Displayed
+run_test("Zero Published Results: Displays 'No academic results published yet' and Zero/NA CGPA", function() {
+    $db = getDb();
+    // Find or test with student that has 0 published results (e.g. Student 2 RMU2601002)
+    $studentZero = $db->query("
+        SELECT s.* FROM students s 
+        LEFT JOIN student_results r ON s.id = r.student_id AND r.is_published = 1 
+        WHERE r.id IS NULL 
+        LIMIT 1
+    ")->fetch(PDO::FETCH_ASSOC);
+
+    if (!$studentZero) {
+        return "No student without results found to test zero-results behavior.";
+    }
+
+    $_SESSION['student_pk_id'] = $studentZero['id'];
+    $_SESSION['student_id'] = $studentZero['student_id'];
+    $_SESSION['student_name'] = $studentZero['full_name'];
+
+    // Test dashboard
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $dashOut = ob_get_clean();
+
+    if (strpos($dashOut, '3.33') !== false) {
+        return "Dashboard still displays fake 3.33 CGPA for student without published results.";
+    }
+    if (strpos($dashOut, 'No published results yet') === false) {
+        return "Dashboard missing 'No published results yet' indicator for student without results.";
+    }
+
+    // Test results page
+    ob_start();
+    require BASE_PATH . '/student/results.php';
+    $resultsOut = ob_get_clean();
+
+    if (strpos($resultsOut, 'No academic results published yet') === false) {
+        return "Results page missing 'No academic results published yet' banner.";
+    }
+    if (strpos($resultsOut, '3.33') !== false) {
+        return "Results page displays fake 3.33 CGPA for student without results.";
+    }
+
+    return true;
+});
+
+// 56. Admin Dedicated Results Manager Integrity & 8-Semester Tools
+run_test("Admin Results Manager Interface & Functionality", function() {
+    $db = getDb();
+    $adminUser = $db->query("SELECT * FROM users WHERE status = 'Active' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    $_SESSION['user_id'] = $adminUser['id'];
+    $_SESSION['username'] = $adminUser['username'];
+    $_SESSION['user_role'] = $adminUser['role'];
+    $_SESSION['logged_in_time'] = time();
+
+    $_GET['student_id'] = 4;
+
+    ob_start();
+    require BASE_PATH . '/admin/results-manager.php';
+    $adminOut = ob_get_clean();
+    unset($_GET['student_id']);
+
+    if (empty($adminOut)) {
+        return "admin/results-manager.php produced empty output.";
+    }
+
+    $requiredAdminElements = [
+        '8-Semester Results &amp; CGPA Management',
+        'Select / Search Student',
+        '8-Semester SGPA Progression Overview',
+        'Add Subject Result',
+        'Full Marks',
+        'Obtained Marks',
+        'Course Code',
+        'Populate Standard RMU 8-Semester Curriculum'
+    ];
+
+    foreach ($requiredAdminElements as $el) {
+        if (strpos($adminOut, $el) === false && strpos($adminOut, html_entity_decode($el)) === false) {
+            return "admin/results-manager.php missing: '$el'";
+        }
+    }
+
+    return true;
+});
+
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";
 echo bold("-------------------------------------------------------\n\n");
