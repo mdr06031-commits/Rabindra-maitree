@@ -697,7 +697,7 @@ function get_logged_in_student(): ?array {
         FROM students s
         LEFT JOIN programs p ON s.program_id = p.id
         LEFT JOIN departments d ON s.department_id = d.id
-        WHERE s.id = ? AND s.status = 'Active'
+        WHERE s.id = ? AND s.status != 'Suspended'
         LIMIT 1
     ");
     $stmt->execute([(int)$_SESSION['student_pk_id']]);

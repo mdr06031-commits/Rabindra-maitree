@@ -562,8 +562,16 @@ include __DIR__ . '/includes/admin-header.php';
   <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; align-items: start;">
     <!-- Results Table -->
     <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-      <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0;">
-        <h4 style="margin: 0; font-size: 1.1rem; color: #0f172a;">Official Semester Grades &amp; Transcripts</h4>
+      <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+        <div>
+          <h4 style="margin: 0 0 0.2rem; font-size: 1.1rem; color: #0f172a;">Official Semester Grades &amp; Transcripts</h4>
+          <small style="color:#64748b;">Manage academic courses, grades, and generate official student transcripts</small>
+        </div>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $studentId ?>&semester=all" target="_blank" class="btn-primary" style="padding:0.4rem 0.85rem; font-size:0.82rem; background:#16a34a; text-decoration:none;">
+            <i class="fas fa-file-pdf"></i> View &amp; Print Full Transcript
+          </a>
+        </div>
       </div>
       <div class="table-responsive">
         <table class="rmu-table" style="box-shadow: none; margin: 0;">
@@ -583,7 +591,12 @@ include __DIR__ . '/includes/admin-header.php';
                 <tr>
                   <td>
                     <strong style="color: #0f172a; font-size: 0.88rem; display: block;"><?= e($res['semester']) ?></strong>
-                    <small style="color: #64748b;"><?= e($res['exam_term']) ?></small>
+                    <div style="display:flex; gap:8px; align-items:center; margin-top:2px;">
+                      <small style="color: #64748b;"><?= e($res['exam_term']) ?></small>
+                      <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $studentId ?>&semester=<?= urlencode($res['semester']) ?>" target="_blank" style="font-size:0.75rem; color:#1e73be; text-decoration:none; font-weight:600; background:#f0f9ff; border:1px solid #bae6fd; padding:1px 6px; border-radius:3px;" title="Download this semester transcript">
+                        <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Transcript
+                      </a>
+                    </div>
                   </td>
                   <td>
                     <strong style="color: var(--rmu-primary); font-family: monospace;"><?= e($res['course_code']) ?></strong>

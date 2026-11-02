@@ -542,6 +542,71 @@ run_test("Homepage Fast Facts Statistics Integrity (5 Metrics)", function() {
 });
 
 
+// 50. Test Per-Semester Academic Transcript Generation & Verification
+run_test("Per-Semester Academic Transcript Generation & Download Verification", function() {
+    $db = getDb();
+    
+    // Find or seed a demo student with results
+    $student = $db->query("SELECT s.* FROM students s JOIN student_results r ON s.id = r.student_id LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        return "No student with academic results found in database.";
+    }
+
+    $studentId = (int)$student['id'];
+
+    // Verify student results exist
+    $resStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ?");
+    $resStmt->execute([$studentId]);
+    $results = $resStmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($results)) {
+        return "Failed to load student results.";
+    }
+
+    $firstSem = $results[0]['semester'];
+
+    // Test rendering semester-transcript.php in buffer
+    $_SESSION['student_pk_id'] = $studentId;
+    $_SESSION['student_id'] = $student['student_id'];
+    $_SESSION['student_name'] = $student['full_name'];
+    $_GET['semester'] = $firstSem;
+
+    ob_start();
+    require BASE_PATH . '/student/semester-transcript.php';
+    $output = ob_get_clean();
+
+    unset($_GET['semester']);
+
+    if (empty($output)) {
+        return "Transcript page produced empty output.";
+    }
+
+    if (strpos($output, 'Rabindra Maitree University') === false) {
+        return "Transcript missing university title.";
+    }
+
+    if (strpos($output, 'Official Semester Grade Sheet &amp; Transcript') === false && strpos($output, 'Official Semester Grade Sheet & Transcript') === false) {
+        return "Transcript missing official grade sheet heading.";
+    }
+
+    if (strpos($output, $student['student_id']) === false) {
+        return "Transcript missing student ID.";
+    }
+
+    if (strpos($output, 'Semester GPA (SGPA)') === false) {
+        return "Transcript missing SGPA performance metric.";
+    }
+
+    if (strpos($output, 'UGC Uniform Grading Scale') === false) {
+        return "Transcript missing UGC grading scale reference.";
+    }
+
+    if (strpos($output, 'Controller of Examinations') === false) {
+        return "Transcript missing Controller of Examinations signature block.";
+    }
+
+    return true;
+});
+
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";
 echo bold("-------------------------------------------------------\n\n");

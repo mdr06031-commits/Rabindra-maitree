@@ -36,12 +36,44 @@ foreach ($allResults as $r) {
       </p>
     </div>
 
-    <div>
+    <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+      <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" class="sp-btn-back-website" style="background:#16a34a; color:#fff; border-color:#16a34a; cursor:pointer; font-weight:600; text-decoration:none;">
+        <i class="fas fa-file-download"></i> Download Full Transcript (PDF)
+      </a>
       <button type="button" onclick="window.print()" class="sp-btn-back-website" style="background:#1e73be; color:#fff; border-color:#1e73be; cursor:pointer;">
-        <i class="fas fa-print"></i> Print Official Grade Sheet
+        <i class="fas fa-print"></i> Print Grade Sheet
       </button>
     </div>
   </div>
+
+  <!-- Semester Transcript Download Fast-Picker Bar (no-print) -->
+  <?php if (!empty($semesters)): ?>
+    <div style="background:linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%); border:1.5px solid #bfdbfe; border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:2rem; box-shadow:0 2px 5px rgba(0,0,0,0.03);" class="no-print">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.85rem;">
+        <div>
+          <h3 style="margin:0 0 0.2rem; font-size:1.05rem; font-weight:700; color:#0f2c59;">
+            <i class="fas fa-download" style="color:#1e73be;"></i> প্রতিটি সেমিস্টারের ট্রান্সক্রিপ্ট ডাউনলোড (Download Semester Transcripts)
+          </h3>
+          <span style="font-size:0.82rem; color:#475569;">
+            নিচের যেকোনো সেমিস্টারে ক্লিক করে সরাসরি সেই সেমিস্টারের অফিসিয়াল গ্রেড শিট ও ট্রান্সক্রিপ্ট PDF আকারে ডাউনলোড করুন:
+          </span>
+        </div>
+        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="font-size:0.82rem; font-weight:700; color:#16a34a; background:#ffffff; border:1px solid #86efac; padding:4px 12px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:5px;">
+          <i class="fas fa-graduation-cap"></i> সম্পূর্ণ ৮ সেমিস্টার ট্রান্সক্রিপ্ট &rarr;
+        </a>
+      </div>
+
+      <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
+        <?php foreach (array_keys($semesters) as $sTitle): ?>
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>" target="_blank" style="background:#ffffff; color:#0f2c59; border:1.5px solid #cbd5e1; border-radius:6px; padding:0.45rem 0.95rem; font-size:0.84rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.15s ease; box-shadow:0 1px 3px rgba(0,0,0,0.05);" onmouseover="this.style.borderColor='#1e73be'; this.style.color='#1e73be';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.color='#0f2c59';">
+            <i class="fas fa-file-pdf" style="color:#dc2626;"></i>
+            <span><?= e($sTitle) ?> Transcript</span>
+            <i class="fas fa-arrow-down" style="font-size:0.75rem; color:#64748b;"></i>
+          </a>
+        <?php endforeach; ?>
+      </div>
+    </div>
+  <?php endif; ?>
 
   <!-- Official Transcript Document Box (Printable) -->
   <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:2.5rem; box-shadow:0 4px 15px rgba(0,0,0,0.04); margin-bottom:2.5rem;" id="printableTranscript">
@@ -84,9 +116,14 @@ foreach ($allResults as $r) {
           $sgpa = ($semCredits > 0) ? ($totalWeightedPoints / $semCredits) : 0;
         ?>
         <div style="margin-bottom:2rem;">
-          <div style="display:flex; justify-content:space-between; align-items:center; background:#1e73be; color:#ffffff; padding:0.6rem 1rem; border-radius:6px 6px 0 0; font-size:0.9rem; font-weight:700;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:#1e73be; color:#ffffff; padding:0.6rem 1rem; border-radius:6px 6px 0 0; font-size:0.9rem; font-weight:700; flex-wrap:wrap; gap:0.5rem;">
             <span><i class="fas fa-calendar-check"></i> <?= e($semTitle) ?></span>
-            <span>Semester GPA (SGPA): <?= number_format($sgpa, 2) ?></span>
+            <div style="display:flex; align-items:center; gap:0.85rem; font-size:0.85rem;">
+              <span>Semester GPA (SGPA): <strong><?= number_format($sgpa, 2) ?></strong></span>
+              <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($semTitle) ?>" target="_blank" class="no-print" style="background:#ffffff; color:#0f2c59; border-radius:4px; padding:3px 10px; font-size:0.78rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.15);">
+                <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Download Transcript
+              </a>
+            </div>
           </div>
 
           <table class="sp-table" style="border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px;">

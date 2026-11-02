@@ -243,7 +243,12 @@ $notices = $db->query("
 
           <a href="<?= APP_URL ?>/student/results.php" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; color:#1e293b; text-decoration:none; font-size:0.85rem; font-weight:600; transition:all 0.15s ease;">
             <i class="fas fa-file-invoice" style="color:#16a34a; font-size:1.1rem;"></i>
-            <span>Print Official Academic Transcript</span>
+            <span>Download Semester Transcripts (সেমিস্টার ট্রান্সক্রিপ্ট)</span>
+          </a>
+
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; color:#166534; text-decoration:none; font-size:0.85rem; font-weight:700; transition:all 0.15s ease;">
+            <i class="fas fa-file-pdf" style="color:#dc2626; font-size:1.1rem;"></i>
+            <span>Full Academic Transcript (৮টি সেমিস্টার PDF)</span>
           </a>
 
           <a href="<?= APP_URL ?>/student/fees.php" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; color:#1e293b; text-decoration:none; font-size:0.85rem; font-weight:600; transition:all 0.15s ease;">
