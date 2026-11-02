@@ -22,6 +22,32 @@ $semesters = [];
 foreach ($allResults as $r) {
     $semesters[$r['semester']][] = $r;
 }
+
+// Calculate running cumulative CGPA up to each semester
+$runningCredits = 0;
+$runningPoints = 0;
+$semesterStats = [];
+foreach ($semesters as $semTitle => $cList) {
+    $sCredits = array_sum(array_column($cList, 'credit'));
+    $sPoints = 0;
+    foreach ($cList as $res) {
+        $sPoints += ((float)$res['credit'] * (float)$res['grade_point']);
+    }
+    $sgpa = ($sCredits > 0) ? round($sPoints / $sCredits, 2) : 0.00;
+
+    $runningCredits += $sCredits;
+    $runningPoints += $sPoints;
+    $runningCgpa = ($runningCredits > 0) ? round($runningPoints / $runningCredits, 2) : 0.00;
+
+    $semesterStats[$semTitle] = [
+        'sem_credits' => $sCredits,
+        'sem_points' => $sPoints,
+        'sgpa' => $sgpa,
+        'cum_credits' => $runningCredits,
+        'cum_points' => $runningPoints,
+        'cgpa' => $runningCgpa,
+    ];
+}
 ?>
 
 <div class="sp-main-container">
@@ -64,11 +90,14 @@ foreach ($allResults as $r) {
       </div>
 
       <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
-        <?php foreach (array_keys($semesters) as $sTitle): ?>
+        <?php foreach ($semesters as $sTitle => $cList): ?>
+          <?php $st = $semesterStats[$sTitle] ?? ['sgpa' => 0, 'cgpa' => 0]; ?>
           <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>" target="_blank" style="background:#ffffff; color:#0f2c59; border:1.5px solid #cbd5e1; border-radius:6px; padding:0.45rem 0.95rem; font-size:0.84rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.15s ease; box-shadow:0 1px 3px rgba(0,0,0,0.05);" onmouseover="this.style.borderColor='#1e73be'; this.style.color='#1e73be';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.color='#0f2c59';">
             <i class="fas fa-file-pdf" style="color:#dc2626;"></i>
-            <span><?= e($sTitle) ?> Transcript</span>
-            <i class="fas fa-arrow-down" style="font-size:0.75rem; color:#64748b;"></i>
+            <span><?= e($sTitle) ?></span>
+            <span style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; padding:1px 6px; border-radius:4px; font-size:0.75rem;">SGPA: <?= number_format($st['sgpa'], 2) ?></span>
+            <span style="background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800;">CGPA: <?= number_format($st['cgpa'], 2) ?></span>
+            <i class="fas fa-arrow-down" style="font-size:0.72rem; color:#64748b;"></i>
           </a>
         <?php endforeach; ?>
       </div>
@@ -107,19 +136,19 @@ foreach ($allResults as $r) {
       <p style="text-align:center; padding:2rem; color:#64748b;">No published semester results yet.</p>
     <?php else: ?>
       <?php foreach ($semesters as $semTitle => $results): ?>
-        <?php 
-          $semCredits = array_sum(array_column($results, 'credit'));
-          $totalWeightedPoints = 0;
-          foreach ($results as $res) {
-              $totalWeightedPoints += ($res['credit'] * $res['grade_point']);
-          }
-          $sgpa = ($semCredits > 0) ? ($totalWeightedPoints / $semCredits) : 0;
-        ?>
-        <div style="margin-bottom:2rem;">
-          <div style="display:flex; justify-content:space-between; align-items:center; background:#1e73be; color:#ffffff; padding:0.6rem 1rem; border-radius:6px 6px 0 0; font-size:0.9rem; font-weight:700; flex-wrap:wrap; gap:0.5rem;">
-            <span><i class="fas fa-calendar-check"></i> <?= e($semTitle) ?></span>
-            <div style="display:flex; align-items:center; gap:0.85rem; font-size:0.85rem;">
-              <span>Semester GPA (SGPA): <strong><?= number_format($sgpa, 2) ?></strong></span>
+        <?php $st = $semesterStats[$semTitle] ?? ['sem_credits' => 0, 'sgpa' => 0, 'cum_credits' => 0, 'cgpa' => 0]; ?>
+        <div style="margin-bottom:2.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg, #1e73be 0%, #0f2c59 100%); color:#ffffff; padding:0.75rem 1.25rem; border-radius:6px 6px 0 0; font-size:0.92rem; font-weight:700; flex-wrap:wrap; gap:0.6rem;">
+            <span style="display:flex; align-items:center; gap:0.5rem;">
+              <i class="fas fa-calendar-alt"></i> <?= e($semTitle) ?>
+            </span>
+            <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.84rem; flex-wrap:wrap;">
+              <span style="background:rgba(255,255,255,0.18); padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.25);">
+                Semester GPA (SGPA): <strong style="font-size:0.92rem;"><?= number_format($st['sgpa'], 2) ?></strong>
+              </span>
+              <span style="background:#15803d; color:#ffffff; padding:3px 10px; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+                Cumulative CGPA (সিজিপিএ): <strong style="font-size:0.95rem;"><?= number_format($st['cgpa'], 2) ?></strong> / 4.00
+              </span>
               <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($semTitle) ?>" target="_blank" class="no-print" style="background:#ffffff; color:#0f2c59; border-radius:4px; padding:3px 10px; font-size:0.78rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.15);">
                 <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Download Transcript
               </a>
@@ -150,11 +179,17 @@ foreach ($allResults as $r) {
               <?php endforeach; ?>
             </tbody>
             <tfoot>
-              <tr style="background:#f8fafc; font-weight:700;">
-                <td colspan="2" style="text-align:right;">Total Credits Earned:</td>
-                <td style="text-align:center;"><?= number_format((float)$semCredits, 1) ?></td>
-                <td colspan="2" style="text-align:right;">Semester Grade Point Average:</td>
-                <td style="text-align:center; color:#1e73be; font-size:1rem;"><?= number_format($sgpa, 2) ?></td>
+              <tr style="background:#f8fafc; font-weight:700; border-top:2px solid #cbd5e1;">
+                <td colspan="2" style="text-align:right; color:#475569;">Semester Summary (এই সেমিস্টার):</td>
+                <td style="text-align:center; color:#0f172a;"><?= number_format((float)$st['sem_credits'], 1) ?> Cr</td>
+                <td colspan="2" style="text-align:right; color:#1e73be;">Semester GPA (SGPA):</td>
+                <td style="text-align:center; color:#1e73be; font-size:1.05rem; font-weight:800;"><?= number_format($st['sgpa'], 2) ?></td>
+              </tr>
+              <tr style="background:#f0fdf4; font-weight:800; border-top:1px dashed #bbf7d0;">
+                <td colspan="2" style="text-align:right; color:#166534;">Cumulative Summary (সর্বমোট সিজিপিএ up to <?= e($semTitle) ?>):</td>
+                <td style="text-align:center; color:#166534;"><?= number_format((float)$st['cum_credits'], 1) ?> Cr</td>
+                <td colspan="2" style="text-align:right; color:#15803d;">Cumulative CGPA (সিজিপিএ):</td>
+                <td style="text-align:center; color:#15803d; font-size:1.15rem; font-weight:900;"><?= number_format($st['cgpa'], 2) ?></td>
               </tr>
             </tfoot>
           </table>

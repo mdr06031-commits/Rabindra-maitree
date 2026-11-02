@@ -270,9 +270,40 @@ $cStmt->execute([$studentId]);
 $courses = $cStmt->fetchAll();
 
 // Fetch all academic results for this student
-$rStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY semester, course_code");
+$rStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY id ASC");
 $rStmt->execute([$studentId]);
 $results = $rStmt->fetchAll();
+
+// Group results by semester and compute running CGPA
+$groupedAdminResults = [];
+foreach ($results as $res) {
+    $groupedAdminResults[$res['semester']][] = $res;
+}
+
+$runningAdminCr = 0;
+$runningAdminPts = 0;
+$semesterAdminStats = [];
+foreach ($groupedAdminResults as $sName => $cList) {
+    $sCr = array_sum(array_column($cList, 'credit'));
+    $sPts = 0;
+    foreach ($cList as $c) {
+        $sPts += ((float)$c['credit'] * (float)$c['grade_point']);
+    }
+    $sSgpa = ($sCr > 0) ? round($sPts / $sCr, 2) : 0.00;
+
+    $runningAdminCr += $sCr;
+    $runningAdminPts += $sPts;
+    $sCgpa = ($runningAdminCr > 0) ? round($runningAdminPts / $runningAdminCr, 2) : 0.00;
+
+    $semesterAdminStats[$sName] = [
+        'sem_credits' => $sCr,
+        'sem_points' => $sPts,
+        'sgpa' => $sSgpa,
+        'cum_credits' => $runningAdminCr,
+        'cum_points' => $runningAdminPts,
+        'cgpa' => $sCgpa,
+    ];
+}
 
 // Fetch all fee records for this student
 $fStmt = $db->prepare("SELECT * FROM student_fees WHERE student_id = ? ORDER BY id DESC");
@@ -573,59 +604,100 @@ include __DIR__ . '/includes/admin-header.php';
           </a>
         </div>
       </div>
-      <div class="table-responsive">
-        <table class="rmu-table" style="box-shadow: none; margin: 0;">
-          <thead>
-            <tr>
-              <th>Semester &bull; Term</th>
-              <th>Course Code &bull; Title</th>
-              <th>Credit</th>
-              <th>Letter Grade</th>
-              <th>Grade Point</th>
-              <th style="text-align: right;">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php if (!empty($results)): ?>
-              <?php foreach ($results as $res): ?>
-                <tr>
-                  <td>
-                    <strong style="color: #0f172a; font-size: 0.88rem; display: block;"><?= e($res['semester']) ?></strong>
-                    <div style="display:flex; gap:8px; align-items:center; margin-top:2px;">
-                      <small style="color: #64748b;"><?= e($res['exam_term']) ?></small>
-                      <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $studentId ?>&semester=<?= urlencode($res['semester']) ?>" target="_blank" style="font-size:0.75rem; color:#1e73be; text-decoration:none; font-weight:600; background:#f0f9ff; border:1px solid #bae6fd; padding:1px 6px; border-radius:3px;" title="Download this semester transcript">
-                        <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Transcript
-                      </a>
-                    </div>
-                  </td>
-                  <td>
-                    <strong style="color: var(--rmu-primary); font-family: monospace;"><?= e($res['course_code']) ?></strong>
-                    <div style="font-size: 0.88rem; color: #334155;"><?= e($res['course_name']) ?></div>
-                  </td>
-                  <td><?= number_format($res['credit'], 1) ?></td>
-                  <td>
-                    <span style="font-weight: 700; color: #1e40af; font-size: 0.95rem;"><?= e($res['letter_grade']) ?></span>
-                  </td>
-                  <td>
-                    <strong style="color: #047857;"><?= number_format($res['grade_point'], 2) ?></strong>
-                  </td>
-                  <td style="text-align: right;">
-                    <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;" onsubmit="return confirm('Delete result for <?= e($res['course_code']) ?>?');">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="action" value="delete_result">
-                      <input type="hidden" name="result_id" value="<?= $res['id'] ?>">
-                      <button type="submit" style="border: none; background: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
-                        <i class="fas fa-trash-alt"></i>
-                      </button>
-                    </form>
-                  </td>
-                </tr>
-              <?php endforeach; ?>
-            <?php else: ?>
-              <tr><td colspan="6" style="text-align: center; padding: 2rem; color: #64748b;">No academic results published yet.</td></tr>
-            <?php endif; ?>
-          </tbody>
-        </table>
+      <div style="padding: 1rem 1.5rem;">
+        <?php if (!empty($groupedAdminResults)): ?>
+          <?php foreach ($groupedAdminResults as $semTitle => $cList): ?>
+            <?php $st = $semesterAdminStats[$semTitle] ?? ['sem_credits' => 0, 'sgpa' => 0, 'cum_credits' => 0, 'cgpa' => 0]; ?>
+            <div style="margin-bottom: 2rem; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+              
+              <!-- Semester Header with SGPA & CGPA -->
+              <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f2c59 100%); color: #ffffff; padding: 0.75rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.6rem;">
+                <div style="display: flex; align-items: center; gap: 0.6rem;">
+                  <i class="fas fa-calendar-check" style="color: #60a5fa;"></i>
+                  <strong style="font-size: 0.95rem;"><?= e($semTitle) ?></strong>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.82rem;">
+                  <span style="background: rgba(255, 255, 255, 0.15); padding: 3px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2);">
+                    Credits: <strong><?= number_format((float)$st['sem_credits'], 1) ?> Cr</strong>
+                  </span>
+                  <span style="background: rgba(255, 255, 255, 0.2); padding: 3px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.25);">
+                    Semester GPA: <strong><?= number_format((float)$st['sgpa'], 2) ?></strong>
+                  </span>
+                  <span style="background: #15803d; color: #ffffff; padding: 3px 10px; border-radius: 4px; font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,0.2);">
+                    Cumulative CGPA: <?= number_format((float)$st['cgpa'], 2) ?>
+                  </span>
+                  <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $studentId ?>&semester=<?= urlencode($semTitle) ?>" target="_blank" style="background: #ffffff; color: #0f2c59; border-radius: 4px; padding: 3px 10px; font-size: 0.78rem; font-weight: 700; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+                    <i class="fas fa-file-pdf" style="color: #dc2626;"></i> Transcript PDF
+                  </a>
+                </div>
+              </div>
+
+              <!-- Subjects Table for this Semester -->
+              <div class="table-responsive">
+                <table class="rmu-table" style="box-shadow: none; margin: 0;">
+                  <thead>
+                    <tr>
+                      <th>Course Code &bull; Title</th>
+                      <th style="width: 85px; text-align: center;">Credit</th>
+                      <th style="width: 100px; text-align: center;">Letter Grade</th>
+                      <th style="width: 100px; text-align: center;">Grade Point</th>
+                      <th style="width: 110px; text-align: center;">Points Earned</th>
+                      <th style="text-align: right; width: 80px;">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <?php foreach ($cList as $res): ?>
+                      <?php 
+                        $cr = (float)$res['credit'];
+                        $gp = (float)$res['grade_point'];
+                        $pts = round($cr * $gp, 2);
+                      ?>
+                      <tr>
+                        <td>
+                          <strong style="color: var(--rmu-primary); font-family: monospace;"><?= e($res['course_code']) ?></strong>
+                          <div style="font-weight: 600; color: #334155; font-size: 0.88rem;"><?= e($res['course_name']) ?></div>
+                          <small style="color: #64748b;"><?= e($res['exam_term']) ?></small>
+                        </td>
+                        <td style="text-align: center; font-weight: 600;"><?= number_format($cr, 1) ?></td>
+                        <td style="text-align: center;">
+                          <span style="font-weight: 700; color: #1e40af; font-size: 0.95rem;"><?= e($res['letter_grade']) ?></span>
+                        </td>
+                        <td style="text-align: center;">
+                          <strong style="color: #047857;"><?= number_format($gp, 2) ?></strong>
+                        </td>
+                        <td style="text-align: center; font-weight: 700; color: #0f172a;">
+                          <?= number_format($pts, 2) ?>
+                        </td>
+                        <td style="text-align: right;">
+                          <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;" onsubmit="return confirm('Delete result for <?= e($res['course_code']) ?>?');">
+                            <?= csrf_field() ?>
+                            <input type="hidden" name="action" value="delete_result">
+                            <input type="hidden" name="result_id" value="<?= $res['id'] ?>">
+                            <button type="submit" style="border: none; background: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                              <i class="fas fa-trash-alt"></i>
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    <?php endforeach; ?>
+                  </tbody>
+                  <tfoot>
+                    <tr style="background: #f8fafc; font-weight: 700; font-size: 0.85rem; border-top: 1.5px solid #cbd5e1;">
+                      <td style="text-align: right; color: #475569;">Semester Summary (<?= e($semTitle) ?>):</td>
+                      <td style="text-align: center; color: #0f172a;"><?= number_format((float)$st['sem_credits'], 1) ?> Cr</td>
+                      <td colspan="2" style="text-align: right; color: #1e3a8a;">Semester GPA (SGPA): <strong><?= number_format((float)$st['sgpa'], 2) ?></strong></td>
+                      <td colspan="2" style="text-align: center; color: #15803d; font-weight: 800; font-size: 0.95rem;">Cumulative CGPA: <?= number_format((float)$st['cgpa'], 2) ?></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+            </div>
+          <?php endforeach; ?>
+        <?php else: ?>
+          <p style="text-align: center; padding: 2.5rem; color: #64748b;">No academic results published yet.</p>
+        <?php endif; ?>
       </div>
     </div>
 
