@@ -195,42 +195,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // 5.3 Mark all fee dues as Paid
             $db->prepare("UPDATE student_fees SET status = 'Paid', transaction_id = COALESCE(NULLIF(transaction_id, ''), CONCAT('RMU-COMP-', FLOOR(RAND()*89999+10000))), paid_at = COALESCE(paid_at, NOW()) WHERE student_id = ?")->execute([$studentId]);
 
-            // 5.4 Check existing results count. If student has fewer than 10 results, seed complete 8 semesters of transcript
+            // 5.4 Seed complete 8 semesters of transcript (all 32 courses)
             $resCount = (int)$db->query("SELECT COUNT(*) FROM student_results WHERE student_id = {$studentId}")->fetchColumn();
-            if ($resCount < 10) {
+            if ($resCount < 30) {
+                $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$studentId]);
+
                 $transcriptCourses = [
-                    ['1st Semester (Spring)', 'CSE 101', 'Structured Programming Language', 3.0, 'A+', 4.00],
-                    ['1st Semester (Spring)', 'CSE 102', 'Structured Programming Lab', 1.5, 'A+', 4.00],
-                    ['1st Semester (Spring)', 'ENG 101', 'English Reading & Writing Skills', 3.0, 'A', 3.75],
-                    ['1st Semester (Spring)', 'MAT 101', 'Differential and Integral Calculus', 3.0, 'A+', 4.00],
-                    ['2nd Semester (Fall)', 'CSE 103', 'Discrete Mathematics', 3.0, 'A+', 4.00],
-                    ['2nd Semester (Fall)', 'CSE 104', 'Object Oriented Programming (Java)', 3.0, 'A', 3.75],
-                    ['2nd Semester (Fall)', 'PHY 101', 'Physics (Mechanics, Waves & Optics)', 3.0, 'A', 3.75],
-                    ['2nd Semester (Fall)', 'BAN 105', 'Bangla Language & Tagore Literary Studies', 2.0, 'A+', 4.00],
-                    ['3rd Semester (Spring)', 'CSE 201', 'Data Structures & Algorithms', 3.0, 'A+', 4.00],
-                    ['3rd Semester (Spring)', 'CSE 202', 'Data Structures & Algorithms Lab', 1.5, 'A+', 4.00],
-                    ['3rd Semester (Spring)', 'CSE 203', 'Digital Logic Design & Microprocessors', 3.0, 'A', 3.75],
-                    ['3rd Semester (Spring)', 'MAT 102', 'Coordinate Geometry & Linear Algebra', 3.0, 'A', 3.75],
-                    ['4th Semester (Fall)', 'CSE 205', 'Database Management Systems', 3.0, 'A+', 4.00],
-                    ['4th Semester (Fall)', 'CSE 206', 'Database Management Systems Lab', 1.5, 'A+', 4.00],
-                    ['4th Semester (Fall)', 'CSE 207', 'Computer Architecture & Organization', 3.0, 'A', 3.75],
-                    ['4th Semester (Fall)', 'STA 201', 'Statistics & Probability for Engineers', 3.0, 'A', 3.75],
-                    ['5th Semester (Spring)', 'CSE 301', 'Software Engineering & System Analysis', 3.0, 'A+', 4.00],
-                    ['5th Semester (Spring)', 'CSE 302', 'Operating Systems & System Programming', 3.0, 'A', 3.75],
-                    ['5th Semester (Spring)', 'CSE 303', 'Operating Systems Lab (Linux/Unix)', 1.5, 'A+', 4.00],
-                    ['5th Semester (Spring)', 'CSE 304', 'Theory of Computation & Automata', 3.0, 'A', 3.75],
-                    ['6th Semester (Fall)', 'CSE 305', 'Computer Networks & Internet Protocols', 3.0, 'A+', 4.00],
-                    ['6th Semester (Fall)', 'CSE 306', 'Computer Networks Laboratory', 1.5, 'A+', 4.00],
-                    ['6th Semester (Fall)', 'CSE 307', 'Web Engineering & Full-Stack Development', 3.0, 'A+', 4.00],
-                    ['6th Semester (Fall)', 'CSE 308', 'Microcontroller & Embedded Systems Lab', 1.5, 'A', 3.75],
-                    ['7th Semester (Spring)', 'CSE 401', 'Artificial Intelligence & Machine Learning', 3.0, 'A+', 4.00],
-                    ['7th Semester (Spring)', 'CSE 402', 'Compiler Design & Construction', 3.0, 'A', 3.75],
-                    ['7th Semester (Spring)', 'CSE 403', 'Cyber Security & Cryptography', 3.0, 'A', 3.75],
-                    ['7th Semester (Spring)', 'CSE 499A', 'Capstone Project & Thesis (Part I)', 3.0, 'A+', 4.00],
-                    ['8th Semester (Fall)', 'CSE 405', 'Cloud Computing & Distributed Systems', 3.0, 'A+', 4.00],
-                    ['8th Semester (Fall)', 'CSE 406', 'Digital Image Processing & Vision', 3.0, 'A', 3.75],
-                    ['8th Semester (Fall)', 'CSE 499B', 'Capstone Project & Defense (Part II)', 3.0, 'A+', 4.00],
-                    ['8th Semester (Fall)', 'MGT 401', 'Industrial Management & Professional Ethics', 2.0, 'A+', 4.00]
+                    ['1st Semester (Spring 2023)', 'CSE 101', 'Structured Programming in C', 3.0, 'A+', 4.00],
+                    ['1st Semester (Spring 2023)', 'CSE 102', 'Structured Programming Lab', 1.5, 'A+', 4.00],
+                    ['1st Semester (Spring 2023)', 'ENG 101', 'English Reading & Writing Skills', 3.0, 'A', 3.75],
+                    ['1st Semester (Spring 2023)', 'MAT 101', 'Differential and Integral Calculus', 3.0, 'A+', 4.00],
+                    ['2nd Semester (Fall 2023)', 'CSE 103', 'Discrete Mathematics', 3.0, 'A+', 4.00],
+                    ['2nd Semester (Fall 2023)', 'CSE 104', 'Object Oriented Programming (Java)', 3.0, 'A', 3.75],
+                    ['2nd Semester (Fall 2023)', 'PHY 101', 'Physics (Mechanics, Waves & Optics)', 3.0, 'A', 3.75],
+                    ['2nd Semester (Fall 2023)', 'BAN 105', 'Bangla Language & Tagore Literary Studies', 2.0, 'A+', 4.00],
+                    ['3rd Semester (Spring 2024)', 'CSE 201', 'Data Structures & Algorithms', 3.0, 'A+', 4.00],
+                    ['3rd Semester (Spring 2024)', 'CSE 202', 'Data Structures & Algorithms Lab', 1.5, 'A+', 4.00],
+                    ['3rd Semester (Spring 2024)', 'CSE 203', 'Digital Logic Design & Microprocessors', 3.0, 'A', 3.75],
+                    ['3rd Semester (Spring 2024)', 'MAT 102', 'Coordinate Geometry & Linear Algebra', 3.0, 'A', 3.75],
+                    ['4th Semester (Fall 2024)', 'CSE 205', 'Database Management Systems', 3.0, 'A+', 4.00],
+                    ['4th Semester (Fall 2024)', 'CSE 206', 'Database Management Systems Lab', 1.5, 'A+', 4.00],
+                    ['4th Semester (Fall 2024)', 'CSE 207', 'Computer Architecture & Organization', 3.0, 'A', 3.75],
+                    ['4th Semester (Fall 2024)', 'STA 201', 'Statistics & Probability for Engineers', 3.0, 'A', 3.75],
+                    ['5th Semester (Spring 2025)', 'CSE 301', 'Software Engineering & System Analysis', 3.0, 'A+', 4.00],
+                    ['5th Semester (Spring 2025)', 'CSE 302', 'Operating Systems & System Programming', 3.0, 'A', 3.75],
+                    ['5th Semester (Spring 2025)', 'CSE 303', 'Operating Systems Lab (Linux/Unix)', 1.5, 'A+', 4.00],
+                    ['5th Semester (Spring 2025)', 'CSE 304', 'Theory of Computation & Automata', 3.0, 'A', 3.75],
+                    ['6th Semester (Fall 2025)', 'CSE 305', 'Computer Networks & Internet Protocols', 3.0, 'A+', 4.00],
+                    ['6th Semester (Fall 2025)', 'CSE 306', 'Computer Networks Laboratory', 1.5, 'A+', 4.00],
+                    ['6th Semester (Fall 2025)', 'CSE 307', 'Web Engineering & Full-Stack Development', 3.0, 'A+', 4.00],
+                    ['6th Semester (Fall 2025)', 'CSE 308', 'Microcontroller & Embedded Systems Lab', 1.5, 'A', 3.75],
+                    ['7th Semester (Spring 2026)', 'CSE 401', 'Artificial Intelligence & Machine Learning', 3.0, 'A+', 4.00],
+                    ['7th Semester (Spring 2026)', 'CSE 402', 'Compiler Design & Construction', 3.0, 'A', 3.75],
+                    ['7th Semester (Spring 2026)', 'CSE 403', 'Cyber Security & Cryptography', 3.0, 'A', 3.75],
+                    ['7th Semester (Spring 2026)', 'CSE 499A', 'Capstone Project & Thesis (Part I)', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall 2026)', 'CSE 405', 'Cloud Computing & Distributed Systems', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall 2026)', 'CSE 406', 'Digital Image Processing & Vision', 3.0, 'A', 3.75],
+                    ['8th Semester (Fall 2026)', 'CSE 499B', 'Capstone Project & Defense (Part II)', 3.0, 'A+', 4.00],
+                    ['8th Semester (Fall 2026)', 'MGT 401', 'Industrial Management & Professional Ethics', 2.0, 'A+', 4.00]
                 ];
 
                 $rIns = $db->prepare("
@@ -279,6 +281,10 @@ $groupedAdminResults = [];
 foreach ($results as $res) {
     $groupedAdminResults[$res['semester']][] = $res;
 }
+
+uksort($groupedAdminResults, function($a, $b) {
+    return get_semester_number($a) <=> get_semester_number($b);
+});
 
 $runningAdminCr = 0;
 $runningAdminPts = 0;
@@ -613,8 +619,10 @@ include __DIR__ . '/includes/admin-header.php';
               <!-- Semester Header with SGPA & CGPA -->
               <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f2c59 100%); color: #ffffff; padding: 0.75rem 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.6rem;">
                 <div style="display: flex; align-items: center; gap: 0.6rem;">
-                  <i class="fas fa-calendar-check" style="color: #60a5fa;"></i>
-                  <strong style="font-size: 0.95rem;"><?= e($semTitle) ?></strong>
+                  <span style="background: #f59e0b; color: #0f2c59; padding: 2px 8px; border-radius: 4px; font-weight: 900; font-size: 0.85rem;">
+                    <?= get_semester_number($semTitle) ?>
+                  </span>
+                  <strong style="font-size: 0.95rem;">Semester <?= get_semester_number($semTitle) ?>: <?= e($semTitle) ?></strong>
                 </div>
 
                 <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.82rem;">

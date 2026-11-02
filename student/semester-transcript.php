@@ -59,6 +59,12 @@ $groupedSemesters = [];
 foreach ($allResults as $r) {
     $groupedSemesters[$r['semester']][] = $r;
 }
+
+// Sort semesters by numeric order 1 to 8
+uksort($groupedSemesters, function($a, $b) {
+    return get_semester_number($a) <=> get_semester_number($b);
+});
+
 $availableSemesters = array_keys($groupedSemesters);
 
 $runningCredits = 0;
@@ -697,7 +703,7 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
         <select name="semester" id="semSelect" class="semester-picker-select" onchange="this.form.submit()">
           <?php foreach ($availableSemesters as $semName): ?>
             <option value="<?= e($semName) ?>" <?= ($semName === $requestedSemester) ? 'selected' : '' ?>>
-              <?= e($semName) ?>
+              Semester <?= get_semester_number($semName) ?>: <?= e($semName) ?>
             </option>
           <?php endforeach; ?>
           <option value="all" <?= ($requestedSemester === 'all') ? 'selected' : '' ?>>
@@ -828,7 +834,7 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
               <?php $st = $semesterRunningStats[$semKey] ?? ['sem_credits' => 0, 'sgpa' => 0, 'cum_credits' => 0, 'cgpa' => 0]; ?>
               <div style="margin-bottom: 1.75rem;">
                 <div style="background:#0f2c59; color:#ffffff; padding:0.5rem 1rem; border-radius:4px 4px 0 0; display:flex; justify-content:space-between; align-items:center; font-size:0.86rem; font-weight:700;">
-                  <span><i class="fas fa-bookmark" style="color:#f59e0b; margin-right:5px;"></i> <?= e($semKey) ?></span>
+                  <span><i class="fas fa-bookmark" style="color:#f59e0b; margin-right:5px;"></i> Semester <?= get_semester_number($semKey) ?>: <?= e($semKey) ?></span>
                   <span style="font-size:0.8rem; letter-spacing:0.3px;">
                     Semester SGPA: <strong style="color:#ffffff; font-size:0.92rem;"><?= number_format($st['sgpa'], 2) ?></strong>
                     &nbsp;&bull;&nbsp;

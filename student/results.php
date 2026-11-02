@@ -23,6 +23,11 @@ foreach ($allResults as $r) {
     $semesters[$r['semester']][] = $r;
 }
 
+// Sort semesters by standard numeric sequence 1 to 8
+uksort($semesters, function($a, $b) {
+    return get_semester_number($a) <=> get_semester_number($b);
+});
+
 // Calculate running cumulative CGPA up to each semester
 $runningCredits = 0;
 $runningPoints = 0;
@@ -72,33 +77,51 @@ foreach ($semesters as $semTitle => $cList) {
     </div>
   </div>
 
-  <!-- Semester Transcript Download Fast-Picker Bar (no-print) -->
+  <!-- 8-Semester Overview & Transcript Fast-Picker Grid (no-print) -->
   <?php if (!empty($semesters)): ?>
-    <div style="background:linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%); border:1.5px solid #bfdbfe; border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:2rem; box-shadow:0 2px 5px rgba(0,0,0,0.03);" class="no-print">
-      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:0.85rem;">
+    <div style="background:linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%); border:1.5px solid #bfdbfe; border-radius:12px; padding:1.5rem; margin-bottom:2.5rem; box-shadow:0 3px 8px rgba(0,0,0,0.04);" class="no-print">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem;">
         <div>
-          <h3 style="margin:0 0 0.2rem; font-size:1.05rem; font-weight:700; color:#0f2c59;">
-            <i class="fas fa-download" style="color:#1e73be;"></i> প্রতিটি সেমিস্টারের ট্রান্সক্রিপ্ট ডাউনলোড (Download Semester Transcripts)
+          <h3 style="margin:0 0 0.2rem; font-size:1.15rem; font-weight:800; color:#0f2c59;">
+            <i class="fas fa-th-large" style="color:#1e73be;"></i> সেমিস্টার অগ্রগতি ও রেজাল্ট গ্রিড (Semesters 1 to 8 Matrix)
           </h3>
-          <span style="font-size:0.82rem; color:#475569;">
-            নিচের যেকোনো সেমিস্টারে ক্লিক করে সরাসরি সেই সেমিস্টারের অফিসিয়াল গ্রেড শিট ও ট্রান্সক্রিপ্ট PDF আকারে ডাউনলোড করুন:
+          <span style="font-size:0.84rem; color:#475569;">
+            ১ম থেকে ৮ম সেমিস্টার পর্যন্ত প্রতিটি সেমিস্টারের বিষয়, SGPA এবং অর্জিত CGPA নিচে ক্রমানুসারে সাজানো রয়েছে:
           </span>
         </div>
-        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="font-size:0.82rem; font-weight:700; color:#16a34a; background:#ffffff; border:1px solid #86efac; padding:4px 12px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:5px;">
-          <i class="fas fa-graduation-cap"></i> সম্পূর্ণ ৮ সেমিস্টার ট্রান্সক্রিপ্ট &rarr;
+        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="font-size:0.85rem; font-weight:700; color:#16a34a; background:#ffffff; border:1.5px solid #86efac; padding:6px 14px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+          <i class="fas fa-graduation-cap"></i> সম্পূর্ণ ৮ সেমিস্টার ট্রান্সক্রিপ্ট (PDF) &rarr;
         </a>
       </div>
 
-      <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:0.85rem;">
         <?php foreach ($semesters as $sTitle => $cList): ?>
-          <?php $st = $semesterStats[$sTitle] ?? ['sgpa' => 0, 'cgpa' => 0]; ?>
-          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>" target="_blank" style="background:#ffffff; color:#0f2c59; border:1.5px solid #cbd5e1; border-radius:6px; padding:0.45rem 0.95rem; font-size:0.84rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:6px; transition:all 0.15s ease; box-shadow:0 1px 3px rgba(0,0,0,0.05);" onmouseover="this.style.borderColor='#1e73be'; this.style.color='#1e73be';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.color='#0f2c59';">
-            <i class="fas fa-file-pdf" style="color:#dc2626;"></i>
-            <span><?= e($sTitle) ?></span>
-            <span style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; padding:1px 6px; border-radius:4px; font-size:0.75rem;">SGPA: <?= number_format($st['sgpa'], 2) ?></span>
-            <span style="background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:800;">CGPA: <?= number_format($st['cgpa'], 2) ?></span>
-            <i class="fas fa-arrow-down" style="font-size:0.72rem; color:#64748b;"></i>
-          </a>
+          <?php 
+            $sNum = get_semester_number($sTitle);
+            $st = $semesterStats[$sTitle] ?? ['sgpa' => 0, 'cgpa' => 0, 'sem_credits' => 0]; 
+          ?>
+          <div style="background:#ffffff; border:1.5px solid #cbd5e1; border-radius:8px; padding:0.85rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between; gap:0.5rem; transition:transform 0.15s, border-color 0.15s;" onmouseover="this.style.borderColor='#1e73be'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.transform='translateY(0)';" id="nav-sem-<?= $sNum ?>">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="background:#0f2c59; color:#ffffff; font-weight:800; font-size:0.8rem; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:4px;">
+                <i class="fas fa-bookmark" style="color:#f59e0b; font-size:0.7rem;"></i> <?= $sNum ?>. Semester <?= $sNum ?>
+              </span>
+              <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>" target="_blank" style="color:#dc2626; font-size:0.8rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:3px; background:#fef2f2; border:1px solid #fecaca; padding:2px 7px; border-radius:4px;" title="Download PDF Transcript">
+                <i class="fas fa-file-pdf"></i> PDF
+              </a>
+            </div>
+            
+            <div>
+              <a href="#sem-block-<?= $sNum ?>" style="font-size:0.9rem; font-weight:700; color:#0f172a; text-decoration:none; display:block; margin-bottom:2px;">
+                <?= e($sTitle) ?>
+              </a>
+              <small style="color:#64748b; font-size:0.75rem;"><?= count($cList) ?> Subjects &bull; <?= number_format((float)$st['sem_credits'], 1) ?> Credits</small>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px dashed #e2e8f0; padding-top:6px; font-size:0.8rem;">
+              <span style="color:#475569;">SGPA: <strong style="color:#1e3a8a;"><?= number_format($st['sgpa'], 2) ?></strong></span>
+              <span style="color:#15803d; font-weight:800; background:#f0fdf4; border:1px solid #bbf7d0; padding:1px 6px; border-radius:4px;">CGPA: <?= number_format($st['cgpa'], 2) ?></span>
+            </div>
+          </div>
         <?php endforeach; ?>
       </div>
     </div>
@@ -136,11 +159,17 @@ foreach ($semesters as $semTitle => $cList) {
       <p style="text-align:center; padding:2rem; color:#64748b;">No published semester results yet.</p>
     <?php else: ?>
       <?php foreach ($semesters as $semTitle => $results): ?>
-        <?php $st = $semesterStats[$semTitle] ?? ['sem_credits' => 0, 'sgpa' => 0, 'cum_credits' => 0, 'cgpa' => 0]; ?>
-        <div style="margin-bottom:2.5rem;">
+        <?php 
+          $sNum = get_semester_number($semTitle);
+          $st = $semesterStats[$semTitle] ?? ['sem_credits' => 0, 'sgpa' => 0, 'cum_credits' => 0, 'cgpa' => 0]; 
+        ?>
+        <div style="margin-bottom:2.5rem;" id="sem-block-<?= $sNum ?>">
           <div style="display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg, #1e73be 0%, #0f2c59 100%); color:#ffffff; padding:0.75rem 1.25rem; border-radius:6px 6px 0 0; font-size:0.92rem; font-weight:700; flex-wrap:wrap; gap:0.6rem;">
-            <span style="display:flex; align-items:center; gap:0.5rem;">
-              <i class="fas fa-calendar-alt"></i> <?= e($semTitle) ?>
+            <span style="display:flex; align-items:center; gap:0.6rem;">
+              <span style="background:#f59e0b; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:900; font-size:0.85rem;">
+                <?= $sNum ?>
+              </span>
+              <span>Semester <?= $sNum ?>: <?= e($semTitle) ?></span>
             </span>
             <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.84rem; flex-wrap:wrap;">
               <span style="background:rgba(255,255,255,0.18); padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.25);">

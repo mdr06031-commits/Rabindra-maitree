@@ -718,6 +718,19 @@ function require_student_login(): void {
     }
 }
 
+function get_semester_number(string $name): int {
+    if (preg_match('/1(?:st)?\s*Semester/i', $name)) return 1;
+    if (preg_match('/2(?:nd)?\s*Semester/i', $name)) return 2;
+    if (preg_match('/3(?:rd)?\s*Semester/i', $name)) return 3;
+    if (preg_match('/4(?:th)?\s*Semester/i', $name)) return 4;
+    if (preg_match('/5(?:th)?\s*Semester/i', $name)) return 5;
+    if (preg_match('/6(?:th)?\s*Semester/i', $name)) return 6;
+    if (preg_match('/7(?:th)?\s*Semester/i', $name)) return 7;
+    if (preg_match('/8(?:th)?\s*Semester/i', $name)) return 8;
+    if (preg_match('/\b([1-8])\b/', $name, $m)) return (int)$m[1];
+    return 99;
+}
+
 function get_student_avatar_url(?array $student): string {
     if (!empty($student['avatar'])) {
         $avatarFile = $student['avatar'];
