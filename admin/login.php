@@ -146,6 +146,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <i class="fas fa-lock"></i> Secure Sign In
           </button>
         </div>
+
+        <div style="margin-top: 1.25rem; padding: 0.85rem 1rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; font-size: 0.84rem; color: #166534;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
+            <strong><i class="fas fa-key"></i> Admin Access:</strong>
+            <button type="button" onclick="document.querySelector('[name=username]').value='admin'; document.querySelector('[name=password]').value='123456'; this.form.submit();" style="background:#15803d; color:#ffffff; border:none; border-radius:4px; padding:3px 8px; font-size:0.75rem; font-weight:700; cursor:pointer;">
+              1-Click Instant Login &rarr;
+            </button>
+          </div>
+          <div>User: <code style="font-weight:700;">admin</code> &bull; Pass: <code style="font-weight:700;">123456</code></div>
+        </div>
       </form>
 
       <div style="margin-top: 1.8rem; padding-top: 1.25rem; border-top: 1px solid var(--rmu-border); text-align: center;">

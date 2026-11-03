@@ -59,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $bloodGroup = trim($_POST['blood_group'] ?? '');
             $homeDistrict = trim($_POST['home_district'] ?? '');
             $status = in_array($_POST['status'] ?? '', ['Active', 'Graduated', 'Suspended']) ? $_POST['status'] : 'Active';
-            $password = trim($_POST['password'] ?? $_POST['initial_password'] ?? 'student123');
+            $password = trim($_POST['password'] ?? 'student123');
 
             if ($action === 'add' && empty($studentId)) {
                 $studentId = generate_next_student_id($db);
@@ -161,11 +161,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         if (!empty($courses) && is_array($courses)) {
                             foreach ($courses as $c) {
-                                $code = strtoupper(trim($c['course_code'] ?? $c['subject_code'] ?? ''));
-                                $name = trim($c['course_name'] ?? $c['subject_name'] ?? '');
-                                $credit = (float)($c['credit'] ?? $c['credit_hours'] ?? 3.0);
+                                $code = strtoupper(trim($c['course_code'] ?? ''));
+                                $name = trim($c['course_name'] ?? '');
+                                $credit = (float)($c['credit'] ?? 3.0);
                                 $fullMarks = (int)($c['full_marks'] ?? 100);
-                                $marks = (isset($c['marks']) && $c['marks'] !== '') ? (float)$c['marks'] : ((isset($c['obtained_marks']) && $c['obtained_marks'] !== '') ? (float)$c['obtained_marks'] : null);
+                                $marks = (isset($c['marks']) && $c['marks'] !== '') ? (float)$c['marks'] : null;
                                 $cid = (int)($c['id'] ?? 0);
 
                                 if (empty($code) && empty($name)) {
@@ -357,10 +357,10 @@ include __DIR__ . '/includes/admin-header.php';
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.75rem; flex-wrap: wrap; gap: 1rem;">
   <div>
     <h2 style="font-size: 1.6rem; font-weight: 800; color: #0f172a; margin: 0 0 0.25rem;">
-      <i class="fas fa-id-card-alt" style="color: var(--rmu-primary);"></i> Student Management &bull; One-Page Result Console
+      <i class="fas fa-id-card-alt" style="color: var(--rmu-primary);"></i> One-Page Student &amp; Academic Result System
     </h2>
     <span style="color: #64748b; font-size: 0.88rem;">
-      Rabindra Maitree University &bull; Complete Student Management &bull; Unified Single-Page Student Enrollment, 8-Semester Results &amp; Transcript Publishing
+      Rabindra Maitree University &bull; Unified Single-Page Student Enrollment, 8-Semester Results &amp; Transcript Publishing
     </span>
   </div>
 
