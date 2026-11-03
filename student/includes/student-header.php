@@ -9,6 +9,16 @@ require_student_login();
 $student = get_logged_in_student();
 $currentPortalPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
 $portalTitle = $portalTitle ?? 'Student Portal Dashboard';
+
+$studentPkId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
+if (isset($_GET['mark_read_all']) && $studentPkId > 0) {
+    mark_student_notifications_read($studentPkId);
+    $cleanUrl = strtok($_SERVER['REQUEST_URI'] ?? '', '?');
+    header("Location: " . ($cleanUrl ?: APP_URL . '/student/' . $currentPortalPage));
+    exit;
+}
+$unreadNotifCount = $studentPkId > 0 ? get_student_unread_notifications_count($studentPkId) : 0;
+$recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId, false, 6) : [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -182,6 +192,63 @@ $portalTitle = $portalTitle ?? 'Student Portal Dashboard';
 
     .sp-btn-logout:hover {
       background: #fee2e2;
+    }
+
+    /* Notifications Dropdown */
+    .sp-notif-wrapper {
+      position: relative;
+    }
+    .sp-notif-btn {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #334155;
+      cursor: pointer;
+      font-size: 1rem;
+      position: relative;
+      transition: all 0.2s ease;
+    }
+    .sp-notif-btn:hover {
+      background: #e2e8f0;
+      color: var(--sp-primary);
+    }
+    .sp-notif-badge {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      background: #ef4444;
+      color: #ffffff;
+      font-size: 0.65rem;
+      font-weight: 800;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      border: 2px solid #ffffff;
+    }
+    .sp-notif-dropdown {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 48px;
+      width: 340px;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+      z-index: 1050;
+      overflow: hidden;
+    }
+    .sp-notif-dropdown.show {
+      display: block;
     }
 
     /* Sub-Navigation Tabs Bar */
@@ -459,6 +526,61 @@ $portalTitle = $portalTitle ?? 'Student Portal Dashboard';
           <i class="fas fa-globe"></i> Main Website
         </a>
 
+        <!-- Notifications Bell & Dropdown -->
+        <div class="sp-notif-wrapper">
+          <button type="button" class="sp-notif-btn" id="notifBellBtn" onclick="toggleNotificationMenu(event)" title="Notifications" aria-label="Notifications">
+            <i class="fas fa-bell"></i>
+            <?php if ($unreadNotifCount > 0): ?>
+              <span class="sp-notif-badge"><?= $unreadNotifCount ?></span>
+            <?php endif; ?>
+          </button>
+
+          <div class="sp-notif-dropdown" id="notifDropdown">
+            <div style="padding:0.75rem 1rem; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; background:#f8fafc;">
+              <strong style="font-size:0.88rem; color:#0f172a;"><i class="fas fa-bell" style="color:var(--sp-primary);"></i> Notifications</strong>
+              <?php if ($unreadNotifCount > 0): ?>
+                <a href="?mark_read_all=1" style="font-size:0.75rem; color:#1e73be; text-decoration:none; font-weight:600;">
+                  <i class="fas fa-check-double"></i> Mark all read
+                </a>
+              <?php endif; ?>
+            </div>
+            <div style="max-height:280px; overflow-y:auto;">
+              <?php if (empty($recentNotifications)): ?>
+                <div style="padding:1.5rem; text-align:center; color:#94a3b8; font-size:0.84rem;">
+                  <i class="fas fa-bell-slash" style="font-size:1.5rem; display:block; margin-bottom:0.5rem; opacity:0.5;"></i>
+                  No notifications yet
+                </div>
+              <?php else: ?>
+                <?php foreach ($recentNotifications as $notif): ?>
+                  <div style="padding:0.75rem 1rem; border-bottom:1px solid #f1f5f9; background:<?= empty($notif['is_read']) ? '#eff6ff' : '#ffffff' ?>; font-size:0.82rem;">
+                    <div style="font-weight:700; color:#0f172a; margin-bottom:2px; display:flex; align-items:center; gap:6px;">
+                      <?php if ($notif['type'] === 'result_published'): ?>
+                        <i class="fas fa-award" style="color:#16a34a; font-size:0.85rem;"></i>
+                      <?php elseif ($notif['type'] === 'grade_correction'): ?>
+                        <i class="fas fa-pen-alt" style="color:#0284c7; font-size:0.85rem;"></i>
+                      <?php elseif ($notif['type'] === 'request_update'): ?>
+                        <i class="fas fa-clipboard-check" style="color:#8b5cf6; font-size:0.85rem;"></i>
+                      <?php else: ?>
+                        <i class="fas fa-info-circle" style="color:#f59e0b; font-size:0.85rem;"></i>
+                      <?php endif; ?>
+                      <span><?= e($notif['title']) ?></span>
+                    </div>
+                    <div style="color:#475569; line-height:1.35;"><?= e($notif['message']) ?></div>
+                    <div style="color:#94a3b8; font-size:0.72rem; margin-top:3px;">
+                      <?= format_date($notif['created_at']) ?>
+                    </div>
+                  </div>
+                <?php endforeach; ?>
+              <?php endif; ?>
+            </div>
+            <div style="padding:0.5rem; text-align:center; background:#f8fafc; border-top:1px solid #e2e8f0;">
+              <a href="<?= APP_URL ?>/student/results.php" style="font-size:0.78rem; font-weight:700; color:var(--sp-primary); text-decoration:none;">
+                View All Results &amp; Requests &rarr;
+              </a>
+            </div>
+          </div>
+        </div>
+
         <a href="<?= APP_URL ?>/student/profile.php" class="sp-user-badge" style="text-decoration:none; color:inherit;">
           <div class="sp-avatar-circle">
             <img src="<?= get_student_avatar_url($student) ?>" alt="<?= e($student['full_name']) ?>">
@@ -513,4 +635,21 @@ $portalTitle = $portalTitle ?? 'Student Portal Dashboard';
       </div>
     <?php endif; ?>
   </div>
+
+  <script>
+  function toggleNotificationMenu(e) {
+    if (e) e.stopPropagation();
+    var menu = document.getElementById('notifDropdown');
+    if (menu) menu.classList.toggle('show');
+  }
+  document.addEventListener('click', function(e) {
+    var menu = document.getElementById('notifDropdown');
+    var btn = document.getElementById('notifBellBtn');
+    if (menu && menu.classList.contains('show')) {
+      if (!menu.contains(e.target) && (!btn || !btn.contains(e.target))) {
+        menu.classList.remove('show');
+      }
+    }
+  });
+  </script>
 

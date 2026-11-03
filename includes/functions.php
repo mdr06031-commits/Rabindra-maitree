@@ -1093,5 +1093,87 @@ function provision_student_from_admission(int $admissionId): ?array {
     ];
 }
 
+/**
+ * Result Management & Student Notifications Helpers
+ */
+function create_student_notification(int $studentId, string $title, string $message, string $type = 'result_published', ?int $relatedId = null): bool {
+    try {
+        $db = getDb();
+        $stmt = $db->prepare("
+            INSERT INTO student_notifications (student_id, title, message, type, related_id)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        return $stmt->execute([$studentId, $title, $message, $type, $relatedId]);
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function get_student_notifications(int $studentId, bool $unreadOnly = false, int $limit = 10): array {
+    try {
+        $db = getDb();
+        $sql = "SELECT * FROM student_notifications WHERE student_id = ?";
+        if ($unreadOnly) {
+            $sql .= " AND is_read = 0";
+        }
+        $sql .= " ORDER BY id DESC LIMIT " . (int)$limit;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$studentId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+function get_student_unread_notifications_count(int $studentId): int {
+    try {
+        $db = getDb();
+        $stmt = $db->prepare("SELECT COUNT(*) FROM student_notifications WHERE student_id = ? AND is_read = 0");
+        $stmt->execute([$studentId]);
+        return (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+function mark_student_notifications_read(int $studentId, ?int $notificationId = null): bool {
+    try {
+        $db = getDb();
+        if ($notificationId !== null) {
+            $stmt = $db->prepare("UPDATE student_notifications SET is_read = 1 WHERE id = ? AND student_id = ?");
+            return $stmt->execute([$notificationId, $studentId]);
+        } else {
+            $stmt = $db->prepare("UPDATE student_notifications SET is_read = 1 WHERE student_id = ?");
+            return $stmt->execute([$studentId]);
+        }
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function log_result_modification(?int $resultId, int $studentId, int $adminId, string $courseCode, string $semester, string $fieldName, ?string $oldValue, string $newValue, string $reason): bool {
+    try {
+        $db = getDb();
+        $stmt = $db->prepare("
+            INSERT INTO result_modification_history 
+            (result_id, student_id, admin_id, course_code, semester, field_name, old_value, new_value, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        return $stmt->execute([$resultId, $studentId, $adminId, $courseCode, $semester, $fieldName, $oldValue, $newValue, $reason]);
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function get_pending_result_requests_count(): int {
+    try {
+        $db = getDb();
+        return (int)$db->query("SELECT COUNT(*) FROM result_requests WHERE status = 'Pending'")->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+
 
 

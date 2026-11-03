@@ -36,9 +36,13 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
+    <?php $pendingRequestsBadge = function_exists('get_pending_result_requests_count') ? get_pending_result_requests_count() : 0; ?>
     <li class="admin-nav-item <?= ($adminCurrentPage === 'results-manager.php') ? 'active' : '' ?>">
-      <a href="<?= APP_URL ?>/admin/results-manager.php" class="admin-nav-link">
-        <i class="fas fa-award"></i> Results &amp; CGPA Manager
+      <a href="<?= APP_URL ?>/admin/results-manager.php" class="admin-nav-link" style="display:flex; justify-content:space-between; align-items:center;">
+        <span><i class="fas fa-award"></i> Student Result Management</span>
+        <?php if ($pendingRequestsBadge > 0): ?>
+          <span style="background:#ef4444; color:#fff; font-size:0.7rem; font-weight:800; padding:1px 6px; border-radius:10px; margin-left:6px;"><?= $pendingRequestsBadge ?></span>
+        <?php endif; ?>
       </a>
     </li>
 

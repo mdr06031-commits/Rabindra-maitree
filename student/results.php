@@ -9,6 +9,48 @@ require_once __DIR__ . '/includes/student-header.php';
 
 $student = get_logged_in_student();
 $studentId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
+$db = getDb();
+
+// Handle Student Result Inquiry / Review Request
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') === 'submit_result_request') {
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        flash_set('error', 'CSRF verification failed. Please try again.');
+    } else {
+        $semester = trim($_POST['semester'] ?? '');
+        $courseCode = strtoupper(trim($_POST['course_code'] ?? ''));
+        $requestType = trim($_POST['request_type'] ?? 'Result Review');
+        $validTypes = ['Result Review', 'Grade Correction', 'Missing Marks', 'Transcript Inquiry', 'General Query'];
+        if (!in_array($requestType, $validTypes)) {
+            $requestType = 'Result Review';
+        }
+        $subject = trim($_POST['subject'] ?? '');
+        $desc = trim($_POST['description'] ?? '');
+
+        if (empty($semester) || empty($subject) || empty($desc)) {
+            flash_set('error', 'Please fill in all required fields (Semester, Inquiry Subject, and Description).');
+        } else {
+            $insReq = $db->prepare("
+                INSERT INTO result_requests 
+                (student_id, semester, course_code, request_type, subject, description, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'Pending')
+            ");
+            $insReq->execute([$studentId, $semester, $courseCode, $requestType, $subject, $desc]);
+            $newReqId = (int)$db->lastInsertId();
+
+            create_student_notification(
+                $studentId,
+                "Inquiry Submitted (#{$newReqId})",
+                "Your result inquiry regarding '{$subject}' has been submitted to the Controller of Examinations.",
+                'request_update',
+                $newReqId
+            );
+
+            flash_set('success', "Your result review inquiry #{$newReqId} has been successfully submitted to the Controller of Examinations.");
+            header("Location: " . APP_URL . "/student/results.php#requests");
+            exit;
+        }
+    }
+}
 
 // Retrieve complete academic summary (only published results for students)
 $academicSummary = get_student_academic_summary($studentId, true);
@@ -18,6 +60,28 @@ $semesterGpas = $academicSummary['semester_gpas'] ?? [];
 $finalCgpa = $academicSummary['final_cgpa'] ?? 0.00;
 $totalRegCredits = $academicSummary['total_registered_credits'] ?? 0.0;
 $totalEarnedCredits = $academicSummary['total_earned_credits'] ?? 0.0;
+
+// Retrieve student's result inquiries & requests
+$studentRequestsStmt = $db->prepare("
+    SELECT * FROM result_requests 
+    WHERE student_id = ? 
+    ORDER BY id DESC
+");
+$studentRequestsStmt->execute([$studentId]);
+$myRequests = $studentRequestsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Retrieve official publication history
+$pubHistoryStmt = $db->prepare("
+    SELECT semester, exam_term, MAX(published_at) as pub_time, COUNT(*) as courses_count,
+           u.full_name as published_by_name
+    FROM student_results sr
+    LEFT JOIN users u ON sr.published_by = u.id
+    WHERE sr.student_id = ? AND sr.is_published = 1 AND sr.published_at IS NOT NULL
+    GROUP BY semester, exam_term, u.full_name
+    ORDER BY pub_time DESC
+");
+$pubHistoryStmt->execute([$studentId]);
+$publicationLogs = $pubHistoryStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $transcriptSerial = 'RMU-TR-' . date('Y') . '-' . strtoupper(substr(md5($student['student_id'] . 'all'), 0, 8));
 $issueDate = date('d F Y');
@@ -41,7 +105,17 @@ $issueDate = date('d F Y');
       </p>
     </div>
 
-    <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+    <div style="display:flex; gap:0.6rem; flex-wrap:wrap; align-items:center;">
+      <button type="button" onclick="openRequestModal()" class="sp-btn-back-website" style="background:#7c3aed; color:#fff; border-color:#7c3aed; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:6px;">
+        <i class="fas fa-question-circle"></i> Request Result Review / Correction
+      </button>
+
+      <?php if (!empty($myRequests)): ?>
+        <a href="#requests" class="sp-btn-back-website" style="background:#f1f5f9; color:#475569; border-color:#cbd5e1; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-inbox"></i> My Inquiries (<?= count($myRequests) ?>)
+        </a>
+      <?php endif; ?>
+
       <?php if ($hasResults): ?>
         <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" class="sp-btn-back-website" style="background:#16a34a; color:#fff; border-color:#16a34a; cursor:pointer; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
           <i class="fas fa-file-download"></i> Download Full Transcript (PDF)
@@ -334,6 +408,138 @@ $issueDate = date('d F Y');
 
   <?php endif; ?>
 
+  <!-- Section: Result Review Inquiries & Application Status (Section 5) -->
+  <div class="sp-card no-print" id="requests">
+    <div class="sp-card-header" style="flex-wrap:wrap; gap:0.75rem;">
+      <div>
+        <h3 style="margin:0 0 2px; font-size:1.05rem; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          <i class="fas fa-inbox" style="color:#7c3aed;"></i> My Result Review Inquiries &amp; Requests
+        </h3>
+        <p style="margin:0; font-size:0.8rem; color:#64748b;">
+          Track status of your grade re-check, missing marks, and transcript inquiry requests submitted to the Exam Controller.
+        </p>
+      </div>
+      <button type="button" onclick="openRequestModal()" class="sp-btn-back-website" style="background:#7c3aed; color:#fff; border-color:#7c3aed; cursor:pointer; font-weight:600; font-size:0.82rem; display:inline-flex; align-items:center; gap:5px;">
+        <i class="fas fa-plus-circle"></i> New Inquiry Request
+      </button>
+    </div>
+
+    <div class="sp-card-body" style="padding:0;">
+      <?php if (empty($myRequests)): ?>
+        <div style="padding:2.5rem 1.5rem; text-align:center; color:#64748b;">
+          <div style="width:52px; height:52px; margin:0 auto 0.75rem; border-radius:50%; background:#f5f3ff; display:flex; align-items:center; justify-content:center; color:#7c3aed; font-size:1.4rem;">
+            <i class="fas fa-clipboard-check"></i>
+          </div>
+          <h4 style="margin:0 0 0.35rem; font-size:0.95rem; font-weight:700; color:#1e293b;">No Inquiries Submitted</h4>
+          <p style="margin:0 0 1rem; font-size:0.84rem; max-width:480px; margin-inline:auto;">
+            If you notice any marks discrepancies, missing courses, or grading issues in your published results, click "New Inquiry Request" to submit an application directly to the Controller of Examinations.
+          </p>
+        </div>
+      <?php else: ?>
+        <div style="overflow-x:auto;">
+          <table class="sp-table">
+            <thead>
+              <tr>
+                <th style="min-width:90px;">Req ID</th>
+                <th style="min-width:140px;">Type &amp; Subject</th>
+                <th style="min-width:130px;">Semester / Course</th>
+                <th style="min-width:110px;">Date Submitted</th>
+                <th style="min-width:100px;">Status</th>
+                <th style="min-width:180px;">Controller Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($myRequests as $req): ?>
+                <?php 
+                  $statusColors = [
+                    'Pending' => ['bg' => '#fef3c7', 'text' => '#b45309', 'icon' => 'clock'],
+                    'In Review' => ['bg' => '#eff6ff', 'text' => '#1d4ed8', 'icon' => 'spinner'],
+                    'Approved' => ['bg' => '#dcfce7', 'text' => '#15803d', 'icon' => 'check-circle'],
+                    'Rejected' => ['bg' => '#fee2e2', 'text' => '#b91c1c', 'icon' => 'times-circle'],
+                  ];
+                  $stConf = $statusColors[$req['status']] ?? ['bg' => '#f1f5f9', 'text' => '#475569', 'icon' => 'circle'];
+                ?>
+                <tr>
+                  <td>
+                    <strong style="font-family:monospace; color:#0f172a;">#<?= (int)$req['id'] ?></strong>
+                  </td>
+                  <td>
+                    <div style="font-weight:700; color:#0f172a;"><?= e($req['subject']) ?></div>
+                    <span style="font-size:0.75rem; color:#7c3aed; font-weight:600;"><?= e($req['request_type']) ?></span>
+                  </td>
+                  <td>
+                    <div style="font-weight:600;"><?= e($req['semester']) ?></div>
+                    <?php if (!empty($req['course_code'])): ?>
+                      <small style="color:#64748b; font-family:monospace;"><?= e($req['course_code']) ?></small>
+                    <?php endif; ?>
+                  </td>
+                  <td style="font-size:0.82rem; color:#64748b;">
+                    <?= format_date($req['created_at']) ?>
+                  </td>
+                  <td>
+                    <span style="background:<?= $stConf['bg'] ?>; color:<?= $stConf['text'] ?>; font-weight:700; font-size:0.76rem; padding:3px 10px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+                      <i class="fas fa-<?= $stConf['icon'] ?>"></i> <?= e($req['status']) ?>
+                    </span>
+                  </td>
+                  <td style="font-size:0.82rem;">
+                    <?php if (!empty($req['admin_notes'])): ?>
+                      <div style="background:#f8fafc; border-left:3px solid <?= $stConf['text'] ?>; padding:5px 8px; border-radius:0 4px 4px 0; color:#334155;">
+                        <?= e($req['admin_notes']) ?>
+                      </div>
+                    <?php else: ?>
+                      <span style="color:#94a3b8; font-style:italic;">Pending review</span>
+                    <?php endif; ?>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      <?php endif; ?>
+    </div>
+  </div>
+
+  <!-- Section: Official Result Publication History (Section 6 & 7) -->
+  <?php if (!empty($publicationLogs)): ?>
+    <div class="sp-card no-print" id="publication-history">
+      <div class="sp-card-header">
+        <h3 style="margin:0; font-size:1.05rem; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
+          <i class="fas fa-history" style="color:#16a34a;"></i> Official Result Publication History &amp; Verification
+        </h3>
+      </div>
+      <div class="sp-card-body" style="padding:0;">
+        <div style="overflow-x:auto;">
+          <table class="sp-table">
+            <thead>
+              <tr>
+                <th>Academic Semester</th>
+                <th>Examination Term</th>
+                <th>Verified Courses</th>
+                <th>Official Publication Date</th>
+                <th>Verified Authority</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($publicationLogs as $pLog): ?>
+                <tr>
+                  <td><strong style="color:#0f172a;"><?= e($pLog['semester']) ?></strong></td>
+                  <td><?= e($pLog['exam_term'] ?: 'Semester Final Examination') ?></td>
+                  <td><span style="background:#eff6ff; color:#1e40af; padding:2px 8px; border-radius:12px; font-weight:700; font-size:0.78rem;"><?= (int)$pLog['courses_count'] ?> Subjects Verified</span></td>
+                  <td><i class="fas fa-clock" style="color:#64748b; font-size:0.78rem;"></i> <?= format_date($pLog['pub_time']) ?></td>
+                  <td>
+                    <span style="color:#15803d; font-weight:700; font-size:0.82rem; display:inline-flex; align-items:center; gap:4px;">
+                      <i class="fas fa-certificate"></i> Controller of Examinations
+                    </span>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  <?php endif; ?>
+
   <!-- UGC Uniform Grading Scale Reference Table (no-print) -->
   <div class="sp-card no-print">
     <div class="sp-card-header">
@@ -366,5 +572,101 @@ $issueDate = date('d F Y');
   </div>
 
 </div>
+
+<!-- Modal: Result Review / Correction Request Form -->
+<div id="resultRequestModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:2000; align-items:center; justify-content:center; padding:1.25rem;" class="no-print">
+  <div style="background:#ffffff; border-radius:12px; max-width:540px; width:100%; box-shadow:0 20px 40px rgba(0,0,0,0.25); overflow:hidden;">
+    <div style="background:linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%); color:#ffffff; padding:1.25rem 1.5rem; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.15rem; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fas fa-paper-plane" style="color:#f59e0b;"></i> Request Result Review / Correction
+      </h3>
+      <button type="button" onclick="closeRequestModal()" style="background:transparent; border:none; color:#ffffff; font-size:1.3rem; cursor:pointer; line-height:1;">&times;</button>
+    </div>
+
+    <form method="POST" action="" style="padding:1.5rem;">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="submit_result_request">
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
+          Academic Semester *
+        </label>
+        <select name="semester" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem; font-weight:600;">
+          <?php 
+            $standardOptions = [
+              '1st Semester', '2nd Semester', '3rd Semester', '4th Semester',
+              '5th Semester', '6th Semester', '7th Semester', '8th Semester'
+            ];
+            foreach ($standardOptions as $opt): 
+          ?>
+            <option value="<?= e($opt) ?>" <?= ($opt === ($student['current_semester'] ?? '')) ? 'selected' : '' ?>><?= e($opt) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1rem;">
+        <div>
+          <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
+            Inquiry Type *
+          </label>
+          <select name="request_type" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem;">
+            <option value="Result Review">Result Review / Re-check</option>
+            <option value="Grade Correction">Grade Correction</option>
+            <option value="Missing Marks">Missing Marks</option>
+            <option value="Transcript Inquiry">Transcript Inquiry</option>
+            <option value="General Query">General Query</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
+            Subject / Course Code
+          </label>
+          <input type="text" name="course_code" placeholder="e.g. CSE 201 (optional)" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem; text-transform:uppercase;">
+        </div>
+      </div>
+
+      <div style="margin-bottom:1rem;">
+        <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
+          Inquiry Subject / Title *
+        </label>
+        <input type="text" name="subject" required placeholder="e.g. Re-scrutiny application for Data Structures exam" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem;">
+      </div>
+
+      <div style="margin-bottom:1.5rem;">
+        <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
+          Detailed Explanation / Description *
+        </label>
+        <textarea name="description" rows="4" required placeholder="Please describe the discrepancy, expected vs published marks, or your specific inquiry in detail..." style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem; resize:vertical; font-family:inherit;"></textarea>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:0.6rem;">
+        <button type="button" onclick="closeRequestModal()" style="padding:8px 16px; border:1px solid #cbd5e1; background:#f1f5f9; color:#475569; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer;">
+          Cancel
+        </button>
+        <button type="submit" style="padding:8px 20px; border:none; background:#7c3aed; color:#ffffff; border-radius:6px; font-size:0.88rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-paper-plane"></i> Submit Request to Controller
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function openRequestModal() {
+  var modal = document.getElementById('resultRequestModal');
+  if (modal) modal.style.display = 'flex';
+}
+function closeRequestModal() {
+  var modal = document.getElementById('resultRequestModal');
+  if (modal) modal.style.display = 'none';
+}
+// Close on outside click
+window.addEventListener('click', function(e) {
+  var modal = document.getElementById('resultRequestModal');
+  if (e.target === modal) {
+    modal.style.display = 'none';
+  }
+});
+</script>
 
 <?php require_once __DIR__ . '/includes/student-footer.php'; ?>

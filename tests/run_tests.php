@@ -1017,6 +1017,168 @@ run_test("Student Dashboard Tuition & Fee History & Payment Tracking", function(
     return true;
 });
 
+// 59. End-to-End Advanced Admin Result Management System Workflow
+run_test("Advanced Admin Result Management & Student Portal End-to-End Workflow", function() {
+    $db = getDb();
+
+    // Setup dedicated test student
+    $testStudentCode = 'RMU-TEST-RES-999';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$testStudentCode]);
+    $db->prepare("
+        INSERT INTO students 
+        (student_id, full_name, email, password_hash, status, current_year, current_semester, cgpa, credits_completed, total_credits_required)
+        VALUES (?, 'Workflow Test Student', 'wfstudent@rmu.edu', 'hash', 'Active', '1st Year', '1st Semester', 0.0, 0, 140)
+    ")->execute([$testStudentCode]);
+    $stId = (int)$db->lastInsertId();
+
+    // 1. Initial State: Zero published results
+    $initialSummary = get_student_academic_summary($stId, true);
+    if ($initialSummary['has_results'] !== false) {
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$stId]);
+        return "New test student should initially have has_results = false.";
+    }
+
+    // 2. Student Submits a Result Review Inquiry
+    $reqSubject = "Exam marks inquiry for CSE 101";
+    $db->prepare("
+        INSERT INTO result_requests 
+        (student_id, semester, course_code, request_type, subject, description, status)
+        VALUES (?, '1st Semester', 'CSE 101', 'Result Review', ?, 'Expected 82 marks based on exam key.', 'Pending')
+    ")->execute([$stId, $reqSubject]);
+    $reqId = (int)$db->lastInsertId();
+
+    if ($reqId <= 0) {
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$stId]);
+        return "Failed to insert student result request.";
+    }
+
+    // 3. Admin Panel queries pending requests
+    $pendingCnt = get_pending_result_requests_count();
+    if ($pendingCnt < 1) {
+        $db->prepare("DELETE FROM result_requests WHERE student_id = ?")->execute([$stId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$stId]);
+        return "get_pending_result_requests_count did not count pending request.";
+    }
+
+    // 4. Admin adds draft result for student
+    $db->prepare("
+        INSERT INTO student_results 
+        (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, is_published, correction_reason)
+        VALUES (?, '1st Semester', 'CSE 101', 'Structured Programming in C', 3.0, 100, 72.0, 'A-', 3.50, 0, 'Initial draft grading')
+    ")->execute([$stId]);
+    $resId = (int)$db->lastInsertId();
+
+    // Student should still see no published results
+    $draftSummary = get_student_academic_summary($stId, true);
+    if ($draftSummary['has_results'] !== false) {
+        $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$stId]);
+        $db->prepare("DELETE FROM result_requests WHERE student_id = ?")->execute([$stId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$stId]);
+        return "Unpublished draft results leaked into student summary.";
+    }
+
+    // 5. Admin edits result with mandatory correction reason and logs modification history
+    $editReason = "Grade re-check approved after paper scrutiny: increased from 72 to 85 marks.";
+    $db->prepare("
+        UPDATE student_results 
+        SET marks = 85.0, letter_grade = 'A+', grade_point = 4.00, correction_reason = ? 
+        WHERE id = ?
+    ")->execute([$editReason, $resId]);
+
+    log_result_modification($resId, $stId, 1, 'CSE 101', '1st Semester', 'Grade Correction', '72.0 (A-, 3.50)', '85.0 (A+, 4.00)', $editReason);
+
+    $histCheck = $db->prepare("SELECT * FROM result_modification_history WHERE result_id = ?");
+    $histCheck->execute([$resId]);
+    $histRow = $histCheck->fetch(PDO::FETCH_ASSOC);
+    if (!$histRow || $histRow['reason'] !== $editReason) {
+        return "Result modification history failed to record admin correction reason.";
+    }
+
+    // 6. Admin processes and approves student inquiry with admin feedback note
+    $feedbackNote = "Re-scrutiny completed. Marks corrected to 85 (Grade A+). Result published.";
+    $db->prepare("
+        UPDATE result_requests 
+        SET status = 'Approved', admin_notes = ?, processed_by = 1, processed_at = NOW() 
+        WHERE id = ?
+    ")->execute([$feedbackNote, $reqId]);
+
+    // Send notification to student
+    create_student_notification(
+        $stId,
+        "Result Request Status: Approved",
+        "Your inquiry regarding '{$reqSubject}' was approved. $feedbackNote",
+        'request_update',
+        $reqId
+    );
+
+    // 7. Admin publishes semester result
+    $db->prepare("
+        UPDATE student_results 
+        SET is_published = 1, published_at = NOW(), published_by = 1 
+        WHERE student_id = ? AND semester = '1st Semester'
+    ")->execute([$stId]);
+
+    recalculate_student_cgpa($stId);
+
+    // Send publication notification
+    create_student_notification(
+        $stId,
+        "Semester Results Published: 1st Semester",
+        "Official examination results for 1st Semester have been published! Grade: A+ (4.00).",
+        'result_published',
+        $resId
+    );
+
+    // 8. Verify Student Portal renders published result, SGPA, CGPA, notification, and inquiries table
+    $_SESSION['student_pk_id'] = $stId;
+    $_SESSION['student_id'] = $testStudentCode;
+    $_SESSION['student_name'] = 'Workflow Test Student';
+
+    $unreadCnt = get_student_unread_notifications_count($stId);
+    if ($unreadCnt < 2) {
+        return "Student should have at least 2 unread notifications, got $unreadCnt.";
+    }
+
+    ob_start();
+    require BASE_PATH . '/student/results.php';
+    $studentResultsHtml = ob_get_clean();
+
+    $expectedHtmlStrings = [
+        'CSE 101',
+        'Structured Programming in C',
+        '85.0',
+        'A+',
+        '4.00',
+        'PASS',
+        'My Result Review Inquiries &amp; Requests',
+        'Approved',
+        'Official Result Publication History &amp; Verification',
+        '1st Semester'
+    ];
+
+    foreach ($expectedHtmlStrings as $str) {
+        if (strpos($studentResultsHtml, $str) === false && strpos($studentResultsHtml, htmlspecialchars($str)) === false) {
+            return "student/results.php missing expected output: '$str'";
+        }
+    }
+
+    // 9. Mark all notifications as read
+    mark_student_notifications_read($stId);
+    $afterReadCnt = get_student_unread_notifications_count($stId);
+    if ($afterReadCnt !== 0) {
+        return "Notifications failed to mark as read, unread count is $afterReadCnt.";
+    }
+
+    // Cleanup test artifacts
+    $db->prepare("DELETE FROM student_notifications WHERE student_id = ?")->execute([$stId]);
+    $db->prepare("DELETE FROM result_modification_history WHERE student_id = ?")->execute([$stId]);
+    $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$stId]);
+    $db->prepare("DELETE FROM result_requests WHERE student_id = ?")->execute([$stId]);
+    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$stId]);
+
+    return true;
+});
+
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";
 echo bold("-------------------------------------------------------\n\n");

@@ -9,6 +9,7 @@ $student = get_logged_in_student();
 
 $db = getDb();
 $studentId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
+$unreadNotifCount = $unreadNotifCount ?? ($studentId > 0 ? get_student_unread_notifications_count($studentId) : 0);
 
 // Retrieve academic summary (only published results)
 $academicSummary = get_student_academic_summary($studentId, true);
@@ -91,6 +92,33 @@ $notices = $db->query("
 ?>
 
 <div class="sp-main-container">
+
+  <?php if ($unreadNotifCount > 0): ?>
+    <!-- Academic Result Notification Banner -->
+    <div style="background:linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border:1.5px solid #bfdbfe; border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.5rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; box-shadow:0 2px 6px rgba(30,115,190,0.06);">
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <div style="width:40px; height:40px; border-radius:50%; background:#1e73be; color:#fff; display:flex; align-items:center; justify-content:center; font-size:1.1rem; flex-shrink:0;">
+          <i class="fas fa-bell"></i>
+        </div>
+        <div>
+          <h4 style="margin:0 0 2px; font-size:0.95rem; font-weight:700; color:#0f2c59;">
+            You have <?= $unreadNotifCount ?> new academic notification<?= $unreadNotifCount > 1 ? 's' : '' ?>!
+          </h4>
+          <p style="margin:0; font-size:0.82rem; color:#475569;">
+            Recent updates to semester grades, published results, or inquiry responses from the Exam Controller.
+          </p>
+        </div>
+      </div>
+      <div style="display:flex; gap:0.5rem; align-items:center;">
+        <a href="<?= APP_URL ?>/student/results.php" style="background:#1e73be; color:#fff; padding:6px 14px; border-radius:6px; font-weight:700; font-size:0.82rem; text-decoration:none; display:inline-flex; align-items:center; gap:5px;">
+          <i class="fas fa-file-invoice"></i> View Results
+        </a>
+        <a href="?mark_read_all=1" style="background:#ffffff; color:#475569; border:1px solid #cbd5e1; padding:6px 12px; border-radius:6px; font-weight:600; font-size:0.82rem; text-decoration:none;">
+          Mark Read
+        </a>
+      </div>
+    </div>
+  <?php endif; ?>
 
   <!-- Profile Banner -->
   <div class="sp-profile-banner">
