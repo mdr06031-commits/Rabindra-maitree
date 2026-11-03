@@ -387,6 +387,9 @@ include __DIR__ . '/includes/admin-header.php';
     </h2>
   </div>
   <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+    <a href="<?= APP_URL ?>/admin/results-manager.php?student_id=<?= $student['id'] ?>" class="btn-primary" style="padding: 0.6rem 1.2rem; font-size: 0.88rem; background: #0f766e;" title="Manage 8 Semesters, Grades & Results">
+      <i class="fas fa-chart-line"></i> Manage Results &amp; Semesters
+    </a>
     <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $student['id'] ?>" method="POST" target="_blank" style="display:inline;">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="login_as_student">

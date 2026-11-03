@@ -22,22 +22,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $email = trim($_POST['email'] ?? '');
             $phone = trim($_POST['phone'] ?? '');
             $password = trim($_POST['password'] ?? 'student123');
+            $fatherName = trim($_POST['father_name'] ?? '');
+            $motherName = trim($_POST['mother_name'] ?? '');
+            $dob = !empty($_POST['dob']) ? $_POST['dob'] : null;
+            $gender = in_array($_POST['gender'] ?? '', ['Male', 'Female', 'Other']) ? $_POST['gender'] : 'Male';
+            $presentAddress = trim($_POST['present_address'] ?? '');
+            $permanentAddress = trim($_POST['permanent_address'] ?? '');
             $programId = !empty($_POST['program_id']) ? (int)$_POST['program_id'] : null;
             $deptId = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
-            $batch = trim($_POST['batch'] ?? '13th Batch (2025–2029)');
+            $batch = trim($_POST['batch'] ?? 'Batch 26 (2026–2030)');
             $currentYear = trim($_POST['current_year'] ?? '1st Year');
-            $currentSemester = trim($_POST['current_semester'] ?? 'Fall 2026');
+            $currentSemester = trim($_POST['current_semester'] ?? '1st Semester');
             $cgpa = (float)($_POST['cgpa'] ?? 0.00);
             $creditsCompleted = (int)($_POST['credits_completed'] ?? 0);
             $bloodGroup = trim($_POST['blood_group'] ?? '');
             $homeDistrict = trim($_POST['home_district'] ?? '');
             $status = in_array($_POST['status'] ?? '', ['Active', 'Graduated', 'Suspended']) ? $_POST['status'] : 'Active';
 
-            // Auto-generate student ID if blank
+            // Auto-generate official RMU Student ID if blank
             if (empty($studentId)) {
-                $yearPart = date('y');
-                $randomNum = rand(1000, 9999);
-                $studentId = "RMU{$yearPart}0{$randomNum}";
+                $studentId = generate_next_student_id($db);
             }
 
             if (empty($fullName) || empty($email) || empty($phone)) {
@@ -52,17 +56,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $passwordHash = password_hash($password, PASSWORD_DEFAULT);
                     $stmt = $db->prepare("
                         INSERT INTO students 
-                        (student_id, full_name, email, phone, password_hash, program_id, department_id, batch, current_year, current_semester, cgpa, credits_completed, blood_group, home_district, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (student_id, full_name, father_name, mother_name, email, phone, password_hash, program_id, department_id, batch, current_year, current_semester, cgpa, credits_completed, blood_group, home_district, dob, gender, present_address, permanent_address, total_credits_required, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 140, ?)
                     ");
                     $stmt->execute([
-                        $studentId, $fullName, $email, $phone, $passwordHash,
+                        $studentId, $fullName, $fatherName, $motherName, $email, $phone, $passwordHash,
                         $programId, $deptId, $batch, $currentYear, $currentSemester,
-                        $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $status
+                        $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender, $presentAddress, $permanentAddress, $status
                     ]);
-                    $newId = $db->lastInsertId();
-                    log_audit('STUDENT_ADDED', "Added new student: {$fullName} ({$studentId})");
-                    flash_set('success', "Student '{$fullName}' ({$studentId}) registered successfully with password: {$password}");
+                    $newId = (int)$db->lastInsertId();
+
+                    // Seed standard courses for 1st semester
+                    $courses = [
+                        ['CSE 101', 'Introduction to Computer Science & Problem Solving', 3.0, 'Prof. Dr. M. A. Rahman', 'Sun & Tue 10:00 AM', 'Room 301'],
+                        ['CSE 102', 'Structured Programming Language (C)', 3.0, 'Engr. Tareq Ahmed', 'Mon & Wed 11:30 AM', 'Lab 2'],
+                        ['MAT 101', 'Differential and Integral Calculus', 3.0, 'Dr. Shamsul Huda', 'Sun & Wed 02:00 PM', 'Room 205'],
+                        ['ENG 101', 'English Reading and Composition Skills', 3.0, 'Ms. Sabrina Akter', 'Mon & Thu 03:30 PM', 'Room 304']
+                    ];
+                    $insCourse = $db->prepare("
+                        INSERT INTO student_courses 
+                        (student_id, course_code, course_name, credit, instructor_name, class_schedule, room_no, attendance_percent, semester, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 90, ?, 'Enrolled')
+                    ");
+                    foreach ($courses as $c) {
+                        $insCourse->execute([$newId, $c[0], $c[1], $c[2], $c[3], $c[4], $c[5], $currentSemester]);
+                    }
+
+                    // Send Welcome In-App Notification
+                    create_student_notification(
+                        $newId,
+                        "Welcome to Rabindra Maitree University!",
+                        "Your official Student Portal account is active. Student ID: {$studentId}. You can now view your enrolled courses, tuition fee invoices, and academic results.",
+                        'general'
+                    );
+
+                    log_audit('STUDENT_ADDED', "Enrolled new student: {$fullName} ({$studentId})");
+                    flash_set('success', "Student '{$fullName}' ({$studentId}) enrolled successfully! Initial password: {$password}. Student Portal account is active.");
                 }
             }
         } elseif ($action === 'edit') {
@@ -70,6 +99,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fullName = trim($_POST['full_name'] ?? '');
             $email = trim($_POST['email'] ?? '');
             $phone = trim($_POST['phone'] ?? '');
+            $fatherName = trim($_POST['father_name'] ?? '');
+            $motherName = trim($_POST['mother_name'] ?? '');
+            $dob = !empty($_POST['dob']) ? $_POST['dob'] : null;
+            $gender = in_array($_POST['gender'] ?? '', ['Male', 'Female', 'Other']) ? $_POST['gender'] : 'Male';
+            $presentAddress = trim($_POST['present_address'] ?? '');
+            $permanentAddress = trim($_POST['permanent_address'] ?? '');
             $programId = !empty($_POST['program_id']) ? (int)$_POST['program_id'] : null;
             $deptId = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
             $batch = trim($_POST['batch'] ?? '');
@@ -84,12 +119,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id > 0 && !empty($fullName) && !empty($email)) {
                 $stmt = $db->prepare("
                     UPDATE students 
-                    SET full_name = ?, email = ?, phone = ?, program_id = ?, department_id = ?, batch = ?, current_year = ?, current_semester = ?, cgpa = ?, credits_completed = ?, blood_group = ?, home_district = ?, status = ?
+                    SET full_name = ?, father_name = ?, mother_name = ?, email = ?, phone = ?,
+                        program_id = ?, department_id = ?, batch = ?, current_year = ?, current_semester = ?,
+                        cgpa = ?, credits_completed = ?, blood_group = ?, home_district = ?, dob = ?, gender = ?,
+                        present_address = ?, permanent_address = ?, status = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([
-                    $fullName, $email, $phone, $programId, $deptId, $batch, $currentYear, $currentSemester,
-                    $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $status, $id
+                    $fullName, $fatherName, $motherName, $email, $phone,
+                    $programId, $deptId, $batch, $currentYear, $currentSemester,
+                    $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender,
+                    $presentAddress, $permanentAddress, $status, $id
                 ]);
 
                 // Reset password if provided
@@ -355,8 +395,11 @@ include __DIR__ . '/includes/admin-header.php';
                   </span>
                 </td>
                 <td style="text-align: right; white-space: nowrap;">
-                  <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.35rem 0.65rem; font-size: 0.78rem; background: #0284c7; margin-bottom: 4px; display: inline-flex;" title="Manage Courses, Fees & Grades">
+                  <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.35rem 0.65rem; font-size: 0.78rem; background: #0284c7; margin-bottom: 4px; display: inline-flex; align-items:center; gap:4px;" title="Manage Courses, Fees & Profile">
                     <i class="fas fa-eye"></i> Details
+                  </a>
+                  <a href="<?= APP_URL ?>/admin/results-manager.php?student_id=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.35rem 0.65rem; font-size: 0.78rem; background: #059669; margin-bottom: 4px; display: inline-flex; align-items:center; gap:4px;" title="Manage 8 Semesters & Results">
+                    <i class="fas fa-chart-line"></i> Results
                   </a>
                   <a href="<?= APP_URL ?>/admin/students.php?edit=<?= $stu['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.82rem; margin: 0 4px; display: inline-block;">
                     <i class="fas fa-edit"></i> Edit
@@ -429,6 +472,43 @@ include __DIR__ . '/includes/admin-header.php';
         <div class="form-group">
           <label class="form-label">Mobile Number *</label>
           <input type="text" name="phone" value="<?= e($editStudent['phone'] ?? '') ?>" placeholder="017xxxxxxxx" class="form-control" required>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Father's Name</label>
+          <input type="text" name="father_name" value="<?= e($editStudent['father_name'] ?? '') ?>" placeholder="Father's full name" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mother's Name</label>
+          <input type="text" name="mother_name" value="<?= e($editStudent['mother_name'] ?? '') ?>" placeholder="Mother's full name" class="form-control">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Date of Birth</label>
+          <input type="date" name="dob" value="<?= e($editStudent['dob'] ?? '') ?>" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Gender</label>
+          <select name="gender" class="form-select">
+            <option value="Male" <?= (($editStudent['gender'] ?? 'Male') === 'Male') ? 'selected' : '' ?>>Male</option>
+            <option value="Female" <?= (($editStudent['gender'] ?? '') === 'Female') ? 'selected' : '' ?>>Female</option>
+            <option value="Other" <?= (($editStudent['gender'] ?? '') === 'Other') ? 'selected' : '' ?>>Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Present Address</label>
+          <input type="text" name="present_address" value="<?= e($editStudent['present_address'] ?? '') ?>" placeholder="Present address" class="form-control">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Permanent Address</label>
+          <input type="text" name="permanent_address" value="<?= e($editStudent['permanent_address'] ?? '') ?>" placeholder="Permanent address" class="form-control">
         </div>
       </div>
 

@@ -362,3 +362,4 @@ function closeTierModal() {
 </script>
 
 <?php include __DIR__ . '/includes/admin-footer.php'; ?>
+

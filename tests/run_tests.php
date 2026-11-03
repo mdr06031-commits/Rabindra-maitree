@@ -640,16 +640,20 @@ run_test("UGC Uniform Grading Scale 4.00 Auto-Calculation Rules", function() {
 // 52. Eight-Semester Credit-Weighted CGPA Recalculation Accuracy
 run_test("Credit-Weighted CGPA Formula vs Simple Average Integrity", function() {
     $db = getDb();
-    // Student 4 has all 8 semesters seeded
-    $studentId = 4;
+    // Student RMU2601001 has all 8 semesters seeded
+    $student = $db->query("SELECT * FROM students WHERE id = 4 OR student_id = 'RMU2601001' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        return "Demonstration student RMU2601001 not found.";
+    }
+    $studentId = (int)$student['id'];
     $summary = get_student_academic_summary($studentId, true);
 
     if (!$summary['has_results']) {
-        return "Student #4 does not have published results for test.";
+        return "Student #{$studentId} does not have published results for test.";
     }
 
     if (count($summary['semesters']) < 8) {
-        return "Expected 8 semesters for Student #4, found " . count($summary['semesters']);
+        return "Expected 8 semesters for Student #{$studentId}, found " . count($summary['semesters']);
     }
 
     // Verify credit-weighted formula: Sum(Credit * Grade Point) / Sum(Credit)
@@ -683,7 +687,7 @@ run_test("Credit-Weighted CGPA Formula vs Simple Average Integrity", function() 
 // 53. Render Student Results Page with 8 Semesters, Marks & Transcript Summary
 run_test("Render student/results.php: Full Marks, Obtained Marks, 8-Semester Strip & Summary", function() {
     $db = getDb();
-    $student = $db->query("SELECT * FROM students WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $student = $db->query("SELECT * FROM students WHERE id = 4 OR student_id = 'RMU2601001' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
 
     $_SESSION['student_pk_id'] = $student['id'];
     $_SESSION['student_id'] = $student['student_id'];
@@ -725,7 +729,7 @@ run_test("Render student/results.php: Full Marks, Obtained Marks, 8-Semester Str
 // 54. Render Consolidated 8-Semester Transcript (PDF Printable)
 run_test("Render student/semester-transcript.php (Consolidated 8-Semester Mode)", function() {
     $db = getDb();
-    $student = $db->query("SELECT * FROM students WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $student = $db->query("SELECT * FROM students WHERE id = 4 OR student_id = 'RMU2601001' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
 
     $_SESSION['student_pk_id'] = $student['id'];
     $_SESSION['student_id'] = $student['student_id'];
