@@ -52,15 +52,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $gradePoint = (float)($_POST['grade_point'] ?? 4.00);
                 }
 
+                $publishStatus = in_array($_POST['publish_status'] ?? '', ['Draft', 'Under Review', 'Published']) ? $_POST['publish_status'] : ($isPublished ? 'Published' : 'Draft');
+                $isPublished = ($publishStatus === 'Published') ? 1 : 0;
                 $publishedAt = $isPublished ? date('Y-m-d H:i:s') : null;
                 $publishedBy = $isPublished ? $adminId : null;
 
                 $ins = $db->prepare("
                     INSERT INTO student_results 
-                    (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, published_at, published_by, correction_reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, publish_status, published_at, published_by, correction_reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $ins->execute([$targetStudentId, $semester, $code, $title, $credit, $fullMarks, $marks, $letterGrade, $gradePoint, $term, $isPublished, $publishedAt, $publishedBy, $reason]);
+                $ins->execute([$targetStudentId, $semester, $code, $title, $credit, $fullMarks, $marks, $letterGrade, $gradePoint, $term, $isPublished, $publishStatus, $publishedAt, $publishedBy, $reason]);
                 $newResId = (int)$db->lastInsertId();
 
                 // Log modification history
@@ -117,15 +119,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     $gradePoint = (float)($_POST['grade_point'] ?? 4.00);
                 }
 
+                $publishStatus = in_array($_POST['publish_status'] ?? '', ['Draft', 'Under Review', 'Published']) ? $_POST['publish_status'] : ($isPublished ? 'Published' : ($oldRes['publish_status'] ?? 'Draft'));
+                $isPublished = ($publishStatus === 'Published') ? 1 : 0;
                 $publishedAt = $isPublished ? ($oldRes['published_at'] ?? date('Y-m-d H:i:s')) : null;
                 $publishedBy = $isPublished ? ($oldRes['published_by'] ?? $adminId) : null;
 
                 $upd = $db->prepare("
                     UPDATE student_results 
-                    SET semester = ?, course_code = ?, course_name = ?, credit = ?, full_marks = ?, marks = ?, letter_grade = ?, grade_point = ?, exam_term = ?, is_published = ?, published_at = ?, published_by = ?, correction_reason = ?
+                    SET semester = ?, course_code = ?, course_name = ?, credit = ?, full_marks = ?, marks = ?, letter_grade = ?, grade_point = ?, exam_term = ?, is_published = ?, publish_status = ?, published_at = ?, published_by = ?, correction_reason = ?
                     WHERE id = ? AND student_id = ?
                 ");
-                $upd->execute([$semester, $code, $title, $credit, $fullMarks, $marks, $letterGrade, $gradePoint, $term, $isPublished, $publishedAt, $publishedBy, $reason, $resultId, $targetStudentId]);
+                $upd->execute([$semester, $code, $title, $credit, $fullMarks, $marks, $letterGrade, $gradePoint, $term, $isPublished, $publishStatus, $publishedAt, $publishedBy, $reason, $resultId, $targetStudentId]);
 
                 // Log change history if marks, grade, or credit changed
                 if ($oldRes) {
@@ -176,7 +180,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             if ($targetStudentId > 0 && !empty($semesterName)) {
                 $pubStmt = $db->prepare("
                     UPDATE student_results 
-                    SET is_published = 1, published_at = NOW(), published_by = ? 
+                    SET publish_status = 'Published', is_published = 1, published_at = NOW(), published_by = ? 
                     WHERE student_id = ? AND semester = ?
                 ");
                 $pubStmt->execute([$adminId, $targetStudentId, $semesterName]);
@@ -203,7 +207,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             if ($targetStudentId > 0 && !empty($semesterName)) {
                 $unpubStmt = $db->prepare("
                     UPDATE student_results 
-                    SET is_published = 0 
+                    SET publish_status = 'Draft', is_published = 0 
                     WHERE student_id = ? AND semester = ?
                 ");
                 $unpubStmt->execute([$targetStudentId, $semesterName]);
@@ -211,6 +215,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
 
                 log_audit('SEMESTER_RESULTS_UNPUBLISHED', "Reverted {$semesterName} results to draft for Student #{$targetStudentId}");
                 flash_set('info', "Results for '{$semesterName}' have been reverted to Draft (hidden from Student Portal).");
+            }
+        }
+
+        // 5b. Move Semester Results to Under Review
+        elseif ($action === 'review_semester') {
+            $semesterName = trim($_POST['semester_name'] ?? '');
+            if ($targetStudentId > 0 && !empty($semesterName)) {
+                $revStmt = $db->prepare("
+                    UPDATE student_results 
+                    SET publish_status = 'Under Review', is_published = 0 
+                    WHERE student_id = ? AND semester = ?
+                ");
+                $revStmt->execute([$targetStudentId, $semesterName]);
+                $resMetrics = recalculate_student_cgpa($targetStudentId);
+
+                log_audit('SEMESTER_RESULTS_REVIEW', "Moved {$semesterName} results to Under Review for Student #{$targetStudentId}");
+                flash_set('info', "Results for '{$semesterName}' are now marked as Under Review (hidden from Student Portal).");
             }
         }
 
@@ -716,6 +737,7 @@ include __DIR__ . '/includes/admin-header.php';
                             'grade_point' => (float)$co['grade_point'],
                             'exam_term' => $co['exam_term'],
                             'is_published' => (int)$co['is_published'],
+                            'publish_status' => $co['publish_status'] ?? ($co['is_published'] ? 'Published' : 'Draft'),
                             'reason' => $co['correction_reason'] ?? ''
                           ]), ENT_QUOTES, 'UTF-8') ?>)" style="border:none; background:#eff6ff; color:#0284c7; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.82rem; margin-right:4px;" title="Edit Subject Result &amp; Correct Marks">
                             <i class="fas fa-edit"></i> Edit
@@ -844,11 +866,13 @@ include __DIR__ . '/includes/admin-header.php';
               <input type="text" name="reason" value="Initial semester examination marks entry" class="form-control" placeholder="Reason for this record">
             </div>
 
-            <div style="margin-bottom:1.25rem;">
-              <label style="display:inline-flex; align-items:center; gap:0.5rem; font-size:0.88rem; font-weight:600; cursor:pointer;">
-                <input type="checkbox" name="is_published" value="1" checked style="width:17px; height:17px;">
-                <span>Publish immediately to student portal</span>
-              </label>
+            <div class="form-group" style="margin-bottom:1.25rem;">
+              <label class="form-label" style="font-weight:700;">Publication Status (3-State Workflow)</label>
+              <select name="publish_status" class="form-select">
+                <option value="Published" selected>Published (Live immediately in Student Portal)</option>
+                <option value="Draft">Draft (Private - Only Admins can view)</option>
+                <option value="Under Review">Under Review (Quality Assurance Check)</option>
+              </select>
             </div>
 
             <button type="submit" class="btn-primary" style="width:100%; justify-content:center; padding:0.75rem;">
@@ -1184,10 +1208,12 @@ include __DIR__ . '/includes/admin-header.php';
       </div>
 
       <div class="form-group" style="margin-bottom:1.5rem;">
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:#0f172a;">
-          <input type="checkbox" name="is_published" id="editIsPublished" value="1" style="width:16px; height:16px;">
-          <span>Published (Visible in student grade sheet &amp; transcripts)</span>
-        </label>
+        <label class="form-label" style="font-weight:700;">Publication Workflow State</label>
+        <select name="publish_status" id="editPublishStatus" class="form-select">
+          <option value="Published">Published (Visible in student grade sheet &amp; transcripts)</option>
+          <option value="Draft">Draft (Private - Only Admins can see)</option>
+          <option value="Under Review">Under Review (Quality Assurance Check)</option>
+        </select>
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
@@ -1321,7 +1347,9 @@ function openEditModal(data) {
   document.getElementById('editPointOutput').value = parseFloat(data.grade_point).toFixed(2);
   document.getElementById('editReason').value = data.reason || 'Administrative grade verification & update';
   document.getElementById('editExamTerm').value = data.exam_term || 'Semester Final Examination';
-  document.getElementById('editIsPublished').checked = (parseInt(data.is_published) === 1);
+  if (document.getElementById('editPublishStatus')) {
+    document.getElementById('editPublishStatus').value = data.publish_status || (parseInt(data.is_published) === 1 ? 'Published' : 'Draft');
+  }
 
   var modal = document.getElementById('editResultModal');
   modal.style.display = 'flex';

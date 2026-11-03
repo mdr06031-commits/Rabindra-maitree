@@ -14,8 +14,9 @@ $selectedSubject = $_GET['subject'] ?? '';
 
 // Fetch all active programs grouped by degree level
 $db = getDb();
-$ugPrograms = $db->query("SELECT id, title_en, title_bn, sort_order FROM programs WHERE is_active = 1 AND degree_level = 'Undergraduate' ORDER BY sort_order ASC")->fetchAll();
-$pgPrograms = $db->query("SELECT id, title_en, title_bn, sort_order FROM programs WHERE is_active = 1 AND degree_level = 'Postgraduate' ORDER BY sort_order ASC")->fetchAll();
+$departments = $db->query("SELECT id, name_en FROM departments ORDER BY name_en ASC")->fetchAll(PDO::FETCH_ASSOC);
+$ugPrograms = $db->query("SELECT p.id, p.department_id, p.title_en, p.title_bn, p.sort_order, d.name_en as dept_name FROM programs p LEFT JOIN departments d ON p.department_id = d.id WHERE p.is_active = 1 AND p.degree_level = 'Undergraduate' ORDER BY p.sort_order ASC")->fetchAll();
+$pgPrograms = $db->query("SELECT p.id, p.department_id, p.title_en, p.title_bn, p.sort_order, d.name_en as dept_name FROM programs p LEFT JOIN departments d ON p.department_id = d.id WHERE p.is_active = 1 AND p.degree_level = 'Postgraduate' ORDER BY p.sort_order ASC")->fetchAll();
 
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/breadcrumbs.php';
@@ -67,9 +68,40 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
         <!-- Full Name -->
         <div class="form-group">
-          <label class="form-label">Full Name <span class="required">*</span></label>
+          <label class="form-label">Full Name / শিক্ষার্থীর পূর্ণ নাম <span class="required">*</span></label>
           <input type="text" name="full_name" class="form-control" placeholder="Enter applicant's full legal name" required minlength="3">
           <div class="form-error-msg">Please enter applicant's full name.</div>
+        </div>
+
+        <!-- Father's Name & Mother's Name in 2 columns -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Father's Name / পিতার নাম <span class="required">*</span></label>
+            <input type="text" name="father_name" class="form-control" placeholder="Enter father's legal name" required minlength="3">
+            <div class="form-error-msg">Please enter father's name.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Mother's Name / মাতার নাম <span class="required">*</span></label>
+            <input type="text" name="mother_name" class="form-control" placeholder="Enter mother's legal name" required minlength="3">
+            <div class="form-error-msg">Please enter mother's name.</div>
+          </div>
+        </div>
+
+        <!-- Date of Birth & Gender in 2 columns -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Date of Birth / জন্ম তারিখ <span class="required">*</span></label>
+            <input type="date" name="date_of_birth" class="form-control" required max="<?= date('Y-m-d', strtotime('-15 years')) ?>">
+            <div class="form-error-msg">Please provide a valid date of birth.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Gender / লিঙ্গ <span class="required">*</span></label>
+            <select name="gender" class="form-control" required style="padding: 0.65rem 0.85rem;">
+              <option value="Male" selected>Male / পুরুষ</option>
+              <option value="Female">Female / নারী</option>
+              <option value="Other">Other / অন্যান্য</option>
+            </select>
+          </div>
         </div>
 
         <!-- Mobile & Email in 2 columns -->
@@ -84,6 +116,20 @@ include __DIR__ . '/includes/breadcrumbs.php';
           <div class="form-group">
             <label class="form-label">Email Address (Optional)</label>
             <input type="email" name="email" class="form-control" placeholder="example@email.com">
+          </div>
+        </div>
+
+        <!-- Present Address & Permanent Address in 2 columns -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem;">
+          <div class="form-group">
+            <label class="form-label">Present Address / বর্তমান ঠিকানা <span class="required">*</span></label>
+            <textarea name="present_address" class="form-control" rows="2" placeholder="House/Village, Road, Post Office, Thana, District" required style="resize:vertical;"></textarea>
+            <div class="form-error-msg">Present address is required.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Permanent Address / স্থায়ী ঠিকানা <span class="required">*</span></label>
+            <textarea name="permanent_address" class="form-control" rows="2" placeholder="Village, Post Office, Thana, District" required style="resize:vertical;"></textarea>
+            <div class="form-error-msg">Permanent address is required.</div>
           </div>
         </div>
 
@@ -249,33 +295,74 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
         </div>
 
-        <!-- Interested subject to admit in RMU -->
-        <div class="form-group">
-          <label class="form-label">Interested Subject to Admit in RMU <span class="required">*</span></label>
-          <select name="interested_subject" class="form-select" required>
-            <option value="">-- Select Your Preferred Program --</option>
-            <optgroup label="Undergraduate Programs (Bachelor Degrees)">
-              <?php foreach ($ugPrograms as $i => $prog): ?>
-                <?php 
-                  $isSelected = ($selectedSubject === $prog['title_en'] || (!empty($selectedSubject) && stripos($prog['title_en'], $selectedSubject) !== false));
-                ?>
-                <option value="<?= e($prog['title_en']) ?>" <?= $isSelected ? 'selected' : '' ?>>
-                  <?= ($i + 1) ?>. <?= e($prog['title_en']) ?>
-                </option>
-              <?php endforeach; ?>
-            </optgroup>
-            <optgroup label="Postgraduate Programs (Master's Degrees)">
-              <?php foreach ($pgPrograms as $j => $prog): ?>
-                <?php 
-                  $isSelected = ($selectedSubject === $prog['title_en'] || (!empty($selectedSubject) && stripos($prog['title_en'], $selectedSubject) !== false));
-                ?>
-                <option value="<?= e($prog['title_en']) ?>" <?= $isSelected ? 'selected' : '' ?>>
-                  <?= ($j + 1) ?>. <?= e($prog['title_en']) ?>
-                </option>
-              <?php endforeach; ?>
-            </optgroup>
-          </select>
-          <div class="form-error-msg">Please select your intended academic program.</div>
+        <!-- Academic Department, Program & Session Selection -->
+        <div style="background:#f0f7ff; border:1.5px solid #bfdbfe; border-radius:10px; padding:1.25rem; margin-bottom:1.5rem;">
+          <h4 style="margin:0 0 1rem; font-size:1rem; font-weight:700; color:#0f2c59; display:flex; align-items:center; gap:8px;">
+            <i class="fas fa-graduation-cap" style="color:var(--rmu-primary);"></i> Academic Choice &amp; Session / পছন্দের বিভাগ ও প্রোগ্রাম
+          </h4>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:1rem; margin-bottom:1rem;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Academic Department / বিভাগ</label>
+              <select name="department_id" id="departmentSelect" class="form-select" onchange="filterProgramsByDept(this.value)">
+                <option value="">-- All Departments / সকল বিভাগ --</option>
+                <?php foreach ($departments as $d): ?>
+                  <option value="<?= (int)$d['id'] ?>"><?= e($d['name_en']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Academic Session / শিক্ষাবর্ষ <span class="required">*</span></label>
+              <select name="academic_session" class="form-select" required>
+                <option value="Fall 2026" selected>Fall 2026 (Active Intake)</option>
+                <option value="Spring 2027">Spring 2027 (Upcoming)</option>
+                <option value="Summer 2026">Summer 2026</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Interested subject to admit in RMU -->
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label">Selected Program of Study / প্রোগ্রাম <span class="required">*</span></label>
+            <select name="interested_subject" id="programSelect" class="form-select" required>
+              <option value="">-- Select Your Preferred Program --</option>
+              <optgroup label="Undergraduate Programs (Bachelor Degrees)">
+                <?php foreach ($ugPrograms as $i => $prog): ?>
+                  <?php 
+                    $isSelected = ($selectedSubject === $prog['title_en'] || (!empty($selectedSubject) && stripos($prog['title_en'], $selectedSubject) !== false));
+                  ?>
+                  <option value="<?= e($prog['title_en']) ?>" data-dept="<?= (int)$prog['department_id'] ?>" data-prog-id="<?= (int)$prog['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                    <?= ($i + 1) ?>. <?= e($prog['title_en']) ?> (<?= e($prog['dept_name'] ?? 'Faculty Program') ?>)
+                  </option>
+                <?php endforeach; ?>
+              </optgroup>
+              <optgroup label="Postgraduate Programs (Master's Degrees)">
+                <?php foreach ($pgPrograms as $j => $prog): ?>
+                  <?php 
+                    $isSelected = ($selectedSubject === $prog['title_en'] || (!empty($selectedSubject) && stripos($prog['title_en'], $selectedSubject) !== false));
+                  ?>
+                  <option value="<?= e($prog['title_en']) ?>" data-dept="<?= (int)$prog['department_id'] ?>" data-prog-id="<?= (int)$prog['id'] ?>" <?= $isSelected ? 'selected' : '' ?>>
+                    <?= ($j + 1) ?>. <?= e($prog['title_en']) ?> (<?= e($prog['dept_name'] ?? 'Faculty Program') ?>)
+                  </option>
+                <?php endforeach; ?>
+              </optgroup>
+            </select>
+            <input type="hidden" name="program_id" id="selectedProgramId" value="">
+            <div class="form-error-msg">Please select your intended academic program.</div>
+          </div>
+        </div>
+
+        <!-- Academic Documents Upload (Certificates / Transcripts) -->
+        <div class="form-group" style="background:#f8fafc; border:1.5px dashed #cbd5e1; border-radius:10px; padding:1.2rem; margin-bottom:1.5rem;">
+          <label class="form-label" style="font-weight:700; color:#1e293b; margin-bottom:0.5rem; display:flex; align-items:center; gap:0.5rem;">
+            <i class="fas fa-file-pdf" style="color:var(--rmu-primary);"></i>
+            Academic Documents / শিক্ষাগত সনদ ও মার্কশীট <span style="font-size:0.8rem; font-weight:normal; color:#64748b;">(SSC &amp; HSC Transcripts/Certificates)</span>
+          </label>
+          <input type="file" name="academic_documents" id="academicDocsInput" class="form-control" accept=".pdf,image/jpeg,image/png,image/webp" style="padding:0.5rem 0.85rem; background:#ffffff;">
+          <small style="color:#64748b; font-size:0.78rem; display:block; margin-top:0.4rem;">
+            Upload your SSC/HSC transcript, certificate or testimonial (PDF, JPG, PNG, WEBP — Max 5MB).
+          </small>
         </div>
 
         <!-- Quota Declaration -->
@@ -379,6 +466,36 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
   }
+
+  // Program selection and Department linking
+  const progSelect = document.getElementById('programSelect');
+  const progIdInput = document.getElementById('selectedProgramId');
+  const deptSelect = document.getElementById('departmentSelect');
+
+  if (progSelect) {
+    progSelect.addEventListener('change', function() {
+      const opt = this.options[this.selectedIndex];
+      if (opt && opt.dataset.progId) {
+        if (progIdInput) progIdInput.value = opt.dataset.progId;
+        if (deptSelect && opt.dataset.dept && !deptSelect.value) {
+          deptSelect.value = opt.dataset.dept;
+        }
+      }
+    });
+  }
+
+  window.filterProgramsByDept = function(deptId) {
+    if (!progSelect) return;
+    const opts = progSelect.querySelectorAll('option');
+    opts.forEach(function(o) {
+      if (!o.value) return; // Keep placeholder
+      if (!deptId || o.dataset.dept === deptId) {
+        o.style.display = '';
+      } else {
+        o.style.display = 'none';
+      }
+    });
+  };
 
   // Form submit interception & client validation
   if (form) {

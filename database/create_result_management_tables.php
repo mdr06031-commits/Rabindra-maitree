@@ -93,3 +93,4 @@ CREATE TABLE IF NOT EXISTS `student_notifications` (
 echo "  [OK] Table student_notifications verified/created.\n";
 
 echo "Migration completed successfully!\n";
+

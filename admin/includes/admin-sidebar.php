@@ -14,6 +14,7 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
   </a>
 
   <ul class="admin-nav">
+    <!-- 1. Dashboard -->
     <li class="admin-nav-item <?= ($adminCurrentPage === 'dashboard.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/dashboard.php" class="admin-nav-link">
         <i class="fas fa-tachometer-alt"></i> Dashboard
@@ -21,21 +22,35 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     </li>
 
     <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Admissions &amp; Students
+      Core Admissions &amp; Finance
     </li>
 
+    <!-- 2. Admission Management -->
     <li class="admin-nav-item <?= ($adminCurrentPage === 'admissions.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/admissions.php" class="admin-nav-link">
-        <i class="fas fa-user-graduate"></i> Admission Intake
+        <i class="fas fa-user-graduate"></i> Admission Management
       </a>
     </li>
 
+    <!-- 3. Payment Management -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'payments.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/payments.php" class="admin-nav-link">
+        <i class="fas fa-receipt"></i> Payment Management
+      </a>
+    </li>
+
+    <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
+      Students &amp; Examination Control
+    </li>
+
+    <!-- 4. Student Management -->
     <li class="admin-nav-item <?= ($adminCurrentPage === 'students.php' || $adminCurrentPage === 'student-detail.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/students.php" class="admin-nav-link">
-        <i class="fas fa-users-cog"></i> Enrolled Students
+        <i class="fas fa-users-cog"></i> Student Management
       </a>
     </li>
 
+    <!-- 5. Student Result Management -->
     <?php $pendingRequestsBadge = function_exists('get_pending_result_requests_count') ? get_pending_result_requests_count() : 0; ?>
     <li class="admin-nav-item <?= ($adminCurrentPage === 'results-manager.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/results-manager.php" class="admin-nav-link" style="display:flex; justify-content:space-between; align-items:center;">
@@ -46,14 +61,61 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
-    <li class="admin-nav-item <?= ($adminCurrentPage === 'portal-notices.php') ? 'active' : '' ?>">
-      <a href="<?= APP_URL ?>/admin/portal-notices.php" class="admin-nav-link">
-        <i class="fas fa-broadcast-tower"></i> Portal Notices
+    <!-- 6. Semester Management -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'semesters.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/semesters.php" class="admin-nav-link">
+        <i class="fas fa-calendar-alt"></i> Semester Management
+      </a>
+    </li>
+
+    <!-- 7. GPA & CGPA Settings -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'grading-settings.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/grading-settings.php" class="admin-nav-link">
+        <i class="fas fa-sliders-h"></i> GPA &amp; CGPA Settings
+      </a>
+    </li>
+
+    <!-- 8. Result Publication -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'result-publication.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/result-publication.php" class="admin-nav-link">
+        <i class="fas fa-bullhorn"></i> Result Publication
+      </a>
+    </li>
+
+    <!-- 9. Notifications -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'notifications.php' || $adminCurrentPage === 'portal-notices.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/notifications.php" class="admin-nav-link">
+        <i class="fas fa-bell"></i> Notifications
       </a>
     </li>
 
     <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Academics &amp; Faculty
+      Institutional Intelligence &amp; System
+    </li>
+
+    <!-- 10. Reports & Analytics -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'reports.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/reports.php" class="admin-nav-link">
+        <i class="fas fa-chart-line"></i> Reports &amp; Analytics
+      </a>
+    </li>
+
+    <!-- 11. Activity Logs -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'audit-logs.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/audit-logs.php" class="admin-nav-link">
+        <i class="fas fa-history"></i> Activity Logs
+      </a>
+    </li>
+
+    <!-- 12. System Settings -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'settings.php' || $adminCurrentPage === 'users.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/settings.php" class="admin-nav-link">
+        <i class="fas fa-cog"></i> System Settings
+      </a>
+    </li>
+
+    <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
+      Campus Content &amp; Staff
     </li>
 
     <li class="admin-nav-item <?= ($adminCurrentPage === 'faculties.php') ? 'active' : '' ?>">
@@ -80,10 +142,6 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
-    <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Campus Content
-    </li>
-
     <li class="admin-nav-item <?= ($adminCurrentPage === 'notices.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/notices.php" class="admin-nav-link">
         <i class="fas fa-bullhorn"></i> Public Notices
@@ -108,31 +166,9 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
       </a>
     </li>
 
-    <li style="padding: 0.8rem 1.5rem 0.3rem; font-size: 0.72rem; text-transform: uppercase; font-weight: 700; color: #475569; letter-spacing: 0.5px;">
-      Administration &amp; System
-    </li>
-
     <li class="admin-nav-item <?= ($adminCurrentPage === 'messages.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/messages.php" class="admin-nav-link">
         <i class="fas fa-envelope-open-text"></i> Inquiries
-      </a>
-    </li>
-
-    <li class="admin-nav-item <?= ($adminCurrentPage === 'users.php') ? 'active' : '' ?>">
-      <a href="<?= APP_URL ?>/admin/users.php" class="admin-nav-link">
-        <i class="fas fa-user-shield"></i> Admin Users
-      </a>
-    </li>
-
-    <li class="admin-nav-item <?= ($adminCurrentPage === 'settings.php') ? 'active' : '' ?>">
-      <a href="<?= APP_URL ?>/admin/settings.php" class="admin-nav-link">
-        <i class="fas fa-sliders-h"></i> Site Settings
-      </a>
-    </li>
-
-    <li class="admin-nav-item <?= ($adminCurrentPage === 'audit-logs.php') ? 'active' : '' ?>">
-      <a href="<?= APP_URL ?>/admin/audit-logs.php" class="admin-nav-link">
-        <i class="fas fa-history"></i> Audit Logs
       </a>
     </li>
 

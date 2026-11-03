@@ -90,19 +90,25 @@ echo "Admin Login -> Code: {$adminLoginPost['code']}, URL: {$adminLoginPost['url
 
 $adminRoutes = [
     '/admin/dashboard.php' => 'Dashboard',
+    '/admin/admissions.php' => 'Admission Management',
+    '/admin/payments.php' => 'Payment Management',
     '/admin/students.php' => 'Student Management',
     '/admin/student-detail.php?id=4' => 'Student Profile',
     '/admin/results-manager.php?student_id=4' => '8-Semester Results',
-    '/admin/admissions.php' => 'Admissions Review',
+    '/admin/semesters.php' => 'Semester Management',
+    '/admin/grading-settings.php' => 'GPA &amp; CGPA Settings',
+    '/admin/result-publication.php' => 'Result Publication',
+    '/admin/notifications.php' => 'Notifications',
+    '/admin/reports.php' => 'Reports &amp; Analytics',
+    '/admin/audit-logs.php' => 'Security Audit Logs',
+    '/admin/settings.php' => 'Site Settings',
     '/admin/departments.php' => 'Departments',
     '/admin/programs.php' => 'Degree Programs',
     '/admin/faculties.php' => 'Faculties',
     '/admin/notices.php' => 'Notices',
     '/admin/events.php' => 'Events',
     '/admin/news.php' => 'News',
-    '/admin/messages.php' => 'Inquiries &amp; Messages',
-    '/admin/settings.php' => 'Site Settings',
-    '/admin/audit-logs.php' => 'Security Audit Logs'
+    '/admin/messages.php' => 'Inquiries &amp; Messages'
 ];
 
 $adminPass = true;

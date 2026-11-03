@@ -33,6 +33,11 @@ if (!$student) {
     exit;
 }
 
+// Fetch linked admission record if exists
+$admStmt = $db->prepare("SELECT * FROM admissions WHERE student_id = ? OR (mobile = ? AND mobile != '') OR (email = ? AND email != '') ORDER BY id DESC LIMIT 1");
+$admStmt->execute([$student['student_id'], $student['phone'] ?? '', $student['email'] ?? '']);
+$admissionRecord = $admStmt->fetch(PDO::FETCH_ASSOC);
+
 // Handle POST actions (Add Course, Delete Course, Add Result, Delete Result, Add Fee, Mark Fee Paid, Delete Fee)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
@@ -40,8 +45,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $action = $_POST['action'] ?? '';
 
+        // 0. Update Personal & Admission Profile
+        if ($action === 'update_personal_info') {
+            $fullName = trim($_POST['full_name'] ?? $student['full_name']);
+            $fatherName = trim($_POST['father_name'] ?? '');
+            $motherName = trim($_POST['mother_name'] ?? '');
+            $dob = !empty($_POST['dob']) ? $_POST['dob'] : null;
+            $gender = in_array($_POST['gender'] ?? '', ['Male', 'Female', 'Other']) ? $_POST['gender'] : 'Male';
+            $bloodGroup = trim($_POST['blood_group'] ?? '');
+            $phone = trim($_POST['phone'] ?? $student['phone']);
+            $email = trim($_POST['email'] ?? $student['email']);
+            $presentAddr = trim($_POST['present_address'] ?? '');
+            $permAddr = trim($_POST['permanent_address'] ?? '');
+            $homeDistrict = trim($_POST['home_district'] ?? '');
+
+            $updSt = $db->prepare("
+                UPDATE students SET 
+                    full_name = ?, father_name = ?, mother_name = ?, dob = ?, gender = ?,
+                    blood_group = ?, phone = ?, email = ?, present_address = ?, permanent_address = ?, home_district = ?
+                WHERE id = ?
+            ");
+            $updSt->execute([$fullName, $fatherName, $motherName, $dob, $gender, $bloodGroup, $phone, $email, $presentAddr, $permAddr, $homeDistrict, $studentId]);
+            log_audit('STUDENT_PROFILE_UPDATED', "Updated personal profile information for student {$student['student_id']}");
+            flash_set('success', 'Student personal profile updated successfully.');
+            header("Location: " . APP_URL . "/admin/student-detail.php?id=" . $studentId . "&tab=admissionTab");
+            exit;
+        }
+
         // 1. Course Enrollment Actions
-        if ($action === 'add_course') {
+        elseif ($action === 'add_course') {
             $courseCode = trim($_POST['course_code'] ?? '');
             $courseName = trim($_POST['course_name'] ?? '');
             $credit = (float)($_POST['credit'] ?? 3.0);
@@ -467,6 +499,12 @@ include __DIR__ . '/includes/admin-header.php';
     <div style="color: #64748b; font-size: 0.85rem; display: flex; gap: 1.5rem; flex-wrap: wrap;">
       <span><i class="fas fa-envelope"></i> <?= e($student['email']) ?></span>
       <span><i class="fas fa-phone-alt"></i> <?= e($student['phone']) ?></span>
+      <?php if (!empty($student['father_name'])): ?>
+        <span><i class="fas fa-user-friends"></i> Father: <?= e($student['father_name']) ?></span>
+      <?php endif; ?>
+      <?php if (!empty($student['gender'])): ?>
+        <span><i class="fas fa-venus-mars"></i> <?= e($student['gender']) ?></span>
+      <?php endif; ?>
       <span><i class="fas fa-tint" style="color: #ef4444;"></i> <?= e($student['blood_group'] ?: 'N/A') ?></span>
       <span><i class="fas fa-map-marker-alt"></i> <?= e($student['home_district'] ?: 'N/A') ?></span>
     </div>
@@ -487,7 +525,7 @@ include __DIR__ . '/includes/admin-header.php';
 </div>
 
 <!-- Tabs Navigation -->
-<div style="display: flex; gap: 0.5rem; border-bottom: 2px solid #e2e8f0; margin-bottom: 2rem;">
+<div style="display: flex; gap: 0.5rem; border-bottom: 2px solid #e2e8f0; margin-bottom: 2rem; flex-wrap: wrap;">
   <button onclick="openTab('coursesTab')" class="tab-btn active" id="btn-coursesTab" style="padding: 0.75rem 1.5rem; border: none; background: none; font-weight: 700; font-size: 0.95rem; color: var(--rmu-primary); border-bottom: 3px solid var(--rmu-primary); cursor: pointer;">
     <i class="fas fa-book-reader"></i> Course Enrollments (<?= count($courses) ?>)
   </button>
@@ -496,6 +534,9 @@ include __DIR__ . '/includes/admin-header.php';
   </button>
   <button onclick="openTab('feesTab')" class="tab-btn" id="btn-feesTab" style="padding: 0.75rem 1.5rem; border: none; background: none; font-weight: 600; font-size: 0.95rem; color: #64748b; cursor: pointer;">
     <i class="fas fa-file-invoice-dollar"></i> Tuition Fees &amp; Billing (<?= count($fees) ?>)
+  </button>
+  <button onclick="openTab('admissionTab')" class="tab-btn" id="btn-admissionTab" style="padding: 0.75rem 1.5rem; border: none; background: none; font-weight: 600; font-size: 0.95rem; color: #64748b; cursor: pointer;">
+    <i class="fas fa-id-card-alt"></i> Admission &amp; Profile Dossier
   </button>
 </div>
 
@@ -1017,6 +1058,175 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
+<!-- Tab 4: Admission Dossier & Identity Records -->
+<div id="admissionTab" class="tab-content" style="display: none;">
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: start;">
+    
+    <!-- Left Column: Personal Information Editor -->
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+      <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.25rem;">
+        <h4 style="margin: 0; font-size: 1.15rem; color: #0f172a; font-weight: 700;">
+          <i class="fas fa-user-edit" style="color: var(--rmu-primary);"></i> Personal Particulars &amp; Contact Records
+        </h4>
+        <span style="font-size: 0.82rem; color: #64748b;">Update student personal, parental, and contact information.</span>
+      </div>
+
+      <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="update_personal_info">
+
+        <div class="form-group">
+          <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Full Student Name *</label>
+          <input type="text" name="full_name" value="<?= e($student['full_name']) ?>" class="form-control" required>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Father's Name</label>
+            <input type="text" name="father_name" value="<?= e($student['father_name'] ?? '') ?>" class="form-control" placeholder="Father's Name">
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Mother's Name</label>
+            <input type="text" name="mother_name" value="<?= e($student['mother_name'] ?? '') ?>" class="form-control" placeholder="Mother's Name">
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Date of Birth</label>
+            <input type="date" name="dob" value="<?= e($student['dob'] ?? '') ?>" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Gender</label>
+            <select name="gender" class="form-select">
+              <option value="Male" <?= ($student['gender'] === 'Male') ? 'selected' : '' ?>>Male</option>
+              <option value="Female" <?= ($student['gender'] === 'Female') ? 'selected' : '' ?>>Female</option>
+              <option value="Other" <?= ($student['gender'] === 'Other') ? 'selected' : '' ?>>Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Blood Group</label>
+            <select name="blood_group" class="form-select">
+              <option value="">Select</option>
+              <?php foreach (['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as $bg): ?>
+                <option value="<?= $bg ?>" <?= ($student['blood_group'] === $bg) ? 'selected' : '' ?>><?= $bg ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Contact Phone *</label>
+            <input type="text" name="phone" value="<?= e($student['phone']) ?>" class="form-control" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Email Address *</label>
+            <input type="email" name="email" value="<?= e($student['email']) ?>" class="form-control" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Present Address</label>
+          <textarea name="present_address" class="form-control" rows="2"><?= e($student['present_address'] ?? '') ?></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Permanent Address</label>
+          <textarea name="permanent_address" class="form-control" rows="2"><?= e($student['permanent_address'] ?? '') ?></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" style="font-size: 0.82rem; font-weight: 600;">Home District</label>
+          <input type="text" name="home_district" value="<?= e($student['home_district'] ?? '') ?>" class="form-control">
+        </div>
+
+        <button type="submit" class="btn-primary" style="padding: 0.65rem 1.5rem; font-size: 0.88rem;">
+          <i class="fas fa-save"></i> Save Profile Particulars
+        </button>
+      </form>
+    </div>
+
+    <!-- Right Column: Linked Admission Record & Uploaded Documents -->
+    <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      
+      <!-- Admission Background Card -->
+      <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h4 style="margin: 0; font-size: 1.15rem; color: #0f172a; font-weight: 700;">
+              <i class="fas fa-file-alt" style="color: var(--rmu-primary);"></i> Linked Admission Dossier
+            </h4>
+            <span style="font-size: 0.82rem; color: #64748b;">Original application credentials and academic verification.</span>
+          </div>
+          <?php if (!empty($admissionRecord)): ?>
+            <a href="<?= APP_URL ?>/admission-status.php?ref=<?= urlencode($admissionRecord['application_ref']) ?>" target="_blank" class="btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.78rem; background: #0284c7;">
+              <i class="fas fa-id-card"></i> Admit Card
+            </a>
+          <?php endif; ?>
+        </div>
+
+        <?php if (!empty($admissionRecord)): ?>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.88rem; margin-bottom: 1.25rem;">
+            <div><strong style="color: #64748b;">Application Ref:</strong> <span style="font-family: monospace; font-weight: 700; color: var(--rmu-primary);"><?= e($admissionRecord['application_ref']) ?></span></div>
+            <div><strong style="color: #64748b;">Applied On:</strong> <?= format_date($admissionRecord['created_at']) ?></div>
+            <div><strong style="color: #64748b;">Session:</strong> <?= e($admissionRecord['academic_session'] ?? 'Batch 26') ?></div>
+            <div><strong style="color: #64748b;">Admission Status:</strong> <span style="font-weight: 700; color: #15803d;"><?= e($admissionRecord['status']) ?></span></div>
+            <div><strong style="color: #64748b;">SSC GPA:</strong> <?= number_format($admissionRecord['ssc_gpa'] ?? 0, 2) ?> (<?= e($admissionRecord['ssc_board'] ?? 'N/A') ?>)</div>
+            <div><strong style="color: #64748b;">HSC GPA:</strong> <?= number_format($admissionRecord['hsc_gpa'] ?? 0, 2) ?> (<?= e($admissionRecord['hsc_board'] ?? 'N/A') ?>)</div>
+            <div style="grid-column: 1 / -1;"><strong style="color: #64748b;">Last College:</strong> <?= e($admissionRecord['last_college'] ?? 'N/A') ?></div>
+            <?php if (!empty($admissionRecord['admin_notes'])): ?>
+              <div style="grid-column: 1 / -1; background: #f8fafc; border-left: 3px solid #3b82f6; padding: 0.5rem 0.75rem; font-size: 0.82rem; color: #334155;">
+                <strong>Admissions Note:</strong> <?= e($admissionRecord['admin_notes']) ?>
+              </div>
+            <?php endif; ?>
+          </div>
+
+          <!-- ৳150 Fee Payment Details -->
+          <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+            <div style="font-weight: 700; color: #166534; font-size: 0.9rem; margin-bottom: 0.4rem;">
+              <i class="fas fa-check-circle"></i> ৳150 Admission Application Fee
+            </div>
+            <div style="font-size: 0.82rem; color: #1e3a8a; display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;">
+              <div><strong>Status:</strong> <?= e($admissionRecord['payment_status'] ?? 'Paid') ?></div>
+              <div><strong>TrxID:</strong> <span style="font-family: monospace;"><?= e($admissionRecord['transaction_id'] ?? 'RMU-VERIFIED') ?></span></div>
+              <div><strong>Method:</strong> <?= e($admissionRecord['payment_method'] ?? 'bKash') ?></div>
+              <div><strong>Mode:</strong> <?= e($admissionRecord['payment_gateway_mode'] ?? 'sandbox') ?></div>
+            </div>
+          </div>
+
+          <!-- Academic Documents Download -->
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1rem;">
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.9rem; margin-bottom: 0.4rem;">
+              <i class="fas fa-file-invoice"></i> Uploaded Academic Documents
+            </div>
+            <?php if (!empty($admissionRecord['academic_documents'])): ?>
+              <p style="font-size: 0.82rem; color: #64748b; margin-bottom: 0.75rem;">
+                Official transcripts, certificates, or admission test tokens submitted by applicant.
+              </p>
+              <a href="<?= APP_URL . '/' . e($admissionRecord['academic_documents']) ?>" target="_blank" class="btn-primary" style="padding: 0.5rem 1rem; font-size: 0.85rem; background: #2563eb; display: inline-flex; align-items: center; gap: 0.5rem;">
+                <i class="fas fa-download"></i> View / Download Academic Documents
+              </a>
+            <?php else: ?>
+              <p style="font-size: 0.82rem; color: #64748b; margin: 0;">
+                No separate digital document attached to this application record.
+              </p>
+            <?php endif; ?>
+          </div>
+
+        <?php else: ?>
+          <div style="text-align: center; padding: 2rem; color: #64748b;">
+            <i class="fas fa-info-circle" style="font-size: 2rem; color: #94a3b8; margin-bottom: 0.75rem; display: block;"></i>
+            <p style="margin: 0 0 0.5rem; font-weight: 600;">No linked online admission application found.</p>
+            <small>This student account was created directly via Administrator Enrollment or database seed.</small>
+          </div>
+        <?php endif; ?>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <script>
 function openTab(tabId) {
   document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
@@ -1025,12 +1235,24 @@ function openTab(tabId) {
     btn.style.borderBottom = 'none';
     btn.style.fontWeight = '600';
   });
-  document.getElementById(tabId).style.display = 'block';
+  var target = document.getElementById(tabId);
+  if (target) target.style.display = 'block';
   var activeBtn = document.getElementById('btn-' + tabId);
-  activeBtn.style.color = 'var(--rmu-primary)';
-  activeBtn.style.borderBottom = '3px solid var(--rmu-primary)';
-  activeBtn.style.fontWeight = '700';
+  if (activeBtn) {
+    activeBtn.style.color = 'var(--rmu-primary)';
+    activeBtn.style.borderBottom = '3px solid var(--rmu-primary)';
+    activeBtn.style.fontWeight = '700';
+  }
 }
+
+// Auto open requested tab if passed in URL
+window.addEventListener('DOMContentLoaded', function() {
+  const params = new URLSearchParams(window.location.search);
+  const reqTab = params.get('tab');
+  if (reqTab && document.getElementById(reqTab)) {
+    openTab(reqTab);
+  }
+});
 
 function autoGradePoint(grade) {
   const map = {

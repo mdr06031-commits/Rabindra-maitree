@@ -1179,6 +1179,228 @@ run_test("Advanced Admin Result Management & Student Portal End-to-End Workflow"
     return true;
 });
 
+// 60. Comprehensive University Admission, ৳150 Payment Verification, Student ID Creation & Profile Dossier
+run_test("Comprehensive University Admission, ৳150 Payment Verification, Student ID Creation & Profile Dossier", function() {
+    $db = getDb();
+
+    // 1. Create simulated admission application with complete personal and academic fields
+    $ref = 'RMU-ADM-T60-' . rand(10000, 99999);
+    $mobile = '01799' . rand(100000, 999999);
+    $email = 'tanvir.test' . rand(1000, 9999) . '@rmu.test';
+
+    $insAdm = $db->prepare("
+        INSERT INTO admissions (
+            application_ref, full_name, father_name, mother_name, date_of_birth, gender,
+            mobile, email, present_address, permanent_address, academic_session,
+            department_id, program_id, last_college, ssc_gpa, hsc_gpa, home_district,
+            hsc_group, interested_subject, quota, status, payment_status, payment_amount,
+            academic_documents
+        ) VALUES (
+            ?, 'Tanvir Ahmed Shanto', 'Md. Mostafizur Rahman', 'Suraiya Begum', '2004-05-14', 'Male',
+            ?, ?, 'House 12, Road 4, Mirpur-10, Dhaka', 'Village: Monohardi, Narsingdi', 'Batch 26 (Fall 2026)',
+            6, 1, 'Dhaka City College', 5.00, 4.85, 'Dhaka',
+            'Science', 'B.Sc. in Computer Science and Engineering (CSE)', 'NO', 'Submitted', 'Pending', 150.00,
+            'storage/uploads/documents/sample_applicant_dossier.pdf'
+        )
+    ");
+    $insAdm->execute([$ref, $mobile, $email]);
+    $admId = (int)$db->lastInsertId();
+
+    if ($admId <= 0) {
+        return "Failed to insert test admission application.";
+    }
+
+    // Verify initial state
+    $chkStmt = $db->prepare("SELECT * FROM admissions WHERE id = ?");
+    $chkStmt->execute([$admId]);
+    $adm = $chkStmt->fetch(PDO::FETCH_ASSOC);
+    if ($adm['status'] !== 'Submitted' || $adm['payment_status'] !== 'Pending') {
+        return "Initial admission state incorrect: status={$adm['status']}, payment_status={$adm['payment_status']}";
+    }
+
+    // 2. Simulate ৳150 application fee payment (bKash sandbox verification)
+    $trxId = 'RMU-TEST-TRX-' . rand(10000, 99999);
+    $payUpd = $db->prepare("
+        UPDATE admissions 
+        SET payment_status = 'Paid', transaction_id = ?, sender_number = '01711223344',
+            payment_method = 'bKash', payment_gateway_mode = 'sandbox', paid_at = NOW(),
+            status = 'Under Review'
+        WHERE id = ?
+    ");
+    $payUpd->execute([$trxId, $admId]);
+
+    // Verify application is Under Review and student account is NOT yet created
+    $chkAfterPay = $db->prepare("SELECT status, payment_status, student_id FROM admissions WHERE id = ?");
+    $chkAfterPay->execute([$admId]);
+    $admAfterPay = $chkAfterPay->fetch(PDO::FETCH_ASSOC);
+    if ($admAfterPay['payment_status'] !== 'Paid' || $admAfterPay['status'] !== 'Under Review') {
+        return "Application did not transition to Paid / Under Review after fee payment.";
+    }
+    if (!empty($admAfterPay['student_id'])) {
+        return "Student account should not be provisioned before committee acceptance.";
+    }
+
+    // 3. Admin Reviews Dossier & Accepts Application -> triggers provision_student_from_admission()
+    $provResult = provision_student_from_admission($admId);
+    if (!$provResult || empty($provResult['student_id']) || empty($provResult['portal_password'])) {
+        return "provision_student_from_admission() failed to return credentials.";
+    }
+
+    $stIdCode = $provResult['student_id'];
+    $plainPassword = $provResult['portal_password'];
+
+    // Verify student record created in students table with matching personal fields
+    $stStmt = $db->prepare("SELECT * FROM students WHERE student_id = ?");
+    $stStmt->execute([$stIdCode]);
+    $newStudent = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$newStudent) {
+        return "Student record not found in students table for ID: {$stIdCode}";
+    }
+    if ($newStudent['father_name'] !== 'Md. Mostafizur Rahman') {
+        return "Father's name did not transfer correctly: " . ($newStudent['father_name'] ?? 'null');
+    }
+    if ($newStudent['mother_name'] !== 'Suraiya Begum') {
+        return "Mother's name did not transfer correctly: " . ($newStudent['mother_name'] ?? 'null');
+    }
+    if ($newStudent['gender'] !== 'Male') {
+        return "Gender did not transfer correctly: " . ($newStudent['gender'] ?? 'null');
+    }
+    if (strpos($newStudent['present_address'], 'Mirpur') === false) {
+        return "Present address did not transfer correctly: " . ($newStudent['present_address'] ?? 'null');
+    }
+
+    // 4. Verify password authentication
+    if (!password_verify($plainPassword, $newStudent['password_hash'])) {
+        return "Generated student password failed password_verify() against stored hash.";
+    }
+
+    // 5. Verify welcome notification dispatched
+    $notifStmt = $db->prepare("SELECT * FROM student_notifications WHERE student_id = ? ORDER BY id DESC LIMIT 1");
+    $notifStmt->execute([$newStudent['id']]);
+    $welcomeNotif = $notifStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$welcomeNotif || strpos($welcomeNotif['title'], 'Admission Accepted') === false) {
+        return "Welcome notification was not created for the new student.";
+    }
+
+    // 6. Verify enrolled initial courses
+    $courseCountStmt = $db->prepare("SELECT COUNT(*) FROM student_courses WHERE student_id = ?");
+    $courseCountStmt->execute([$newStudent['id']]);
+    if ((int)$courseCountStmt->fetchColumn() < 4) {
+        return "Initial semester courses were not auto-enrolled for the new student.";
+    }
+
+    // Clean up test records
+    $db->prepare("DELETE FROM student_courses WHERE student_id = ?")->execute([$newStudent['id']]);
+    $db->prepare("DELETE FROM student_notifications WHERE student_id = ?")->execute([$newStudent['id']]);
+    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$newStudent['id']]);
+    $db->prepare("DELETE FROM admissions WHERE id = ?")->execute([$admId]);
+
+    return true;
+});
+
+// 61. Complete 12-Section Admin Control Panel & 3-State Result Workflow Integration
+run_test("Complete 12-Section Admin Control Panel & 3-State Result Workflow Integration", function() {
+    $db = getDb();
+
+    // 1. Verify Grading Rules table & official UGC defaults
+    $rules = get_configured_grading_rules();
+    if (count($rules) < 8) {
+        return "Configured grading rules in grading_rules table are insufficient: " . count($rules);
+    }
+    $gradeLetters = array_column($rules, 'letter_grade');
+    if (!in_array('A+', $gradeLetters) || !in_array('A', $gradeLetters) || !in_array('F', $gradeLetters)) {
+        return "Grading rules missing standard UGC letter grades.";
+    }
+
+    // 2. Verify Semester Terms table
+    $termCount = (int)$db->query("SELECT COUNT(*) FROM semester_terms")->fetchColumn();
+    if ($termCount < 8) {
+        return "Semester terms table does not contain all 8 semesters.";
+    }
+
+    // 3. Verify 3-State Result Workflow (Draft -> Under Review -> Published)
+    // Create temporary student
+    $tmpStCode = 'RMU' . date('Y') . '9999';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpStCode]);
+    $insSt = $db->prepare("
+        INSERT INTO students (student_id, full_name, email, phone, password_hash, program_id, department_id, batch, status)
+        VALUES (?, 'Workflow Test Student', 'wf.test@rmu.ac.bd', '01700000099', 'hash', 1, 6, 'Batch 26', 'Active')
+    ");
+    $insSt->execute([$tmpStCode]);
+    $tmpStId = (int)$db->lastInsertId();
+
+    // Step 3a: Add result as Draft
+    $insDraft = $db->prepare("
+        INSERT INTO student_results (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, is_published, publish_status)
+        VALUES (?, '1st Semester', 'CSE 101', 'Intro to CS', 3.0, 100, 85.0, 'A+', 4.00, 0, 'Draft')
+    ");
+    $insDraft->execute([$tmpStId]);
+    $draftResId = (int)$db->lastInsertId();
+
+    // Verify Draft result is hidden from public student portal results
+    $studSummaryDraft = get_student_academic_summary($tmpStId, true);
+    if ($studSummaryDraft['has_results'] !== false || !empty($studSummaryDraft['semesters'])) {
+        return "Draft result should not show published academic results for student.";
+    }
+
+    // Step 3b: Move result to Under Review
+    $updRev = $db->prepare("UPDATE student_results SET publish_status = 'Under Review', is_published = 0 WHERE id = ?");
+    $updRev->execute([$draftResId]);
+    $studSummaryRev = get_student_academic_summary($tmpStId, true);
+    if ($studSummaryRev['has_results'] !== false || !empty($studSummaryRev['semesters'])) {
+        return "Under Review result should not be visible to students.";
+    }
+
+    // Step 3c: Publish result
+    $updPub = $db->prepare("UPDATE student_results SET publish_status = 'Published', is_published = 1, published_at = NOW() WHERE id = ?");
+    $updPub->execute([$draftResId]);
+    $recalc = recalculate_student_cgpa($tmpStId);
+    $studSummaryPub = get_student_academic_summary($tmpStId, true);
+
+    if ($studSummaryPub['has_results'] !== true || empty($studSummaryPub['semesters'])) {
+        return "Published result not showing in published student results.";
+    }
+    if ((float)$recalc['cgpa'] !== 4.00) {
+        return "Recalculated CGPA expected 4.00, got: " . $recalc['cgpa'];
+    }
+
+    // Clean up temporary workflow test data
+    $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$tmpStId]);
+    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$tmpStId]);
+
+    // 4. Verify all 12 Admin Panel route files exist and compile without syntax errors
+    $adminPages = [
+        'dashboard.php',
+        'admissions.php',
+        'payments.php',
+        'students.php',
+        'results-manager.php',
+        'semesters.php',
+        'grading-settings.php',
+        'result-publication.php',
+        'notifications.php',
+        'reports.php',
+        'audit-logs.php',
+        'settings.php'
+    ];
+
+    foreach ($adminPages as $page) {
+        $filePath = dirname(__DIR__) . '/admin/' . $page;
+        if (!file_exists($filePath)) {
+            return "Admin panel route missing: admin/{$page}";
+        }
+        $out = [];
+        $ret = 0;
+        exec("php -l \"$filePath\"", $out, $ret);
+        if ($ret !== 0) {
+            return "Syntax error in admin/{$page}: " . implode(' ', $out);
+        }
+    }
+
+    return true;
+});
+
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";
 echo bold("-------------------------------------------------------\n\n");

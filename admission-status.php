@@ -81,52 +81,88 @@ include __DIR__ . '/includes/breadcrumbs.php';
         </div>
       <?php else: ?>
         <!-- ============================================================== -->
-        <!-- ⭐ STUDENT PORTAL ACCESS CREDENTIALS CARD                        -->
+        <!-- ⭐ STATUS & CREDENTIALS DISPLAY                                 -->
         <!-- ============================================================== -->
-        <div style="background:linear-gradient(135deg, #1e3a8a 0%, #1e73be 100%); color:#ffffff; border-radius:12px; padding:1.8rem 2rem; margin-bottom:2rem; box-shadow:0 8px 16px -2px rgba(30,115,190,0.25); border:1px solid #60a5fa;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.2rem; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:1rem;">
+        <?php if ($application['status'] === 'Accepted' && !empty($application['student_id'])): ?>
+          <div style="background:linear-gradient(135deg, #1e3a8a 0%, #1e73be 100%); color:#ffffff; border-radius:12px; padding:1.8rem 2rem; margin-bottom:2rem; box-shadow:0 8px 16px -2px rgba(30,115,190,0.25); border:1px solid #60a5fa;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.2rem; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:1rem;">
+              <div>
+                <span style="background:rgba(255,255,255,0.2); color:#ffffff; padding:3px 10px; border-radius:20px; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">
+                  <i class="fas fa-check-circle" style="color:#4ade80;"></i> Admission Accepted &amp; Enrolled
+                </span>
+                <h3 style="font-size:1.35rem; font-weight:800; margin:0.4rem 0 0.2rem; color:#ffffff;">
+                  <i class="fas fa-user-graduate"></i> Student Academic Portal Credentials
+                </h3>
+                <p style="margin:0; font-size:0.88rem; color:#dbeafe;">
+                  আপনার ভর্তি আবেদন অনুমোদিত হয়েছে। নিচে আপনার স্টুডেন্ট পোর্টালের <strong>আইডি ও পাসওয়ার্ড</strong> দেওয়া হলো:
+                </p>
+              </div>
+              <div>
+                <a href="<?= APP_URL ?>/student/login.php?student_id=<?= urlencode($application['student_id'] ?? '') ?>&pwd=<?= urlencode($application['portal_password'] ?? '') ?>" style="background:#22c55e; color:#ffffff !important; font-weight:800; padding:0.85rem 1.6rem; text-decoration:none; border-radius:8px; display:inline-flex; align-items:center; gap:0.5rem; box-shadow:0 4px 8px rgba(0,0,0,0.2); font-size:1rem; transition:transform 0.2s ease;">
+                  <i class="fas fa-sign-in-alt"></i> Login to Student Portal Now &rarr;
+                </a>
+              </div>
+            </div>
+
+            <!-- Credentials Box -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
+              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
+                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Your Student ID</small>
+                <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#ffffff; letter-spacing:1px; margin-top:2px;">
+                  <?= e($application['student_id'] ?? '') ?>
+                </div>
+              </div>
+
+              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
+                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Portal Password</small>
+                <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#fde047; letter-spacing:1px; margin-top:2px;">
+                  <?= e($application['portal_password'] ?? '') ?>
+                </div>
+              </div>
+
+              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem;">
+                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Admitted Program</small>
+                <div style="font-size:0.95rem; font-weight:700; color:#ffffff; margin-top:4px;">
+                  <?= e($application['interested_subject']) ?>
+                </div>
+              </div>
+            </div>
+          </div>
+        <?php elseif ($application['status'] === 'Rejected'): ?>
+          <div style="background:#fef2f2; border:2px solid #fecaca; border-radius:12px; padding:1.5rem 1.8rem; margin-bottom:2rem;">
+            <div style="display:flex; align-items:center; gap:0.6rem; color:#b91c1c; font-weight:800; font-size:1.15rem; margin-bottom:0.4rem;">
+              <i class="fas fa-times-circle" style="font-size:1.4rem;"></i> Admission Application Rejected
+            </div>
+            <p style="color:#7f1d1d; margin:0 0 0.5rem; font-size:0.92rem;">
+              The Admissions Committee has reviewed your application and was unable to approve admission at this time.
+            </p>
+            <?php if (!empty($application['admin_notes'])): ?>
+              <div style="background:#ffffff; border-left:4px solid #b91c1c; padding:8px 12px; border-radius:0 6px 6px 0; font-size:0.88rem; color:#450a0a;">
+                <strong>Committee Note:</strong> <?= e($application['admin_notes']) ?>
+              </div>
+            <?php endif; ?>
+          </div>
+        <?php else: ?>
+          <div style="background:#eff6ff; border:2px solid #bfdbfe; border-radius:12px; padding:1.5rem 1.8rem; margin-bottom:2rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
             <div>
-              <span style="background:rgba(255,255,255,0.2); color:#ffffff; padding:3px 10px; border-radius:20px; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">
-                <i class="fas fa-check-circle" style="color:#4ade80;"></i> Account Provisioned &amp; Active
-              </span>
-              <h3 style="font-size:1.35rem; font-weight:800; margin:0.4rem 0 0.2rem; color:#ffffff;">
-                <i class="fas fa-user-graduate"></i> Student Academic Portal Credentials
-              </h3>
-              <p style="margin:0; font-size:0.88rem; color:#dbeafe;">
-                আপনার ৳১৫০ আবেদন ফি পরিশোধ সম্পন্ন হয়েছে। নিচে আপনার স্টুডেন্ট পোর্টালের <strong>আইডি ও পাসওয়ার্ড</strong> দেওয়া হলো:
+              <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.3rem;">
+                <span style="background:#15803d; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">৳150 Fee Paid &amp; Verified</span>
+                <span style="background:#1e40af; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">Status: Under Review</span>
+              </div>
+              <h4 style="margin:0 0 0.25rem; font-size:1.15rem; font-weight:800; color:#1e3a8a;">
+                Application Under Academic Review
+              </h4>
+              <p style="margin:0; font-size:0.88rem; color:#3b82f6;">
+                Your ৳150 application fee (TrxID: <strong><?= e($application['transaction_id'] ?? 'N/A') ?></strong>) is verified. Your documents and academic qualifications are currently being reviewed by the Admissions Committee. You will be able to access your Student Portal ID here upon approval.
               </p>
             </div>
             <div>
-              <a href="<?= APP_URL ?>/student/login.php?student_id=<?= urlencode($application['student_id'] ?? '') ?>&pwd=<?= urlencode($application['portal_password'] ?? '') ?>" style="background:#22c55e; color:#ffffff !important; font-weight:800; padding:0.85rem 1.6rem; text-decoration:none; border-radius:8px; display:inline-flex; align-items:center; gap:0.5rem; box-shadow:0 4px 8px rgba(0,0,0,0.2); font-size:1rem; transition:transform 0.2s ease;">
-                <i class="fas fa-sign-in-alt"></i> Login to Student Portal Now &rarr;
-              </a>
+              <button type="button" onclick="window.print()" class="btn-primary" style="background:#1e73be; padding:0.65rem 1.25rem; font-size:0.88rem;">
+                <i class="fas fa-print"></i> Print Slip
+              </button>
             </div>
           </div>
-
-          <!-- Credentials Box -->
-          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
-            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
-              <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Your Student ID</small>
-              <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#ffffff; letter-spacing:1px; margin-top:2px;">
-                <?= e($application['student_id'] ?? 'RMU2601004') ?>
-              </div>
-            </div>
-
-            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
-              <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Portal Password</small>
-              <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#fde047; letter-spacing:1px; margin-top:2px;">
-                <?= e($application['portal_password'] ?? 'rmu2026') ?>
-              </div>
-            </div>
-
-            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem;">
-              <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Admitted Program</small>
-              <div style="font-size:0.95rem; font-weight:700; color:#ffffff; margin-top:4px;">
-                <?= e($application['interested_subject']) ?>
-              </div>
-            </div>
-          </div>
-        </div>
+        <?php endif; ?>
 
         <!-- ============================================================== -->
         <!-- ⭐ OFFICIAL APPLICATION CARD (অ্যাপ্লিকেশন কার্ড উইথ ছবি)          -->

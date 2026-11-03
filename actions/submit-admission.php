@@ -19,8 +19,17 @@ if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
 
 // 2. Extract & Sanitize Form Inputs
 $fullName    = trim($_POST['full_name'] ?? '');
+$fatherName  = trim($_POST['father_name'] ?? '');
+$motherName  = trim($_POST['mother_name'] ?? '');
+$dob         = trim($_POST['date_of_birth'] ?? '');
+$gender      = in_array($_POST['gender'] ?? '', ['Male', 'Female', 'Other']) ? $_POST['gender'] : 'Male';
 $rawMobile   = trim($_POST['mobile'] ?? '');
 $email       = trim($_POST['email'] ?? '');
+$presentAddr = trim($_POST['present_address'] ?? '');
+$permAddr    = trim($_POST['permanent_address'] ?? '');
+$session     = trim($_POST['academic_session'] ?? 'Fall 2026');
+$deptId      = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
+$progId      = !empty($_POST['program_id']) ? (int)$_POST['program_id'] : null;
 $lastCollege = trim($_POST['last_college'] ?? '');
 $sscGpa      = trim($_POST['ssc_gpa'] ?? '');
 $hscGpa      = trim($_POST['hsc_gpa'] ?? '');
@@ -71,6 +80,35 @@ if (isset($_FILES['applicant_photo']) && $_FILES['applicant_photo']['error'] ===
             $filename = 'applicant_' . $cleanMobile . '_' . time() . '.' . $ext;
             if (move_uploaded_file($file['tmp_name'], $uploadDir . $filename)) {
                 $uploadedPhoto = $filename;
+            }
+        }
+    }
+}
+
+// Handle Academic Documents Upload (Certificates / Transcripts)
+$uploadedDocs = null;
+if (isset($_FILES['academic_documents']) && $_FILES['academic_documents']['error'] === UPLOAD_ERR_OK) {
+    $docFile = $_FILES['academic_documents'];
+    $maxDocBytes = 5 * 1024 * 1024; // 5MB
+    if ($docFile['size'] <= $maxDocBytes) {
+        $allowedDocTypes = [
+            'application/pdf' => 'pdf',
+            'image/jpeg'      => 'jpg',
+            'image/png'       => 'png',
+            'image/webp'      => 'webp'
+        ];
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $docMime = $finfo->file($docFile['tmp_name']);
+        if (isset($allowedDocTypes[$docMime])) {
+            $docExt = $allowedDocTypes[$docMime];
+            $docDir = BASE_PATH . '/storage/uploads/documents/';
+            if (!is_dir($docDir)) {
+                mkdir($docDir, 0755, true);
+            }
+            $cleanMobile = preg_replace('/[^0-9]/', '', $rawMobile);
+            $docFilename = 'doc_' . $cleanMobile . '_' . time() . '.' . $docExt;
+            if (move_uploaded_file($docFile['tmp_name'], $docDir . $docFilename)) {
+                $uploadedDocs = $docFilename;
             }
         }
     }
@@ -160,32 +198,38 @@ try {
     // 6. Persist to MySQL
     $insertStmt = $db->prepare("
         INSERT INTO admissions (
-            application_ref, full_name, mobile, email, last_college,
-            ssc_gpa, hsc_gpa, home_district, hsc_group, interested_subject,
-            quota, status, ip_address,
+            application_ref, full_name, father_name, mother_name, date_of_birth, gender,
+            mobile, email, present_address, permanent_address, home_district,
+            academic_session, department_id, program_id, last_college,
+            ssc_gpa, hsc_gpa, hsc_group, interested_subject,
+            quota, status, payment_status, payment_amount, ip_address,
             ssc_exam, ssc_roll, ssc_board, ssc_result_type, ssc_group, ssc_year,
             hsc_exam, hsc_roll, hsc_board, hsc_result_type, hsc_year,
             grad_applicable, grad_exam, grad_university, grad_subject, grad_result_type, grad_result, grad_year, grad_duration,
-            photo
+            photo, academic_documents
         ) VALUES (
+            ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?,
-            ?, 'Submitted', ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, 'Submitted', 'Pending', 150.00, ?,
             ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?,
-            ?
+            ?, ?
         )
     ");
 
     $insertStmt->execute([
-        $refNumber, $fullName, $mobile, $email, $lastCollege,
-        (float)$sscGpa, (float)$hscGpa, $district, $hscGroup, $subject,
+        $refNumber, $fullName, $fatherName, $motherName, (!empty($dob) ? $dob : null), $gender,
+        $mobile, $email, $presentAddr, $permAddr, $district,
+        $session, $deptId, $progId, $lastCollege,
+        (float)$sscGpa, (float)$hscGpa, $hscGroup, $subject,
         $quotaVal, $ipAddress,
         $sscExam, $sscRoll, $sscBoard, $sscResultType, $sscGroup, $sscYear,
         $hscExam, $hscRoll, $hscBoard, $hscResultType, $hscYear,
         $gradApplicable, $gradExam, $gradUniversity, $gradSubject, $gradResultType, $gradResult, $gradYear, $gradDuration,
-        $uploadedPhoto
+        $uploadedPhoto, $uploadedDocs
     ]);
 
     flash_set('success', "Application submitted successfully! Your tracking reference number is {$refNumber}. Please complete the ৳150 application fee payment to generate your official Application Card and receive your Student Portal ID & Password.");

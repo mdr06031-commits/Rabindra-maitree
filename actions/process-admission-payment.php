@@ -121,6 +121,15 @@ SVG;
     file_put_contents($payDir . '/' . $screenshotFilename, $svgContent);
 }
 
+// Duplicate transaction ID protection
+$chkTrx = $db->prepare("SELECT id FROM admissions WHERE transaction_id = ? AND id != ? AND payment_status = 'Paid'");
+$chkTrx->execute([$transactionId, $adm['id']]);
+if ($chkTrx->fetchColumn()) {
+    flash_set('error', 'This Transaction ID has already been verified for another application.');
+    header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($ref));
+    exit;
+}
+
 // Update payment details in database
 $upd = $db->prepare("
     UPDATE admissions 
@@ -130,15 +139,15 @@ $upd = $db->prepare("
         transaction_id = ?,
         sender_number = ?,
         payment_screenshot = COALESCE(?, payment_screenshot),
+        payment_gateway_mode = 'sandbox',
         paid_at = NOW(),
-        status = 'Accepted'
+        status = 'Under Review'
     WHERE id = ?
 ");
 $upd->execute([$method, $transactionId, $senderNumber, $screenshotFilename, $adm['id']]);
 
-// Provision Student account in students table and generate credentials
-$creds = provision_student_from_admission((int)$adm['id']);
+log_audit('ADMISSION_FEE_PAID', "Applicant {$adm['application_ref']} paid ৳150 fee via {$method} (TrxID: {$transactionId})");
 
-flash_set('success', "৳150 Application Fee Payment Verified (TrxID: {$transactionId})! Your official Application Card (with your photo) is ready and your Student Portal account has been activated.");
+flash_set('success', "৳150 Application Fee Payment Verified (TrxID: {$transactionId})! Your official Payment Receipt has been generated and your application is now Under Review by the Admissions Office.");
 header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($ref) . "&paid=1");
 exit;

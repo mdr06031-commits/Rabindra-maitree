@@ -734,8 +734,40 @@ function get_semester_number(string $name): int {
 /**
  * Calculate UGC Uniform Letter Grade, Grade Point, and Result Status from Marks (out of 100)
  */
+function get_configured_grading_rules(): array {
+    static $cachedRules = null;
+    if ($cachedRules !== null) {
+        return $cachedRules;
+    }
+    try {
+        $db = getDb();
+        $stmt = $db->query("SELECT * FROM grading_rules WHERE is_active = 1 ORDER BY sort_order ASC, min_marks DESC");
+        $cachedRules = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    } catch (Exception $e) {
+        $cachedRules = [];
+    }
+    return $cachedRules ?: [];
+}
+
 function calculate_grade_from_marks(float $marks): array {
     $marks = max(0.00, min(100.00, $marks));
+    $rules = get_configured_grading_rules();
+    if (!empty($rules)) {
+        foreach ($rules as $r) {
+            $min = (float)$r['min_marks'];
+            $max = (float)$r['max_marks'];
+            if ($marks >= $min && ($marks <= $max || ($max >= 99.0 && $marks <= 100.0))) {
+                $status = ($r['letter_grade'] === 'F' || (float)$r['grade_point'] <= 0.0) ? 'Fail' : 'Pass';
+                return [
+                    'letter_grade' => $r['letter_grade'],
+                    'grade_point'  => (float)$r['grade_point'],
+                    'status'       => $status,
+                    'remarks'      => $r['remarks'] ?? ($status === 'Pass' ? 'Pass' : 'Fail')
+                ];
+            }
+        }
+    }
+
     if ($marks >= 80.00) {
         return ['letter_grade' => 'A+', 'grade_point' => 4.00, 'status' => 'Pass', 'remarks' => 'Outstanding'];
     } elseif ($marks >= 75.00) {
@@ -1028,13 +1060,29 @@ function provision_student_from_admission(int $admissionId): ?array {
     $existingStudentId = $chk->fetchColumn();
 
     if (!$existingStudentId) {
-        $subject = $adm['interested_subject'];
-        $progStmt = $db->prepare("SELECT id, department_id, title_en FROM programs WHERE title_en = ? OR title_en LIKE ? LIMIT 1");
-        $progStmt->execute([$subject, "%$subject%"]);
-        $prog = $progStmt->fetch(PDO::FETCH_ASSOC);
+        $subject = $adm['interested_subject'] ?? '';
+        $prog = null;
+        if (!empty($adm['program_id'])) {
+            $pStmt = $db->prepare("SELECT id, department_id, title_en FROM programs WHERE id = ? LIMIT 1");
+            $pStmt->execute([$adm['program_id']]);
+            $prog = $pStmt->fetch(PDO::FETCH_ASSOC);
+        }
+        if (!$prog && !empty($subject)) {
+            $progStmt = $db->prepare("SELECT id, department_id, title_en FROM programs WHERE title_en = ? OR title_en LIKE ? LIMIT 1");
+            $progStmt->execute([$subject, "%$subject%"]);
+            $prog = $progStmt->fetch(PDO::FETCH_ASSOC);
+        }
 
-        $programId = $prog ? (int)$prog['id'] : 1;
-        $departmentId = $prog ? (int)$prog['department_id'] : 6;
+        $programId = $prog ? (int)$prog['id'] : (!empty($adm['program_id']) ? (int)$adm['program_id'] : 1);
+        $departmentId = $prog ? (int)$prog['department_id'] : (!empty($adm['department_id']) ? (int)$adm['department_id'] : 6);
+
+        $session = !empty($adm['academic_session']) ? $adm['academic_session'] : 'Batch 26';
+        $fatherName = $adm['father_name'] ?? null;
+        $motherName = $adm['mother_name'] ?? null;
+        $dob = !empty($adm['date_of_birth']) ? $adm['date_of_birth'] : null;
+        $gender = !empty($adm['gender']) ? $adm['gender'] : 'Male';
+        $presentAddr = $adm['present_address'] ?? null;
+        $permAddr = $adm['permanent_address'] ?? null;
 
         $email = !empty($adm['email']) ? $adm['email'] : (strtolower($studentId) . '@student.rmu.ac.bd');
         $emailChk = $db->prepare("SELECT id FROM students WHERE email = ?");
@@ -1048,20 +1096,32 @@ function provision_student_from_admission(int $admissionId): ?array {
 
         $insStudent = $db->prepare("
             INSERT INTO students (
-                student_id, full_name, email, phone, password_hash,
+                student_id, full_name, father_name, mother_name, email, phone, password_hash,
                 program_id, department_id, batch, current_year, current_semester,
-                cgpa, credits_completed, total_credits_required, home_district, status, avatar
+                cgpa, credits_completed, total_credits_required, dob, gender, home_district,
+                present_address, permanent_address, status, avatar
             ) VALUES (
-                ?, ?, ?, ?, ?,
-                ?, ?, 'Batch 26', '1st Year', '1st Semester',
-                0.00, 0, 140, ?, 'Active', ?
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, '1st Year', '1st Semester',
+                0.00, 0, 140, ?, ?, ?,
+                ?, ?, 'Active', ?
             )
         ");
         $insStudent->execute([
-            $studentId, $adm['full_name'], $email, $adm['mobile'], $passwordHash,
-            $programId, $departmentId, $adm['home_district'], $avatar
+            $studentId, $adm['full_name'], $fatherName, $motherName, $email, $adm['mobile'], $passwordHash,
+            $programId, $departmentId, $session,
+            $dob, $gender, $adm['home_district'],
+            $presentAddr, $permAddr, $avatar
         ]);
         $newStudentPk = (int)$db->lastInsertId();
+
+        // Send Welcome & ID Generation notification to student
+        create_student_notification(
+            $newStudentPk,
+            "Admission Accepted — Welcome to RMU!",
+            "Congratulations! Your admission application has been approved. Your official Student ID is {$studentId}. You can now view your enrolled courses, fee invoices, and academic results.",
+            'general'
+        );
 
         // Seed 4 sample 1st-semester courses
         $courses = [
