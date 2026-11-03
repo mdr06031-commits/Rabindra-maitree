@@ -49,3 +49,4 @@ if ($allOk) {
     echo PHP_EOL . "SOME ENDPOINTS FAILED!" . PHP_EOL;
     exit(1);
 }
+

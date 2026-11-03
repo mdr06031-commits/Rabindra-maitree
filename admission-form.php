@@ -103,7 +103,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
         </div>
 
         <!-- ================================================================ -->
-        <!-- EDUCATION INFORMATION FORM (SSC, HSC, GRADUATION)                 -->
+        <!-- EDUCATION INFORMATION FORM (SSC, HSC)                             -->
         <!-- ================================================================ -->
         <div style="margin-top: 1.75rem; margin-bottom: 1.75rem;">
 
@@ -247,121 +247,6 @@ include __DIR__ . '/includes/breadcrumbs.php';
             </div>
           </div>
 
-          <!-- 3. Graduation / Equivalent Level -->
-          <div class="edu-if-applicable-wrap">
-            <label class="edu-checkbox-label">
-              <input type="checkbox" id="gradApplicable" name="grad_applicable" value="1" checked>
-              <span>If Applicable</span>
-            </label>
-          </div>
-
-          <div id="gradSectionWrap" class="edu-form-container">
-            <div class="edu-section-header">Graduation/Equivalent Level</div>
-            <div class="edu-grid-2col">
-              <!-- Left Column -->
-              <div class="edu-col">
-                <div class="edu-field-row">
-                  <label for="grad_exam">Examination</label>
-                  <select id="grad_exam" name="grad_exam" class="edu-control">
-                    <option value="B.Sc Engineering" selected>B.Sc Engineering</option>
-                    <option value="B.Sc">B.Sc</option>
-                    <option value="B.A">B.A</option>
-                    <option value="B.B.A">B.B.A</option>
-                    <option value="B.S.S">B.S.S</option>
-                    <option value="Honours">Honours</option>
-                    <option value="Degree">Degree</option>
-                    <option value="Equivalent">Equivalent</option>
-                  </select>
-                </div>
-                <div class="edu-field-row">
-                  <label for="grad_university">University/Inst.</label>
-                  <select id="grad_university" name="grad_university" class="edu-control">
-                    <option value="Hajee Mohammad Danesh Science & Technology University (HSTU)" selected>Hajee Mohammad Danesh S</option>
-                    <option value="University of Dhaka">University of Dhaka</option>
-                    <option value="Bangladesh University of Engineering and Technology (BUET)">Bangladesh University of Engineering and Technology (BUET)</option>
-                    <option value="Rajshahi University">Rajshahi University</option>
-                    <option value="Jahangirnagar University">Jahangirnagar University</option>
-                    <option value="University of Chittagong">University of Chittagong</option>
-                    <option value="Rabindra Maitree University (RMU)">Rabindra Maitree University (RMU)</option>
-                    <option value="Islamic University, Kushtia">Islamic University, Kushtia</option>
-                    <option value="Khulna University">Khulna University</option>
-                    <option value="Shahjalal University of Science & Technology">Shahjalal University of Science & Technology</option>
-                    <option value="National University">National University</option>
-                    <option value="Bangladesh Agricultural University">Bangladesh Agricultural University</option>
-                    <option value="Dhaka University of Engineering & Technology (DUET)">Dhaka University of Engineering & Technology (DUET)</option>
-                    <option value="Jagannath University">Jagannath University</option>
-                    <option value="Comilla University">Comilla University</option>
-                    <option value="Begum Rokeya University, Rangpur">Begum Rokeya University, Rangpur</option>
-                    <option value="Other Public University">Other Public University</option>
-                    <option value="Other Private University">Other Private University</option>
-                    <option value="Foreign / Equivalent Institution">Foreign / Equivalent Institution</option>
-                  </select>
-                </div>
-                <div class="edu-field-row">
-                  <label for="grad_year">Passing Year</label>
-                  <select id="grad_year" name="grad_year" class="edu-control required-empty">
-                    <option value="" selected>Select</option>
-                    <?php for ($y = 2026; $y >= 1990; $y--): ?>
-                      <option value="<?= $y ?>"><?= $y ?></option>
-                    <?php endfor; ?>
-                  </select>
-                </div>
-              </div>
-
-              <!-- Right Column -->
-              <div class="edu-col">
-                <div class="edu-field-row">
-                  <label for="grad_subject">Subject/Degree</label>
-                  <select id="grad_subject" name="grad_subject" class="edu-control">
-                    <option value="Computer Science & Engineering" selected>Computer Science & Engine</option>
-                    <option value="Electrical & Electronic Engineering">Electrical & Electronic Engineering</option>
-                    <option value="Business Administration">Business Administration</option>
-                    <option value="English">English</option>
-                    <option value="Bangla">Bangla</option>
-                    <option value="Information & Communication Technology">Information & Communication Technology</option>
-                    <option value="Economics">Economics</option>
-                    <option value="Law">Law</option>
-                    <option value="Mathematics">Mathematics</option>
-                    <option value="Physics">Physics</option>
-                    <option value="Chemistry">Chemistry</option>
-                    <option value="Agriculture">Agriculture</option>
-                    <option value="Physical Education & Sports Science">Physical Education & Sports Science</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                <div class="edu-field-row">
-                  <label for="grad_result">Result</label>
-                  <div class="edu-result-group">
-                    <select id="grad_result_type" name="grad_result_type" class="edu-control" style="flex: 1.5;">
-                      <option value="CGPA(out of 4)" selected>CGPA(out of 4)</option>
-                      <option value="GPA(out of 5)">GPA(out of 5)</option>
-                      <option value="Percentage">Percentage</option>
-                      <option value="Division/Class">Division/Class</option>
-                    </select>
-                    <input type="text" id="grad_result" name="grad_result" class="edu-control required-empty" placeholder="" style="flex: 1;">
-                  </div>
-                </div>
-                <div class="edu-field-row">
-                  <label for="grad_duration">Course Duration</label>
-                  <select id="grad_duration" name="grad_duration" class="edu-control">
-                    <option value="02 Years">02 Years</option>
-                    <option value="03 Years">03 Years</option>
-                    <option value="04 Years" selected>04 Years</option>
-                    <option value="05 Years">05 Years</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Bottom Optional Section Checkbox (Masters/Equivalent Level hint) -->
-          <div class="edu-if-applicable-wrap" style="margin-top: 10px; margin-bottom: 16px;">
-            <label class="edu-checkbox-label">
-              <input type="checkbox" id="mastersApplicable" name="masters_applicable" value="1">
-              <span>If Applicable</span>
-            </label>
-          </div>
-
         </div>
 
         <!-- Interested subject to admit in RMU -->
@@ -425,9 +310,6 @@ include __DIR__ . '/includes/breadcrumbs.php';
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   const form = document.getElementById('rmuAdmissionForm');
-  const gradCheckbox = document.getElementById('gradApplicable');
-  const gradWrap = document.getElementById('gradSectionWrap');
-  const gradControls = gradWrap ? gradWrap.querySelectorAll('.edu-control') : [];
 
   function validateControl(el) {
     if (!el || el.disabled) return true;
@@ -459,36 +341,6 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     }
 
-    if (id === 'grad_year') {
-      if (gradCheckbox && gradCheckbox.checked) {
-        if (val !== '' && val !== 'Select') {
-          el.classList.remove('is-invalid', 'required-empty');
-          el.classList.add('is-valid');
-          return true;
-        } else {
-          el.classList.remove('is-valid');
-          el.classList.add('is-invalid', 'required-empty');
-          return false;
-        }
-      }
-      return true;
-    }
-
-    if (id === 'grad_result') {
-      if (gradCheckbox && gradCheckbox.checked) {
-        if (val.length > 0) {
-          el.classList.remove('is-invalid', 'required-empty');
-          el.classList.add('is-valid');
-          return true;
-        } else {
-          el.classList.remove('is-valid');
-          el.classList.add('is-invalid', 'required-empty');
-          return false;
-        }
-      }
-      return true;
-    }
-
     return true;
   }
 
@@ -505,28 +357,6 @@ document.addEventListener('DOMContentLoaded', function() {
       validateControl(this);
     });
   });
-
-  // Handle "If Applicable" Checkbox for Graduation
-  if (gradCheckbox && gradWrap) {
-    function toggleGraduation() {
-      if (gradCheckbox.checked) {
-        gradWrap.classList.remove('edu-section-disabled');
-        gradControls.forEach(function(c) {
-          c.disabled = false;
-          validateControl(c);
-        });
-      } else {
-        gradWrap.classList.add('edu-section-disabled');
-        gradControls.forEach(function(c) {
-          c.disabled = true;
-          c.classList.remove('is-invalid', 'required-empty', 'is-valid');
-        });
-      }
-    }
-
-    gradCheckbox.addEventListener('change', toggleGraduation);
-    toggleGraduation(); // Run on initial load
-  }
 
   // Handle Photo Preview
   const photoInput = document.getElementById('applicantPhotoInput');
