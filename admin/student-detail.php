@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $title = trim($_POST['fee_title'] ?? '');
             $amount = (float)($_POST['amount'] ?? 0);
             $dueDate = trim($_POST['due_date'] ?? date('Y-m-d'));
-            $status = in_array($_POST['status'] ?? '', ['Paid', 'Due', 'Pending']) ? $_POST['status'] : 'Due';
+            $status = in_array($_POST['status'] ?? '', ['Paid', 'Pending', 'Failed', 'Due']) ? $_POST['status'] : 'Due';
             $trx = trim($_POST['transaction_id'] ?? '');
 
             if (!empty($title) && $amount > 0) {
@@ -134,9 +134,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ");
                 $paidAt = ($status === 'Paid') ? date('Y-m-d H:i:s') : null;
-                $fStmt->execute([$studentId, $title, $amount, $dueDate, $status, $trx, $paidAt]);
-                log_audit('STUDENT_FEE_ADDED', "Invoiced fee '{$title}' (৳{$amount}) for {$student['student_id']}");
-                flash_set('success', "Fee invoice for ৳" . number_format($amount) . " created.");
+                if ($status === 'Paid' && empty($trx)) {
+                    $trx = 'RMU-PAY-' . date('Y') . '-' . rand(10000, 99999);
+                }
+                $fStmt->execute([$studentId, $title, $amount, $dueDate, $status, $trx ?: null, $paidAt]);
+                log_audit('STUDENT_FEE_ADDED', "Invoiced fee '{$title}' (৳{$amount}, Status: {$status}) for {$student['student_id']}");
+                flash_set('success', "Fee record for '{$title}' (৳" . number_format($amount) . ") created with status: {$status}.");
             } else {
                 flash_set('error', 'Fee title and valid amount are required.');
             }
@@ -148,6 +151,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pStmt->execute([$trx, $fid, $studentId]);
                 log_audit('STUDENT_FEE_PAID', "Marked fee ID #{$fid} as paid (Trx: {$trx}) for {$student['student_id']}");
                 flash_set('success', "Fee marked as Paid successfully.");
+            }
+        } elseif ($action === 'update_fee_status') {
+            $fid = (int)($_POST['fee_id'] ?? 0);
+            $newStatus = in_array($_POST['status'] ?? '', ['Paid', 'Pending', 'Failed', 'Due']) ? $_POST['status'] : 'Pending';
+            if ($fid > 0) {
+                if ($newStatus === 'Paid') {
+                    $trx = 'RMU-PAY-' . date('Y') . '-' . rand(10000, 99999);
+                    $upStmt = $db->prepare("UPDATE student_fees SET status = 'Paid', transaction_id = COALESCE(NULLIF(transaction_id, ''), ?), paid_at = NOW() WHERE id = ? AND student_id = ?");
+                    $upStmt->execute([$trx, $fid, $studentId]);
+                } elseif ($newStatus === 'Failed') {
+                    $upStmt = $db->prepare("UPDATE student_fees SET status = 'Failed', paid_at = NULL WHERE id = ? AND student_id = ?");
+                    $upStmt->execute([$fid, $studentId]);
+                } elseif ($newStatus === 'Pending') {
+                    $upStmt = $db->prepare("UPDATE student_fees SET status = 'Pending', paid_at = NULL WHERE id = ? AND student_id = ?");
+                    $upStmt->execute([$fid, $studentId]);
+                } else {
+                    $upStmt = $db->prepare("UPDATE student_fees SET status = 'Due', paid_at = NULL WHERE id = ? AND student_id = ?");
+                    $upStmt->execute([$fid, $studentId]);
+                }
+                log_audit('STUDENT_FEE_STATUS_UPDATED', "Updated fee ID #{$fid} status to {$newStatus} for {$student['student_id']}");
+                flash_set('success', "Fee payment status updated to {$newStatus}.");
             }
         } elseif ($action === 'delete_fee') {
             $fid = (int)($_POST['fee_id'] ?? 0);
@@ -584,7 +608,19 @@ include __DIR__ . '/includes/admin-header.php';
 
         <div class="form-group">
           <label class="form-label">Semester Term</label>
-          <input type="text" name="semester" value="<?= e($student['current_semester']) ?>" class="form-control">
+          <input type="text" name="semester" list="semesterOptions" value="<?= e($student['current_semester']) ?>" class="form-control" required placeholder="Select or type semester">
+          <datalist id="semesterOptions">
+            <option value="1st Semester">
+            <option value="2nd Semester">
+            <option value="3rd Semester">
+            <option value="4th Semester">
+            <option value="5th Semester">
+            <option value="6th Semester">
+            <option value="7th Semester">
+            <option value="8th Semester">
+            <option value="Fall 2026">
+            <option value="Spring 2026">
+          </datalist>
         </div>
 
         <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;">
@@ -854,42 +890,77 @@ include __DIR__ . '/includes/admin-header.php';
                   </td>
                   <td>
                     <?php if ($fee['status'] === 'Paid'): ?>
-                      <span style="background: #dcfce7; color: #15803d; font-weight: 700; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;">
-                        ✓ Paid
+                      <span style="background: #dcfce7; color: #15803d; font-weight: 700; font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                        <i class="fas fa-check-circle"></i> Paid
+                      </span>
+                    <?php elseif ($fee['status'] === 'Pending'): ?>
+                      <span style="background: #fef3c7; color: #b45309; font-weight: 700; font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                        <i class="fas fa-clock"></i> Pending
+                      </span>
+                    <?php elseif ($fee['status'] === 'Failed'): ?>
+                      <span style="background: #fee2e2; color: #b91c1c; font-weight: 700; font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                        <i class="fas fa-times-circle"></i> Failed
                       </span>
                     <?php else: ?>
-                      <span style="background: #fee2e2; color: #b91c1c; font-weight: 700; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px;">
-                        Due / Unpaid
+                      <span style="background: #f1f5f9; color: #475569; font-weight: 700; font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;">
+                        <i class="fas fa-hourglass-start"></i> Due / Unpaid
                       </span>
                     <?php endif; ?>
                   </td>
                   <td style="font-size: 0.82rem; color: #475569;">
                     <?php if (!empty($fee['transaction_id'])): ?>
                       <div style="font-family: monospace; color: #0369a1; font-weight: 600;"><?= e($fee['transaction_id']) ?></div>
-                      <small style="color: #64748b;"><?= format_date($fee['paid_at'] ?? $fee['created_at']) ?></small>
+                      <small style="color: #64748b;"><?= !empty($fee['paid_at']) ? format_date($fee['paid_at']) : format_date($fee['created_at']) ?></small>
                     <?php else: ?>
-                      <span style="color: #94a3b8;">Pending payment</span>
+                      <span style="color: #94a3b8;">No transaction recorded</span>
                     <?php endif; ?>
                   </td>
                   <td style="text-align: right; white-space: nowrap;">
-                    <?php if ($fee['status'] !== 'Paid'): ?>
-                      <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;">
+                    <div style="display: inline-flex; align-items: center; gap: 4px;">
+                      <?php if ($fee['status'] !== 'Paid'): ?>
+                        <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;">
+                          <?= csrf_field() ?>
+                          <input type="hidden" name="action" value="mark_paid">
+                          <input type="hidden" name="fee_id" value="<?= $fee['id'] ?>">
+                          <button type="submit" class="btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #16a34a;" title="Mark Paid">
+                            <i class="fas fa-check"></i> Paid
+                          </button>
+                        </form>
+                      <?php endif; ?>
+
+                      <?php if ($fee['status'] !== 'Pending'): ?>
+                        <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;">
+                          <?= csrf_field() ?>
+                          <input type="hidden" name="action" value="update_fee_status">
+                          <input type="hidden" name="status" value="Pending">
+                          <input type="hidden" name="fee_id" value="<?= $fee['id'] ?>">
+                          <button type="submit" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #fef3c7; color: #b45309; border: 1px solid #fde68a; border-radius: 4px; cursor: pointer; font-weight: 600;" title="Mark Pending">
+                            Pending
+                          </button>
+                        </form>
+                      <?php endif; ?>
+
+                      <?php if ($fee['status'] !== 'Failed'): ?>
+                        <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;">
+                          <?= csrf_field() ?>
+                          <input type="hidden" name="action" value="update_fee_status">
+                          <input type="hidden" name="status" value="Failed">
+                          <input type="hidden" name="fee_id" value="<?= $fee['id'] ?>">
+                          <button type="submit" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 4px; cursor: pointer; font-weight: 600;" title="Mark Failed">
+                            Failed
+                          </button>
+                        </form>
+                      <?php endif; ?>
+
+                      <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;" onsubmit="return confirm('Delete fee invoice #<?= $fee['id'] ?>?');">
                         <?= csrf_field() ?>
-                        <input type="hidden" name="action" value="mark_paid">
+                        <input type="hidden" name="action" value="delete_fee">
                         <input type="hidden" name="fee_id" value="<?= $fee['id'] ?>">
-                        <button type="submit" class="btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #16a34a; margin-right: 4px;">
-                          Mark Paid
+                        <button type="submit" style="border: none; background: none; color: #ef4444; cursor: pointer; font-size: 0.85rem; padding: 0.25rem;" title="Delete">
+                          <i class="fas fa-trash-alt"></i>
                         </button>
                       </form>
-                    <?php endif; ?>
-                    <form action="<?= APP_URL ?>/admin/student-detail.php?id=<?= $studentId ?>" method="POST" style="display: inline;" onsubmit="return confirm('Delete fee invoice #<?= $fee['id'] ?>?');">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="action" value="delete_fee">
-                      <input type="hidden" name="fee_id" value="<?= $fee['id'] ?>">
-                      <button type="submit" style="border: none; background: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
-                        <i class="fas fa-trash-alt"></i>
-                      </button>
-                    </form>
+                    </div>
                   </td>
                 </tr>
               <?php endforeach; ?>
@@ -926,9 +997,10 @@ include __DIR__ . '/includes/admin-header.php';
         <div class="form-group">
           <label class="form-label">Payment Status</label>
           <select name="status" class="form-select">
-            <option value="Due">Due / Unpaid</option>
-            <option value="Paid">Already Paid</option>
-            <option value="Pending">Pending Verification</option>
+            <option value="Paid">Paid (সরাসরি পরিশোধিত)</option>
+            <option value="Pending">Pending (যাচাই প্রক্রিয়াধীন)</option>
+            <option value="Failed">Failed (ব্যর্থ লেনদেন)</option>
+            <option value="Due">Due / Unpaid (বকেয়া)</option>
           </select>
         </div>
 

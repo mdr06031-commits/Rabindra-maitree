@@ -858,6 +858,165 @@ run_test("Admin Results Manager Interface & Functionality", function() {
     return true;
 });
 
+// 57. Student Dashboard Course Enrollment Section Verification
+run_test("Student Dashboard Course Enrollment Section & Admin Assignment", function() {
+    $db = getDb();
+
+    // 1. Verify on Student 4
+    $_SESSION['student_pk_id'] = 4;
+    $_SESSION['student_id'] = 'RMU2601001';
+    $_SESSION['student_name'] = 'Tanvir Hasan';
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $dashOut = ob_get_clean();
+
+    $requiredCourseFields = [
+        'Course Enrollment',
+        'Course Code',
+        'Course Name',
+        'Credits',
+        'Instructor Name',
+        'Class Schedule',
+        'Room Number',
+        'Attendance',
+        'CSE 201',
+        'Data Structures'
+    ];
+
+    foreach ($requiredCourseFields as $f) {
+        if (strpos($dashOut, $f) === false && strpos($dashOut, htmlspecialchars($f)) === false) {
+            return "Student dashboard missing course field: '$f'";
+        }
+    }
+
+    // 2. Test empty state for student without courses
+    $testCode = 'RMU-TEST-C-EMPTY';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$testCode]);
+    $db->prepare("INSERT INTO students (student_id, full_name, email, password_hash, status, current_year, current_semester, cgpa, credits_completed, total_credits_required) VALUES (?, 'Course Empty Student', 'cempty@rmu.edu', 'hash', 'Active', '1st Year', '1st Semester', 0.0, 0, 140)")->execute([$testCode]);
+    $emptyId = (int)$db->lastInsertId();
+
+    $_SESSION['student_pk_id'] = $emptyId;
+    $_SESSION['student_id'] = $testCode;
+    $_SESSION['student_name'] = 'Course Empty Student';
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $emptyDash = ob_get_clean();
+
+    if (strpos($emptyDash, 'No Courses Currently Assigned') === false) {
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+        return "Student dashboard missing clean empty-state message when 0 courses are assigned.";
+    }
+
+    // 3. Admin assigns course to student; verify automatic appearance
+    $db->prepare("
+        INSERT INTO student_courses 
+        (student_id, course_code, course_name, credit, instructor_name, class_schedule, room_no, attendance_percent, semester, status)
+        VALUES (?, 'ENG 101', 'English Reading and Composition', 3.0, 'Prof. Sabrina Akter', 'Mon & Thu 03:30 PM', 'Room 304', 88, '1st Semester', 'Enrolled')
+    ")->execute([$emptyId]);
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $afterAssign = ob_get_clean();
+
+    if (strpos($afterAssign, 'ENG 101') === false || strpos($afterAssign, 'English Reading and Composition') === false || strpos($afterAssign, 'Prof. Sabrina Akter') === false) {
+        $db->prepare("DELETE FROM student_courses WHERE student_id = ?")->execute([$emptyId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+        return "Admin-assigned course failed to appear dynamically on student dashboard.";
+    }
+
+    // Cleanup
+    $db->prepare("DELETE FROM student_courses WHERE student_id = ?")->execute([$emptyId]);
+    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+
+    return true;
+});
+
+// 58. Student Dashboard Tuition & Semester Fee History & Payment Integration
+run_test("Student Dashboard Tuition & Fee History & Payment Tracking", function() {
+    $db = getDb();
+
+    // 1. Ensure Student 4 has Paid, Pending, and Failed fee records for comprehensive test
+    $hasPending = $db->query("SELECT COUNT(*) FROM student_fees WHERE student_id = 4 AND status = 'Pending'")->fetchColumn();
+    if (!$hasPending) {
+        $db->prepare("INSERT INTO student_fees (student_id, fee_title, amount, due_date, status, transaction_id, paid_at) VALUES (4, 'Mid-Term Examination & Lab Fee', 12500.00, CURDATE(), 'Pending', 'RMU-TXN-PENDING1', NULL)")->execute();
+    }
+    $hasFailed = $db->query("SELECT COUNT(*) FROM student_fees WHERE student_id = 4 AND status = 'Failed'")->fetchColumn();
+    if (!$hasFailed) {
+        $db->prepare("INSERT INTO student_fees (student_id, fee_title, amount, due_date, status, transaction_id, paid_at) VALUES (4, 'Library & Activity Fee', 3500.00, CURDATE(), 'Failed', 'RMU-FAIL-999', NULL)")->execute();
+    }
+
+    $_SESSION['student_pk_id'] = 4;
+    $_SESSION['student_id'] = 'RMU2601001';
+    $_SESSION['student_name'] = 'Tanvir Hasan';
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $dashOut = ob_get_clean();
+
+    $requiredFeeFields = [
+        'Tuition &amp; Semester Fee History',
+        'Fee Description',
+        'Amount',
+        'Payment Status',
+        'Transaction ID',
+        'Paid Date',
+        'All Payments',
+        'Paid',
+        'Pending',
+        'Failed'
+    ];
+
+    foreach ($requiredFeeFields as $f) {
+        if (strpos($dashOut, $f) === false && strpos($dashOut, html_entity_decode($f)) === false) {
+            return "Student dashboard missing fee field / status: '$f'";
+        }
+    }
+
+    // 2. Test empty-state for student without fees
+    $testCode = 'RMU-TEST-F-EMPTY';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$testCode]);
+    $db->prepare("INSERT INTO students (student_id, full_name, email, password_hash, status, current_year, current_semester, cgpa, credits_completed, total_credits_required) VALUES (?, 'Fee Empty Student', 'fempty@rmu.edu', 'hash', 'Active', '1st Year', '1st Semester', 0.0, 0, 140)")->execute([$testCode]);
+    $emptyId = (int)$db->lastInsertId();
+
+    $_SESSION['student_pk_id'] = $emptyId;
+    $_SESSION['student_id'] = $testCode;
+    $_SESSION['student_name'] = 'Fee Empty Student';
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $emptyDash = ob_get_clean();
+
+    if (strpos($emptyDash, 'No Fee Records Found') === false) {
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+        return "Student dashboard missing clean empty-state message when 0 fees exist.";
+    }
+
+    // 3. Add fee and verify dynamic appearance on student dashboard
+    $db->prepare("
+        INSERT INTO student_fees 
+        (student_id, fee_title, amount, due_date, status, transaction_id, paid_at)
+        VALUES (?, 'Fall 2026 Tuition Fee Voucher', 32000.00, CURDATE(), 'Paid', 'RMU-TXN-OK889', NOW())
+    ")->execute([$emptyId]);
+
+    ob_start();
+    require BASE_PATH . '/student/dashboard.php';
+    $afterFee = ob_get_clean();
+
+    if (strpos($afterFee, 'Fall 2026 Tuition Fee Voucher') === false || strpos($afterFee, '32,000.00') === false || strpos($afterFee, 'RMU-TXN-OK889') === false) {
+        $db->prepare("DELETE FROM student_fees WHERE student_id = ?")->execute([$emptyId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+        return "Newly added fee failed to appear dynamically on student dashboard.";
+    }
+
+    // Cleanup
+    $db->prepare("DELETE FROM student_fees WHERE student_id = ?")->execute([$emptyId]);
+    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
+
+    return true;
+});
+
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";
 echo bold("-------------------------------------------------------\n\n");

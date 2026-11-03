@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS `student_fees` (
   `fee_title` VARCHAR(120) NOT NULL,
   `amount` DECIMAL(10,2) NOT NULL,
   `due_date` DATE NOT NULL,
-  `status` ENUM('Paid','Due','Pending') NOT NULL DEFAULT 'Paid',
+  `status` ENUM('Paid','Pending','Failed','Due') NOT NULL DEFAULT 'Pending',
   `transaction_id` VARCHAR(60) NULL,
   `paid_at` DATETIME NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
