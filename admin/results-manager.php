@@ -410,7 +410,24 @@ include __DIR__ . '/includes/admin-header.php';
                           <?= e($co['status']) ?>
                         </span>
                       </td>
-                      <td style="text-align:right;">
+                      <td style="text-align:right; white-space:nowrap;">
+                        <!-- Edit Result Button -->
+                        <button type="button" onclick="openEditModal(<?= htmlspecialchars(json_encode([
+                          'id' => (int)$co['id'],
+                          'semester' => $semName,
+                          'code' => $co['course_code'],
+                          'name' => $co['course_name'],
+                          'credit' => (float)$co['credit'],
+                          'full_marks' => (int)$co['full_marks'],
+                          'marks' => $co['marks'] !== null ? (float)$co['marks'] : '',
+                          'letter_grade' => $co['letter_grade'],
+                          'grade_point' => (float)$co['grade_point'],
+                          'exam_term' => $co['exam_term'],
+                          'is_published' => (int)$co['is_published']
+                        ]), ENT_QUOTES, 'UTF-8') ?>)" style="border:none; background:none; cursor:pointer; color:#0284c7; font-size:0.88rem; margin-right:6px;" title="Edit Course Result">
+                          <i class="fas fa-edit"></i>
+                        </button>
+
                         <!-- Publish Toggle Form -->
                         <form action="" method="POST" style="display:inline;" title="Toggle Published/Draft">
                           <?= csrf_field() ?>
@@ -588,6 +605,95 @@ include __DIR__ . '/includes/admin-header.php';
 
 <?php endif; ?>
 
+<!-- Edit Result Modal -->
+<div id="editResultModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; justify-content:center; align-items:center; padding:1.5rem; overflow-y:auto;">
+  <div style="background:#ffffff; border-radius:12px; max-width:540px; width:100%; padding:2rem; box-shadow:0 20px 40px rgba(0,0,0,0.2); position:relative;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem;">
+      <h3 style="margin:0; font-size:1.2rem; color:#0f2c59; display:flex; align-items:center; gap:8px;">
+        <i class="fas fa-edit" style="color:var(--rmu-primary);"></i> Edit Course Result
+      </h3>
+      <button type="button" onclick="closeEditModal()" style="border:none; background:none; font-size:1.25rem; color:#64748b; cursor:pointer;" title="Close">&times;</button>
+    </div>
+
+    <form action="" method="POST" id="editResultForm">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="edit_result">
+      <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
+      <input type="hidden" name="result_id" id="editResultId">
+
+      <div class="form-group">
+        <label class="form-label">Semester *</label>
+        <select name="semester" id="editSemester" class="form-select" required>
+          <?php foreach ($standardSemesters as $semOption): ?>
+            <option value="<?= e($semOption) ?>"><?= e($semOption) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Course Code *</label>
+        <input type="text" name="course_code" id="editCourseCode" class="form-control" required style="text-transform:uppercase;">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Course Title *</label>
+        <input type="text" name="course_name" id="editCourseName" class="form-control" required>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+        <div class="form-group">
+          <label class="form-label">Credit Hours *</label>
+          <input type="number" step="0.5" min="0.5" max="6.0" name="credit" id="editCredit" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Full Marks</label>
+          <input type="number" name="full_marks" id="editFullMarks" value="100" class="form-control" readonly style="background:#f1f5f9;">
+        </div>
+      </div>
+
+      <!-- Obtained Marks with Auto-Grading in Edit Modal -->
+      <div style="background:#f0fdf4; border:1.5px solid #86efac; border-radius:8px; padding:1rem; margin-bottom:1rem;">
+        <label class="form-label" style="color:#166534; font-weight:700;">
+          Obtained Marks (out of 100) *
+        </label>
+        <input type="number" step="0.5" min="0" max="100" name="marks" id="editMarksInput" class="form-control" required style="font-size:1.1rem; font-weight:800; color:#0f2c59;" oninput="autoCalculateEditGrade(this.value)">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-top:0.75rem;">
+          <div>
+            <label class="form-label" style="font-size:0.8rem; color:#475569;">Letter Grade</label>
+            <input type="text" name="letter_grade" id="editGradeOutput" class="form-control" readonly style="font-weight:800; text-align:center; background:#ffffff; color:#1e40af;">
+          </div>
+          <div>
+            <label class="form-label" style="font-size:0.8rem; color:#475569;">Grade Point</label>
+            <input type="text" name="grade_point" id="editPointOutput" class="form-control" readonly style="font-weight:800; text-align:center; background:#ffffff; color:#15803d;">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Exam Term</label>
+        <input type="text" name="exam_term" id="editExamTerm" value="Semester Final Examination" class="form-control">
+      </div>
+
+      <div class="form-group" style="margin-bottom:1.5rem;">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:#0f172a;">
+          <input type="checkbox" name="is_published" id="editIsPublished" value="1" style="width:16px; height:16px;">
+          <span>Published (Visible in student grade sheet &amp; transcripts)</span>
+        </label>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+        <button type="button" onclick="closeEditModal()" class="btn-primary" style="background:#e2e8f0; color:#334155; border:none; padding:0.6rem 1.25rem;">
+          Cancel
+        </button>
+        <button type="submit" class="btn-primary" style="background:#1e73be; padding:0.6rem 1.5rem;">
+          <i class="fas fa-save"></i> Update Result &amp; Recalculate CGPA
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Auto-Grading Javascript Script -->
 <script>
 function autoCalculateGrade(marksVal) {
@@ -601,38 +707,68 @@ function autoCalculateGrade(marksVal) {
     return;
   }
 
-  if (m >= 80) {
-    gradeEl.value = 'A+';
-    pointEl.value = '4.00';
-  } else if (m >= 75) {
-    gradeEl.value = 'A';
-    pointEl.value = '3.75';
-  } else if (m >= 70) {
-    gradeEl.value = 'A-';
-    pointEl.value = '3.50';
-  } else if (m >= 65) {
-    gradeEl.value = 'B+';
-    pointEl.value = '3.25';
-  } else if (m >= 60) {
-    gradeEl.value = 'B';
-    pointEl.value = '3.00';
-  } else if (m >= 55) {
-    gradeEl.value = 'B-';
-    pointEl.value = '2.75';
-  } else if (m >= 50) {
-    gradeEl.value = 'C+';
-    pointEl.value = '2.50';
-  } else if (m >= 45) {
-    gradeEl.value = 'C';
-    pointEl.value = '2.25';
-  } else if (m >= 40) {
-    gradeEl.value = 'D';
-    pointEl.value = '2.00';
-  } else {
-    gradeEl.value = 'F';
-    pointEl.value = '0.00';
-  }
+  if (m >= 80) { gradeEl.value = 'A+'; pointEl.value = '4.00'; }
+  else if (m >= 75) { gradeEl.value = 'A'; pointEl.value = '3.75'; }
+  else if (m >= 70) { gradeEl.value = 'A-'; pointEl.value = '3.50'; }
+  else if (m >= 65) { gradeEl.value = 'B+'; pointEl.value = '3.25'; }
+  else if (m >= 60) { gradeEl.value = 'B'; pointEl.value = '3.00'; }
+  else if (m >= 55) { gradeEl.value = 'B-'; pointEl.value = '2.75'; }
+  else if (m >= 50) { gradeEl.value = 'C+'; pointEl.value = '2.50'; }
+  else if (m >= 45) { gradeEl.value = 'C'; pointEl.value = '2.25'; }
+  else if (m >= 40) { gradeEl.value = 'D'; pointEl.value = '2.00'; }
+  else { gradeEl.value = 'F'; pointEl.value = '0.00'; }
 }
+
+function autoCalculateEditGrade(marksVal) {
+  var m = parseFloat(marksVal);
+  var gradeEl = document.getElementById('editGradeOutput');
+  var pointEl = document.getElementById('editPointOutput');
+
+  if (isNaN(m) || m < 0) {
+    gradeEl.value = '';
+    pointEl.value = '';
+    return;
+  }
+
+  if (m >= 80) { gradeEl.value = 'A+'; pointEl.value = '4.00'; }
+  else if (m >= 75) { gradeEl.value = 'A'; pointEl.value = '3.75'; }
+  else if (m >= 70) { gradeEl.value = 'A-'; pointEl.value = '3.50'; }
+  else if (m >= 65) { gradeEl.value = 'B+'; pointEl.value = '3.25'; }
+  else if (m >= 60) { gradeEl.value = 'B'; pointEl.value = '3.00'; }
+  else if (m >= 55) { gradeEl.value = 'B-'; pointEl.value = '2.75'; }
+  else if (m >= 50) { gradeEl.value = 'C+'; pointEl.value = '2.50'; }
+  else if (m >= 45) { gradeEl.value = 'C'; pointEl.value = '2.25'; }
+  else if (m >= 40) { gradeEl.value = 'D'; pointEl.value = '2.00'; }
+  else { gradeEl.value = 'F'; pointEl.value = '0.00'; }
+}
+
+function openEditModal(data) {
+  document.getElementById('editResultId').value = data.id;
+  document.getElementById('editSemester').value = data.semester;
+  document.getElementById('editCourseCode').value = data.code;
+  document.getElementById('editCourseName').value = data.name;
+  document.getElementById('editCredit').value = data.credit;
+  document.getElementById('editFullMarks').value = data.full_marks || 100;
+  document.getElementById('editMarksInput').value = data.marks !== '' ? data.marks : '';
+  document.getElementById('editGradeOutput').value = data.letter_grade;
+  document.getElementById('editPointOutput').value = parseFloat(data.grade_point).toFixed(2);
+  document.getElementById('editExamTerm').value = data.exam_term || 'Semester Final Examination';
+  document.getElementById('editIsPublished').checked = (parseInt(data.is_published) === 1);
+
+  var modal = document.getElementById('editResultModal');
+  modal.style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('editResultModal').style.display = 'none';
+}
+
+window.addEventListener('click', function(e) {
+  var modal = document.getElementById('editResultModal');
+  if (e.target === modal) {
+    closeEditModal();
+  }
+});
 </script>
 
 <?php include __DIR__ . '/includes/admin-footer.php'; ?>

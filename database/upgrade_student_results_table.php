@@ -82,3 +82,4 @@ foreach ($studentsWithResults as $sid) {
 }
 
 echo "Database upgrade completed successfully.\n";
+
