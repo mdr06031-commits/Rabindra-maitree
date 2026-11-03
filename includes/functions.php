@@ -892,6 +892,7 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
     $runningGradePoints = 0.0;
     $semestersData = [];
     $semesterGpas = [];
+    $hasAnyEstimated = false;
 
     foreach ($grouped as $semName => $coursesList) {
         $semNum = get_semester_number($semName);
@@ -900,6 +901,7 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
         $semPts = 0.0;
         $processedCourses = [];
         $hasFailedCourse = false;
+        $semHasEstimated = false;
 
         foreach ($coursesList as $c) {
             $cr = (float)$c['credit'];
@@ -909,6 +911,11 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
             $grade = trim($c['letter_grade']);
             $ptsSecured = round($cr * $gp, 2);
             $status = ($gp >= 2.00) ? 'Pass' : 'Fail';
+            $isEst = !empty($c['is_estimated']);
+            if ($isEst) {
+                $semHasEstimated = true;
+                $hasAnyEstimated = true;
+            }
 
             if ($status === 'Fail') {
                 $hasFailedCourse = true;
@@ -933,6 +940,9 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
                 'status' => $status,
                 'exam_term' => $c['exam_term'],
                 'is_published' => (bool)$c['is_published'],
+                'is_estimated' => $isEst,
+                'result_type' => $c['result_type'] ?? ($isEst ? 'Estimated' : 'Verified'),
+                'correction_reason' => $c['correction_reason'] ?? '',
             ];
         }
 
@@ -957,6 +967,7 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
             'cumulative_earned_credits' => $runningEarnedCredits,
             'cumulative_points' => $runningGradePoints,
             'cumulative_cgpa' => $runningCgpa,
+            'is_estimated' => $semHasEstimated,
         ];
 
         $semesterGpas[$semNum] = $sgpa;
@@ -973,6 +984,8 @@ function get_student_academic_summary(int $studentId, bool $publishedOnly = true
         'total_registered_credits' => $runningRegCredits,
         'total_earned_credits' => $runningEarnedCredits,
         'total_grade_points' => $runningGradePoints,
+        'has_estimated_results' => $hasAnyEstimated,
+        'disclaimer_label' => $hasAnyEstimated ? 'ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT' : '',
     ];
 }
 
@@ -1233,6 +1246,543 @@ function get_pending_result_requests_count(): int {
         return 0;
     }
 }
+
+/**
+ * ========================================================
+ * ONE-CLICK CGPA UPDATE & ESTIMATED RESULT GENERATOR ENGINE
+ * ========================================================
+ */
+
+/**
+ * Get standard semester-wise curriculum for any university program
+ * Returns an array indexed by semester number (1..8 for Bachelor's, 1..4 for Master's)
+ */
+function get_program_semester_curriculum(int $programId): array {
+    $db = getDb();
+    $progStmt = $db->prepare("SELECT p.*, d.name_en AS dept_name, d.slug AS dept_slug FROM programs p LEFT JOIN departments d ON p.department_id = d.id WHERE p.id = ?");
+    $progStmt->execute([$programId]);
+    $prog = $progStmt->fetch(PDO::FETCH_ASSOC);
+
+    $isMaster = ($prog && strtolower($prog['degree_level']) === 'postgraduate');
+    $slug = $prog['slug'] ?? '';
+    $totalSemesters = $isMaster ? 4 : 8;
+    $curriculum = [];
+
+    // 1. CSE
+    if ($slug === 'bsc-in-cse') {
+        $curriculum = [
+            1 => [
+                ['code' => 'CSE 101', 'name' => 'Structured Programming Language (C)', 'credit' => 3.0],
+                ['code' => 'CSE 102', 'name' => 'Structured Programming Laboratory', 'credit' => 1.5],
+                ['code' => 'MAT 101', 'name' => 'Differential and Integral Calculus', 'credit' => 3.0],
+                ['code' => 'ENG 101', 'name' => 'English Reading and Composition Skills', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'CSE 103', 'name' => 'Discrete Mathematics for Computing', 'credit' => 3.0],
+                ['code' => 'CSE 104', 'name' => 'Object Oriented Programming (C++)', 'credit' => 3.0],
+                ['code' => 'CSE 105', 'name' => 'Object Oriented Programming Lab', 'credit' => 1.5],
+                ['code' => 'PHY 101', 'name' => 'Physics for Engineers (Mechanics & Waves)', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'CSE 201', 'name' => 'Data Structures & Algorithms', 'credit' => 3.0],
+                ['code' => 'CSE 202', 'name' => 'Data Structures Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 203', 'name' => 'Digital Logic Design & Circuits', 'credit' => 3.0],
+                ['code' => 'EEE 101', 'name' => 'Basic Electrical Engineering & Circuit Analysis', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'CSE 205', 'name' => 'Design & Analysis of Algorithms', 'credit' => 3.0],
+                ['code' => 'CSE 206', 'name' => 'Database Management Systems (DBMS)', 'credit' => 3.0],
+                ['code' => 'CSE 207', 'name' => 'Database Management Systems Lab', 'credit' => 1.5],
+                ['code' => 'MAT 201', 'name' => 'Linear Algebra & Complex Variables', 'credit' => 3.0]
+            ],
+            5 => [
+                ['code' => 'CSE 301', 'name' => 'Operating Systems & System Programming', 'credit' => 3.0],
+                ['code' => 'CSE 302', 'name' => 'Operating Systems Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 303', 'name' => 'Microprocessors, Microcontrollers & Interfacing', 'credit' => 3.0],
+                ['code' => 'CSE 304', 'name' => 'Software Engineering & System Architecture', 'credit' => 3.0]
+            ],
+            6 => [
+                ['code' => 'CSE 305', 'name' => 'Computer Networks & TCP/IP Protocols', 'credit' => 3.0],
+                ['code' => 'CSE 306', 'name' => 'Computer Networks Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 307', 'name' => 'Theory of Computation & Automata', 'credit' => 3.0],
+                ['code' => 'CSE 308', 'name' => 'Web Technologies & Distributed Cloud Systems', 'credit' => 3.0]
+            ],
+            7 => [
+                ['code' => 'CSE 401', 'name' => 'Artificial Intelligence & Machine Learning', 'credit' => 3.0],
+                ['code' => 'CSE 402', 'name' => 'Artificial Intelligence Lab', 'credit' => 1.5],
+                ['code' => 'CSE 403', 'name' => 'Compiler Design & Syntax Analysis', 'credit' => 3.0],
+                ['code' => 'CSE 404', 'name' => 'Cyber Security, Cryptography & Network Defense', 'credit' => 3.0]
+            ],
+            8 => [
+                ['code' => 'CSE 405', 'name' => 'Cloud Computing & High Performance Architectures', 'credit' => 3.0],
+                ['code' => 'CSE 406', 'name' => 'Data Science & Big Data Analytics', 'credit' => 3.0],
+                ['code' => 'CSE 407', 'name' => 'Senior Capstone Project & Engineering Thesis', 'credit' => 4.0],
+                ['code' => 'CSE 408', 'name' => 'Comprehensive Academic Defense & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 2. BBA
+    elseif ($slug === 'bba') {
+        $curriculum = [
+            1 => [
+                ['code' => 'BBA 101', 'name' => 'Introduction to Modern Business & Organizations', 'credit' => 3.0],
+                ['code' => 'BBA 102', 'name' => 'Principles of Financial Accounting', 'credit' => 3.0],
+                ['code' => 'BBA 103', 'name' => 'Microeconomic Principles for Decision Making', 'credit' => 3.0],
+                ['code' => 'BBA 104', 'name' => 'Business Mathematics & Commercial Computing', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'BBA 105', 'name' => 'Macroeconomics & Global Monetary Policy', 'credit' => 3.0],
+                ['code' => 'BBA 106', 'name' => 'Managerial Accounting & Cost Estimation', 'credit' => 3.0],
+                ['code' => 'BBA 107', 'name' => 'Principles of Marketing & Consumer Analysis', 'credit' => 3.0],
+                ['code' => 'BBA 108', 'name' => 'Business Communication & Public Relations', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'BBA 201', 'name' => 'Principles of Finance & Capital Budgeting', 'credit' => 3.0],
+                ['code' => 'BBA 202', 'name' => 'Organizational Behavior & Human Resources', 'credit' => 3.0],
+                ['code' => 'BBA 203', 'name' => 'Business Statistics & Probability Analysis', 'credit' => 3.0],
+                ['code' => 'BBA 204', 'name' => 'Commercial Law, Contract Acts & Ethics', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'BBA 205', 'name' => 'Corporate Finance & Working Capital Management', 'credit' => 3.0],
+                ['code' => 'BBA 206', 'name' => 'Consumer Behavior & Market Research', 'credit' => 3.0],
+                ['code' => 'BBA 207', 'name' => 'Operations & Quality Management', 'credit' => 3.0],
+                ['code' => 'BBA 208', 'name' => 'Management Information Systems (MIS)', 'credit' => 3.0]
+            ],
+            5 => [
+                ['code' => 'BBA 301', 'name' => 'International Business & Global Logistics', 'credit' => 3.0],
+                ['code' => 'BBA 302', 'name' => 'Financial Markets, Banking Institutions & Credit', 'credit' => 3.0],
+                ['code' => 'BBA 303', 'name' => 'Strategic Marketing & Brand Management', 'credit' => 3.0],
+                ['code' => 'BBA 304', 'name' => 'Corporate Taxation, Auditing & Compliance', 'credit' => 3.0]
+            ],
+            6 => [
+                ['code' => 'BBA 305', 'name' => 'Supply Chain Management & Procurement', 'credit' => 3.0],
+                ['code' => 'BBA 306', 'name' => 'Investment Analysis & Portfolio Management', 'credit' => 3.0],
+                ['code' => 'BBA 307', 'name' => 'Digital Marketing Analytics & E-Commerce', 'credit' => 3.0],
+                ['code' => 'BBA 308', 'name' => 'Corporate Governance & Social Responsibility', 'credit' => 3.0]
+            ],
+            7 => [
+                ['code' => 'BBA 401', 'name' => 'Entrepreneurship & Startup Venture Incubation', 'credit' => 3.0],
+                ['code' => 'BBA 402', 'name' => 'Strategic Management & Competitive Policy', 'credit' => 3.0],
+                ['code' => 'BBA 403', 'name' => 'Project Appraisal & Feasibility Study', 'credit' => 3.0],
+                ['code' => 'BBA 404', 'name' => 'Business Research Methodology & Seminar', 'credit' => 3.0]
+            ],
+            8 => [
+                ['code' => 'BBA 405', 'name' => 'Corporate Policy & Strategic Simulation', 'credit' => 3.0],
+                ['code' => 'BBA 406', 'name' => 'International Financial Management', 'credit' => 3.0],
+                ['code' => 'BBA 407', 'name' => 'Senior Internship Practicum & Monograph', 'credit' => 4.0],
+                ['code' => 'BBA 408', 'name' => 'Comprehensive Academic Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 3. MBA (Master of Business Administration - 4 Semesters)
+    elseif ($slug === 'mba' || ($isMaster && strpos(strtolower($slug), 'business') !== false)) {
+        $curriculum = [
+            1 => [
+                ['code' => 'MBA 501', 'name' => 'Advanced Managerial Economics & Quantitative Methods', 'credit' => 3.0],
+                ['code' => 'MBA 502', 'name' => 'Strategic Financial Accounting & Reporting', 'credit' => 3.0],
+                ['code' => 'MBA 503', 'name' => 'Organizational Leadership & Strategic HRM', 'credit' => 3.0],
+                ['code' => 'MBA 504', 'name' => 'Corporate Governance, Law & Ethical Leadership', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MBA 505', 'name' => 'Advanced Corporate Finance & Valuation Analysis', 'credit' => 3.0],
+                ['code' => 'MBA 506', 'name' => 'Strategic Marketing & Consumer Analytics', 'credit' => 3.0],
+                ['code' => 'MBA 507', 'name' => 'Global Supply Chain & Operations Excellence', 'credit' => 3.0],
+                ['code' => 'MBA 508', 'name' => 'Enterprise Analytics, Big Data & Digital Transformation', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MBA 601', 'name' => 'Global Competitive Strategy & M&A Policy', 'credit' => 3.0],
+                ['code' => 'MBA 602', 'name' => 'Venture Capital, Innovation & Private Equity', 'credit' => 3.0],
+                ['code' => 'MBA 603', 'name' => 'Applied Business Research Methods & Econometrics', 'credit' => 3.0],
+                ['code' => 'MBA 604', 'name' => 'International Financial Markets & Risk Hedging', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MBA 605', 'name' => 'Corporate Strategy Simulation & Case Analysis', 'credit' => 3.0],
+                ['code' => 'MBA 606', 'name' => 'Executive Leadership & Sustainable Enterprise', 'credit' => 3.0],
+                ['code' => 'MBA 607', 'name' => 'Master\'s Graduate Thesis / Capstone Applied Project', 'credit' => 4.0],
+                ['code' => 'MBA 608', 'name' => 'Comprehensive Oral Examination & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 4. MA in English (4 Semesters)
+    elseif ($slug === 'ma-in-english') {
+        $curriculum = [
+            1 => [
+                ['code' => 'MAE 501', 'name' => 'Advanced Critical Theory & Cultural Studies', 'credit' => 3.0],
+                ['code' => 'MAE 502', 'name' => 'Modernist & Postmodern Fiction and Poetry', 'credit' => 3.0],
+                ['code' => 'MAE 503', 'name' => 'Postcolonial Discourse & World Literatures', 'credit' => 3.0],
+                ['code' => 'MAE 504', 'name' => 'Advanced Stylistics, Discourse Analysis & Pragmatics', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MAE 505', 'name' => 'Shakespeare in Performance, Adaptation & Critique', 'credit' => 3.0],
+                ['code' => 'MAE 506', 'name' => 'Diaspora Writings & Transnational Narratives', 'credit' => 3.0],
+                ['code' => 'MAE 507', 'name' => 'Applied Linguistics & Second Language Acquisition', 'credit' => 3.0],
+                ['code' => 'MAE 508', 'name' => 'Advanced Literary Research Methodology & Bibliography', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MAE 601', 'name' => 'Feminist Poetics, Gender Studies & Queer Theory', 'credit' => 3.0],
+                ['code' => 'MAE 602', 'name' => 'South Asian English Literature & Partition Studies', 'credit' => 3.0],
+                ['code' => 'MAE 603', 'name' => 'Translation Studies: Hermeneutics & Practicum', 'credit' => 3.0],
+                ['code' => 'MAE 604', 'name' => 'ELT Testing, Curriculum Design & Pedagogy', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MAE 605', 'name' => 'Environmental Humanities & Ecocritical Literatures', 'credit' => 3.0],
+                ['code' => 'MAE 606', 'name' => 'Contemporary World Poetry & Cultural Resistance', 'credit' => 3.0],
+                ['code' => 'MAE 607', 'name' => 'Master of Arts Graduate Dissertation & Defense', 'credit' => 4.0],
+                ['code' => 'MAE 608', 'name' => 'Graduate Comprehensive Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 5. MA in Bangla (4 Semesters)
+    elseif ($slug === 'ma-in-bangla') {
+        $curriculum = [
+            1 => [
+                ['code' => 'MAB 501', 'name' => 'Comparative Literary Theory & Aesthetics', 'credit' => 3.0],
+                ['code' => 'MAB 502', 'name' => 'Ancient & Medieval Bangla Poetics and Manuscript Studies', 'credit' => 3.0],
+                ['code' => 'MAB 503', 'name' => 'Modern Bangla Poetry: Rabindranath, Nazrul & Jibanananda', 'credit' => 3.0],
+                ['code' => 'MAB 504', 'name' => 'Bangla Sociolinguistics & Historical Dialectology', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MAB 505', 'name' => 'Literature of the Liberation War & Post-Colonial Bangladesh', 'credit' => 3.0],
+                ['code' => 'MAB 506', 'name' => 'Evolution of Bangla Drama, Theatre & Folk Performances', 'credit' => 3.0],
+                ['code' => 'MAB 507', 'name' => 'Modern Bangla Prose, Periodicals & Intellectual History', 'credit' => 3.0],
+                ['code' => 'MAB 508', 'name' => 'Research Methodology in Bangla Literary Studies', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MAB 601', 'name' => 'Tagore Studies: Philosophy, Aesthetics & Cultural Impact', 'credit' => 3.0],
+                ['code' => 'MAB 602', 'name' => 'Folklore of Kushtia & Lalon Shahi Mystical Heritage', 'credit' => 3.0],
+                ['code' => 'MAB 603', 'name' => 'Contemporary Bangla Fiction & Novelistic Traditions', 'credit' => 3.0],
+                ['code' => 'MAB 604', 'name' => 'Comparative South Asian Literature in Translation', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MAB 605', 'name' => 'Semiotics & Modern Literary Hermeneutics', 'credit' => 3.0],
+                ['code' => 'MAB 606', 'name' => 'Bangla Lexicography, Orthography & Digital Linguistics', 'credit' => 3.0],
+                ['code' => 'MAB 607', 'name' => 'Master\'s Research Dissertation & Public Defense', 'credit' => 4.0],
+                ['code' => 'MAB 608', 'name' => 'Comprehensive Academic Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 6. Master of Physical Education (MPEd - 4 Semesters)
+    elseif ($slug === 'mped') {
+        $curriculum = [
+            1 => [
+                ['code' => 'MPE 501', 'name' => 'Advanced Exercise Physiology & Cardiorespiratory Testing', 'credit' => 3.0],
+                ['code' => 'MPE 502', 'name' => 'Advanced Sports Biomechanics & Cinematographic Analysis', 'credit' => 3.0],
+                ['code' => 'MPE 503', 'name' => 'Sports Psychology, Peak Performance & Mental Conditioning', 'credit' => 3.0],
+                ['code' => 'MPE 504', 'name' => 'Advanced Research Methodology & Sports Statistics', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MPE 505', 'name' => 'High Performance Athletic Training & Periodization', 'credit' => 3.0],
+                ['code' => 'MPE 506', 'name' => 'Sports Medicine, Rehabilitation & Therapeutic Modalities', 'credit' => 3.0],
+                ['code' => 'MPE 507', 'name' => 'Sports Nutrition, Ergogenic Aids & Metabolic Testing', 'credit' => 3.0],
+                ['code' => 'MPE 508', 'name' => 'Sports Law, Ethics & Anti-Doping Regulations', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MPE 601', 'name' => 'Strategic Sports Management & Global Governance', 'credit' => 3.0],
+                ['code' => 'MPE 602', 'name' => 'Motor Learning, Neural Control & Skill Acquisition', 'credit' => 3.0],
+                ['code' => 'MPE 603', 'name' => 'Fitness Technology, Wearable Sensors & Sports Analytics', 'credit' => 3.0],
+                ['code' => 'MPE 604', 'name' => 'Adapted Physical Activities & Paralympic Sports Science', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MPE 605', 'name' => 'Olympic Movement, Elite Coaching Practicum & Supervision', 'credit' => 3.0],
+                ['code' => 'MPE 606', 'name' => 'Facility Design, Event Management & Sports Marketing', 'credit' => 3.0],
+                ['code' => 'MPE 607', 'name' => 'Master\'s Research Thesis & Scientific Defense', 'credit' => 4.0],
+                ['code' => 'MPE 608', 'name' => 'Comprehensive Oral Defense & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 7. General fallback for any other program (e.g. EEE, ICT, English, Bangla, Music, Fine Arts, PES, Agriculture, Microbiology)
+    else {
+        // Derive prefix from slug or title
+        $prefix = strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $slug), 0, 3));
+        if (empty($prefix) || strlen($prefix) < 2) $prefix = 'GEN';
+
+        for ($s = 1; $s <= $totalSemesters; $s++) {
+            $curriculum[$s] = [
+                ['code' => "{$prefix} {$s}01", 'name' => "Core Subject {$s}.1 for " . ($prog['title_en'] ?? 'Program'), 'credit' => 3.0],
+                ['code' => "{$prefix} {$s}02", 'name' => "Core Subject {$s}.2 for " . ($prog['title_en'] ?? 'Program'), 'credit' => 3.0],
+                ['code' => "{$prefix} {$s}03", 'name' => "Applied Subject / Laboratory {$s}.3", 'credit' => ($s % 2 === 0 ? 1.5 : 3.0)],
+                ['code' => "{$prefix} {$s}04", 'name' => ($s === $totalSemesters ? 'Senior Monograph & Comprehensive Viva' : "Academic Subject {$s}.4"), 'credit' => ($s === $totalSemesters ? 3.0 : 3.0)]
+            ];
+        }
+    }
+
+    return $curriculum;
+}
+
+/**
+ * Generate Estimated Academic Results for a student to mathematically match target CGPA
+ * Automatically respects Bachelor's (8 Semesters) or Master's (4 Semesters)
+ * Safely replaces previous estimated results without duplicates
+ */
+function generate_estimated_student_results(int $studentId, float $targetCgpa, bool $publishToPortal = true, int $adminId = 1): array {
+    $db = getDb();
+    
+    // Validate target CGPA range
+    $targetCgpa = max(2.00, min(4.00, round($targetCgpa, 2)));
+
+    // Fetch student and program
+    $stStmt = $db->prepare("
+        SELECT s.*, p.title_en AS program_name, p.degree_level, p.slug AS program_slug
+        FROM students s
+        LEFT JOIN programs p ON s.program_id = p.id
+        WHERE s.id = ?
+        LIMIT 1
+    ");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $programId = (int)($student['program_id'] ?? 1);
+    $isMaster = (strtolower($student['degree_level'] ?? '') === 'postgraduate');
+    $totalSemesters = $isMaster ? 4 : 8;
+
+    $standardSemesterTitles = [
+        1 => '1st Semester',
+        2 => '2nd Semester',
+        3 => '3rd Semester',
+        4 => '4th Semester',
+        5 => '5th Semester',
+        6 => '6th Semester',
+        7 => '7th Semester',
+        8 => '8th Semester'
+    ];
+
+    // Load curriculum for this program
+    $curriculum = get_program_semester_curriculum($programId);
+
+    // Flatten all course items for mathematical point balancing
+    $allCourses = [];
+    foreach ($curriculum as $semNum => $courses) {
+        if ($semNum > $totalSemesters) continue;
+        foreach ($courses as $c) {
+            $allCourses[] = [
+                'semester_num' => $semNum,
+                'semester_name' => $standardSemesterTitles[$semNum] ?? "Semester {$semNum}",
+                'course_code' => $c['code'],
+                'course_name' => $c['name'],
+                'credit' => (float)($c['credit'] ?? 3.0),
+                'full_marks' => 100
+            ];
+        }
+    }
+
+    if (empty($allCourses)) {
+        return ['success' => false, 'error' => 'No curriculum courses available for this program.'];
+    }
+
+    // UGC Scale valid Grade Points
+    $validGps = [4.00, 3.75, 3.50, 3.25, 3.00, 2.75, 2.50, 2.25, 2.00];
+
+    // Find closest baseline Grade Point
+    $baseGp = 4.00;
+    foreach ($validGps as $gp) {
+        if ($targetCgpa >= ($gp - 0.125)) {
+            $baseGp = $gp;
+            break;
+        }
+    }
+
+    $totalCredits = 0.0;
+    foreach ($allCourses as $c) {
+        $totalCredits += $c['credit'];
+    }
+    $targetPoints = $targetCgpa * $totalCredits;
+
+    // 1. Initial realistic distribution with pseudo-random variance
+    $baseIdx = array_search($baseGp, $validGps);
+    if ($baseIdx === false) $baseIdx = 0;
+
+    foreach ($allCourses as $idx => &$c) {
+        // Natural variance across subjects: -1, 0, +1 tier in grading ladder
+        $pattern = [0, 1, 0, -1, 0, 1, -1, 0];
+        $offset = $pattern[$idx % count($pattern)];
+        $chosenIdx = max(0, min(count($validGps) - 1, $baseIdx + $offset));
+        $c['gp'] = $validGps[$chosenIdx];
+    }
+    unset($c);
+
+    // 2. Iterative optimization to converge credit-weighted CGPA exactly on target
+    for ($iter = 0; $iter < 300; $iter++) {
+        $currentPoints = 0.0;
+        foreach ($allCourses as $c) {
+            $currentPoints += ($c['credit'] * $c['gp']);
+        }
+        $diff = $targetPoints - $currentPoints;
+        $currentCgpa = round($currentPoints / $totalCredits, 2);
+
+        if (abs($currentCgpa - $targetCgpa) < 0.005) {
+            break; // Exactly on target!
+        }
+
+        if ($diff > 0) {
+            // Need higher points: find a course below 4.00 and upgrade it
+            $candidates = [];
+            foreach ($allCourses as $i => $c) {
+                if ($c['gp'] < 4.00) $candidates[] = $i;
+            }
+            if (empty($candidates)) break;
+            $pick = $candidates[$iter % count($candidates)];
+            $curIdx = array_search($allCourses[$pick]['gp'], $validGps);
+            if ($curIdx > 0) {
+                $allCourses[$pick]['gp'] = $validGps[$curIdx - 1];
+            }
+        } else {
+            // Need lower points: find a course above 2.00 and downgrade it
+            $candidates = [];
+            foreach ($allCourses as $i => $c) {
+                if ($c['gp'] > 2.00) $candidates[] = $i;
+            }
+            if (empty($candidates)) break;
+            $pick = $candidates[$iter % count($candidates)];
+            $curIdx = array_search($allCourses[$pick]['gp'], $validGps);
+            if ($curIdx < count($validGps) - 1) {
+                $allCourses[$pick]['gp'] = $validGps[$curIdx + 1];
+            }
+        }
+    }
+
+    // 3. Assign plausible marks within each grade point's official band
+    foreach ($allCourses as &$c) {
+        $gp = $c['gp'];
+        if ($gp >= 4.00) {
+            $c['marks'] = 80.0 + (rand(0, 120) / 10.0); // 80.0 - 92.0
+            $c['letter_grade'] = 'A+';
+        } elseif ($gp >= 3.75) {
+            $c['marks'] = 75.0 + (rand(0, 45) / 10.0);  // 75.0 - 79.5
+            $c['letter_grade'] = 'A';
+        } elseif ($gp >= 3.50) {
+            $c['marks'] = 70.0 + (rand(0, 45) / 10.0);  // 70.0 - 74.5
+            $c['letter_grade'] = 'A-';
+        } elseif ($gp >= 3.25) {
+            $c['marks'] = 65.0 + (rand(0, 45) / 10.0);  // 65.0 - 69.5
+            $c['letter_grade'] = 'B+';
+        } elseif ($gp >= 3.00) {
+            $c['marks'] = 60.0 + (rand(0, 45) / 10.0);  // 60.0 - 64.5
+            $c['letter_grade'] = 'B';
+        } elseif ($gp >= 2.75) {
+            $c['marks'] = 55.0 + (rand(0, 45) / 10.0);  // 55.0 - 59.5
+            $c['letter_grade'] = 'B-';
+        } elseif ($gp >= 2.50) {
+            $c['marks'] = 50.0 + (rand(0, 45) / 10.0);  // 50.0 - 54.5
+            $c['letter_grade'] = 'C+';
+        } elseif ($gp >= 2.25) {
+            $c['marks'] = 45.0 + (rand(0, 45) / 10.0);  // 45.0 - 49.5
+            $c['letter_grade'] = 'C';
+        } else {
+            $c['marks'] = 40.0 + (rand(0, 45) / 10.0);  // 40.0 - 44.5
+            $c['letter_grade'] = 'D';
+        }
+        $c['marks'] = round($c['marks'], 1);
+    }
+    unset($c);
+
+    // 4. Save to Database
+    // Safely delete ONLY prior estimated results to allow safe re-generation without duplicates
+    // Any manually verified or official results (is_estimated = 0) are strictly preserved!
+    $delStmt = $db->prepare("DELETE FROM student_results WHERE student_id = ? AND is_estimated = 1");
+    $delStmt->execute([$studentId]);
+
+    // Check existing verified results to avoid duplicating course codes in the same semester
+    $existingVerified = $db->query("SELECT CONCAT(semester, ':', course_code) FROM student_results WHERE student_id = {$studentId} AND is_estimated = 0")->fetchAll(PDO::FETCH_COLUMN);
+
+    $insStmt = $db->prepare("
+        INSERT INTO student_results 
+        (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, is_estimated, result_type, publish_status, published_at, published_by, correction_reason)
+        VALUES (?, ?, ?, ?, ?, 100, ?, ?, ?, 'Semester Final Exam', ?, 1, 'Estimated', ?, NOW(), ?, ?)
+    ");
+
+    $pubVal = $publishToPortal ? 1 : 0;
+    $pubStatus = $publishToPortal ? 'Published' : 'Draft';
+    $reason = "ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT. Auto-generated to match target CGPA " . number_format($targetCgpa, 2);
+
+    $insertedCount = 0;
+    foreach ($allCourses as $c) {
+        $key = $c['semester_name'] . ':' . $c['course_code'];
+        if (in_array($key, $existingVerified)) {
+            continue; // Keep verified course, don't overwrite with estimate
+        }
+
+        $insStmt->execute([
+            $studentId,
+            $c['semester_name'],
+            $c['course_code'],
+            $c['course_name'],
+            $c['credit'],
+            $c['marks'],
+            $c['letter_grade'],
+            $c['gp'],
+            $pubVal,
+            $pubStatus,
+            $adminId,
+            $reason
+        ]);
+        $insertedCount++;
+    }
+
+    // Recalculate official student profile summary
+    recalculate_student_cgpa($studentId);
+
+    // Update students table directly with exact target CGPA
+    $db->prepare("UPDATE students SET cgpa = ?, credits_completed = ? WHERE id = ?")->execute([$targetCgpa, (int)$totalCredits, $studentId]);
+
+    // Dispatch clear student in-app notification with mandatory disclaimer
+    create_student_notification(
+        $studentId,
+        "Academic Results Projected (Estimated)",
+        "Your semester-wise results have been estimated based on cumulative CGPA " . number_format($targetCgpa, 2) . ". IMPORTANT: ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT.",
+        'result'
+    );
+
+    // Audit log
+    log_audit('ESTIMATED_RESULTS_GENERATED', "Generated estimated academic results for student #{$studentId} ({$student['full_name']}) matching target CGPA {$targetCgpa}");
+
+    return [
+        'success' => true,
+        'student_id' => $student['student_id'],
+        'student_name' => $student['full_name'],
+        'target_cgpa' => $targetCgpa,
+        'degree_level' => $isMaster ? 'Postgraduate' : 'Undergraduate',
+        'total_semesters' => $totalSemesters,
+        'total_credits' => $totalCredits,
+        'inserted_courses' => $insertedCount
+    ];
+}
+
+/**
+ * Administrator Verification Workflow: Verify an estimated semester or result as official
+ */
+function verify_semester_results_as_official(int $studentId, string $semester, int $adminId = 1): int {
+    $db = getDb();
+    $stmt = $db->prepare("
+        UPDATE student_results 
+        SET is_estimated = 0, 
+            result_type = 'Verified', 
+            publish_status = 'Published',
+            is_published = 1,
+            published_by = ?, 
+            published_at = NOW(),
+            correction_reason = 'Verified by administrator as official examination record'
+        WHERE student_id = ? AND semester = ? AND is_estimated = 1
+    ");
+    $stmt->execute([$adminId, $studentId, $semester]);
+    $affected = $stmt->rowCount();
+
+    if ($affected > 0) {
+        log_audit('RESULTS_VERIFIED_OFFICIAL', "Admin verified {$affected} estimated course result(s) in {$semester} as official for student #{$studentId}");
+        create_student_notification(
+            $studentId,
+            "Official Results Verified",
+            "Your academic results for {$semester} have been officially verified and confirmed by the Office of the Controller of Examinations.",
+            'result'
+        );
+        recalculate_student_cgpa($studentId);
+    }
+    return $affected;
+}
+
 
 
 

@@ -143,6 +143,32 @@ $issueDate = date('d F Y');
     </div>
   <?php else: ?>
 
+    
+    <?php if (!empty($academicSummary['has_estimated_results'])): ?>
+      <!-- Mandatory Official Disclaimer for Estimated Results -->
+      <div style="background:#fffbeb; border:2px solid #f59e0b; border-radius:12px; padding:1.4rem 1.75rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(245,158,11,0.15);" class="no-print">
+        <div style="display:flex; align-items:flex-start; gap:16px;">
+          <div style="width:48px; height:48px; border-radius:50%; background:#fef3c7; display:flex; align-items:center; justify-content:center; color:#d97706; font-size:1.6rem; flex-shrink:0;">
+            <i class="fas fa-exclamation-triangle"></i>
+          </div>
+          <div style="flex:1;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.35rem; flex-wrap:wrap;">
+              <span style="background:#dc2626; color:#ffffff; font-size:0.75rem; font-weight:900; padding:2px 8px; border-radius:4px; letter-spacing:0.5px;">IMPORTANT NOTICE</span>
+              <h4 style="margin:0; color:#92400e; font-size:1.1rem; font-weight:800; letter-spacing:0.3px;">
+                ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+              </h4>
+            </div>
+            <p style="margin:0 0 0.5rem; color:#78350f; font-size:0.88rem; line-height:1.55;">
+              The academic marks, letter grades, grade points, and semester GPAs displayed below have been auto-generated based on projected academic performance and target CGPA. This is <strong>NOT an official university examination result or certified transcript</strong>.
+            </p>
+            <div style="font-size:0.82rem; color:#92400e; font-weight:600; display:flex; align-items:center; gap:6px;">
+              <i class="fas fa-shield-alt"></i> Official physical transcripts must be issued and signed by the Office of the Controller of Examinations.
+            </div>
+          </div>
+        </div>
+      </div>
+    <?php endif; ?>
+
     <?php if (count($semesters) >= 8): ?>
       <!-- 8-Semester Degree Completion & Graduation Showcase (Section 9) -->
       <div style="background: linear-gradient(135deg, #15803d 0%, #166534 100%); color:#ffffff; border-radius:12px; padding:1.5rem 2rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(22,101,52,0.25); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;" class="no-print">
@@ -262,9 +288,15 @@ $issueDate = date('d F Y');
         <h1 style="margin:0 0 0.2rem; font-size:1.6rem; font-weight:800; color:#0f172a; text-transform:uppercase; letter-spacing:0.5px;">Rabindra Maitree University</h1>
         <div style="font-size:0.88rem; color:#475569; font-weight:600;">Kushtia, Bangladesh • Approved by Govt. of Bangladesh &amp; UGC</div>
         <div style="font-size:0.84rem; color:#1e293b; font-weight:700; margin-top:2px; text-transform:uppercase; letter-spacing:0.5px;">Office of the Controller of Examinations</div>
-        <div style="display:inline-block; margin-top:0.75rem; padding:5px 20px; background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:20px; font-weight:800; font-size:0.92rem; color:#1e73be; text-transform:uppercase; letter-spacing:0.5px;">
-          OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD
-        </div>
+        <?php if (!empty($academicSummary['has_estimated_results'])): ?>
+          <div style="display:inline-block; margin-top:0.75rem; padding:6px 20px; background:#fef3c7; border:2px solid #f59e0b; border-radius:20px; font-weight:900; font-size:0.86rem; color:#92400e; text-transform:uppercase; letter-spacing:0.5px;">
+            <i class="fas fa-exclamation-triangle"></i> ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+          </div>
+        <?php else: ?>
+          <div style="display:inline-block; margin-top:0.75rem; padding:5px 20px; background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:20px; font-weight:800; font-size:0.92rem; color:#1e73be; text-transform:uppercase; letter-spacing:0.5px;">
+            OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD
+          </div>
+        <?php endif; ?>
       </div>
 
       <!-- Student Information Block (All 9 Mandatory Fields) -->
@@ -298,6 +330,11 @@ $issueDate = date('d F Y');
                 <?= $sNum ?>
               </span>
               <span>Semester <?= $sNum ?>: <?= e($semTitle) ?></span>
+              <?php if (!empty($semData['is_estimated'])): ?>
+                <span style="background:#fef3c7; color:#92400e; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px; border:1px solid #fde68a; text-transform:uppercase;">
+                  ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+                </span>
+              <?php endif; ?>
             </span>
             <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.84rem; flex-wrap:wrap;">
               <span style="background:rgba(255,255,255,0.18); padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.25);">

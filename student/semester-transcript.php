@@ -12,6 +12,7 @@ $isAdminViewing = false;
 
 // Authentication: Either logged-in Student OR logged-in Admin viewing student transcript
 $student = null;
+$hasAnyEstimated = false;
 if (is_logged_in() && !empty($_GET['student_id'])) {
     $isAdminViewing = true;
     $targetStudentId = (int)$_GET['student_id'];
@@ -54,6 +55,7 @@ $studentId = (int)$student['id'];
 // Retrieve structured academic summary (published only for students, all for admin)
 $academicSummary = get_student_academic_summary($studentId, !$isAdminViewing);
 $hasResults = $academicSummary['has_results'];
+$hasAnyEstimated = !empty($academicSummary['has_estimated_results']);
 $groupedSemesters = $academicSummary['semesters'] ?? [];
 $availableSemesters = array_keys($groupedSemesters);
 $semesterGpas = $academicSummary['semester_gpas'] ?? [];
@@ -806,9 +808,18 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 
         <!-- Document Title Banner -->
         <div class="transcript-badge-wrapper">
-          <div class="transcript-title-badge">
-            <?= $isConsolidated ? 'Consolidated Academic Transcript' : 'Official Semester Grade Sheet &amp; Transcript' ?>
-          </div>
+          <?php if (!empty($hasAnyEstimated)): ?>
+            <div style="background:#dc2626; color:#ffffff; font-weight:900; font-size:0.85rem; padding:6px 16px; border-radius:4px; margin-bottom:8px; letter-spacing:0.5px; text-transform:uppercase; text-align:center;">
+              <i class="fas fa-exclamation-triangle"></i> ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+            </div>
+            <div class="transcript-title-badge" style="background:#b45309;">
+              <?= $isConsolidated ? 'Consolidated Academic Transcript (Unofficial Estimate)' : 'Semester Grade Sheet (Unofficial Estimate)' ?>
+            </div>
+          <?php else: ?>
+            <div class="transcript-title-badge">
+              <?= $isConsolidated ? 'Consolidated Academic Transcript' : 'Official Semester Grade Sheet &amp; Transcript' ?>
+            </div>
+          <?php endif; ?>
           
           <div class="transcript-meta-strip">
             <span><strong>Transcript Serial:</strong> <span style="font-family:monospace;"><?= e($transcriptSerial) ?></span></span>

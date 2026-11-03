@@ -129,6 +129,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
+                // Handle One-Click CGPA Update & Auto-Estimated Results Generation
+                if ($targetDbId > 0 && in_array($submitAction, ['update_cgpa_and_generate', 'auto_generate_estimated', 'update_cgpa_only'])) {
+                    $targetCgpa = (float)($_POST['target_cgpa_input'] ?? $_POST['cgpa'] ?? 3.50);
+                    $targetCgpa = max(2.00, min(4.00, round($targetCgpa, 2)));
+
+                    if ($submitAction === 'update_cgpa_only') {
+                        $db->prepare("UPDATE students SET cgpa = ? WHERE id = ?")->execute([$targetCgpa, $targetDbId]);
+                        log_audit('STUDENT_CGPA_UPDATED', "Admin updated CGPA to {$targetCgpa} for student #{$targetDbId}");
+                        flash_set('success', "Student CGPA updated to " . number_format($targetCgpa, 2) . ".");
+                    } else {
+                        $genRes = generate_estimated_student_results($targetDbId, $targetCgpa, true, $adminId);
+                        if (!empty($genRes['success'])) {
+                            flash_set('success', "One-Click CGPA Update Complete! Updated CGPA to " . number_format($targetCgpa, 2) . " and generated estimated results for {$genRes['total_semesters']} semesters ({$genRes['inserted_courses']} subjects). All records marked as: ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT.");
+                        } else {
+                            flash_set('error', $genRes['error'] ?? 'Failed to generate estimated results.');
+                        }
+                    }
+                    header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                    exit;
+                }
+
+                // Handle Administrator Verification Workflow (Convert Estimated -> Verified Official)
+                if ($targetDbId > 0 && strpos($submitAction, 'verify_semester_') === 0) {
+                    $semNum = (int)str_replace('verify_semester_', '', $submitAction);
+                    $semTitle = $standardSemesterTitles[$semNum] ?? "Semester {$semNum}";
+                    $aff = verify_semester_results_as_official($targetDbId, $semTitle, $adminId);
+                    flash_set('success', "Official Verification Complete: {$aff} course result(s) in {$semTitle} have been verified and recorded as Official University Examination Records!");
+                    header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                    exit;
+                }
+
+                if ($targetDbId > 0 && $submitAction === 'verify_all_as_official') {
+                    $stmt = $db->prepare("
+                        UPDATE student_results 
+                        SET is_estimated = 0, 
+                            result_type = 'Verified', 
+                            publish_status = 'Published',
+                            is_published = 1,
+                            published_by = ?, 
+                            published_at = NOW(),
+                            correction_reason = 'Verified by administrator as official examination record'
+                        WHERE student_id = ? AND is_estimated = 1
+                    ");
+                    $stmt->execute([$adminId, $targetDbId]);
+                    $aff = $stmt->rowCount();
+                    recalculate_student_cgpa($targetDbId);
+                    log_audit('RESULTS_VERIFIED_OFFICIAL', "Admin verified all {$aff} estimated courses as official for student #{$targetDbId}");
+                    create_student_notification(
+                        $targetDbId,
+                        "Official Academic Results Confirmed",
+                        "All academic results across your degree curriculum have been officially verified and confirmed by the Office of the Controller of Examinations.",
+                        'result'
+                    );
+                    flash_set('success', "All {$aff} estimated course results have been verified and confirmed as Official University Records!");
+                    header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                    exit;
+                }
+
                 // 2. Process Academic Results (if Save Draft or Publish was clicked)
                 if ($targetDbId > 0 && ($submitAction === 'save_draft' || $submitAction === 'publish_results')) {
                     $isPublished = ($submitAction === 'publish_results') ? 1 : 0;
@@ -341,10 +399,14 @@ if (isset($_GET['edit'])) {
         $resStmt->execute([$editId]);
         $allRes = $resStmt->fetchAll(PDO::FETCH_ASSOC);
 
+        $hasAnyEstimatedInStudent = false;
         foreach ($allRes as $r) {
             $sNum = get_semester_number($r['semester']);
             if ($sNum >= 1 && $sNum <= 8) {
                 $existingResultsBySem[$sNum][] = $r;
+            }
+            if (!empty($r['is_estimated'])) {
+                $hasAnyEstimatedInStudent = true;
             }
         }
     }
@@ -357,10 +419,10 @@ include __DIR__ . '/includes/admin-header.php';
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.75rem; flex-wrap: wrap; gap: 1rem;">
   <div>
     <h2 style="font-size: 1.6rem; font-weight: 800; color: #0f172a; margin: 0 0 0.25rem;">
-      <i class="fas fa-id-card-alt" style="color: var(--rmu-primary);"></i> One-Page Student &amp; Academic Result System
+      <i class="fas fa-id-card-alt" style="color: var(--rmu-primary);"></i> Student Management &bull; One-Page Result Console
     </h2>
     <span style="color: #64748b; font-size: 0.88rem;">
-      Rabindra Maitree University &bull; Unified Single-Page Student Enrollment, 8-Semester Results &amp; Transcript Publishing
+      Rabindra Maitree University &bull; Complete Student Management &bull; Unified Single-Page Student Enrollment, 8-Semester Results &amp; Transcript Publishing
     </span>
   </div>
 
@@ -730,10 +792,24 @@ include __DIR__ . '/includes/admin-header.php';
             </select>
           </div>
 
-          <!-- 17. Cumulative CGPA (Live Auto-Sync) -->
-          <div class="form-group">
-            <label class="form-label">Cumulative CGPA (Live Sync)</label>
-            <input type="number" step="0.01" min="0" max="4" name="cgpa" id="formCgpa" value="<?= e($editStudent['cgpa'] ?? '0.00') ?>" class="form-control" readonly style="background:#f1f5f9; font-weight:800; color:#15803d;">
+          <!-- 17. Cumulative CGPA (One-Click Update & Generator) -->
+          <div class="form-group" style="grid-column: span 2;">
+            <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
+              <span>Cumulative CGPA (UGC 4.00 Scale)</span>
+              <span style="font-size:0.75rem; color:#b45309; font-weight:700;"><i class="fas fa-magic"></i> Auto-Generate Available</span>
+            </label>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+              <input type="number" step="0.01" min="2.00" max="4.00" name="cgpa" id="formCgpa" value="<?= e($editStudent['cgpa'] ?? '0.00') ?>" class="form-control" style="font-weight:900; color:#0f2c59; font-size:1.1rem; width:130px; text-align:center;" placeholder="e.g. 3.85">
+              
+              <button type="submit" name="submit_action" value="update_cgpa_and_generate" class="btn-primary" style="background:#f59e0b; color:#0f172a; font-weight:800; font-size:0.82rem; padding:0.6rem 1rem; border:none; display:inline-flex; align-items:center; gap:6px;" title="Update CGPA and generate plausible subject marks for all semesters">
+                <i class="fas fa-bolt"></i> Update CGPA &amp; Generate Results
+              </button>
+
+              <button type="submit" name="submit_action" value="update_cgpa_only" class="btn-primary" style="background:#64748b; color:#ffffff; font-weight:700; font-size:0.82rem; padding:0.6rem 1rem; border:none;" title="Update CGPA without regenerating semester results">
+                <i class="fas fa-save"></i> Update CGPA Only
+              </button>
+            </div>
+            <small style="color: #64748b;">Enter target CGPA (2.00 – 4.00). Click <strong>"Update CGPA &amp; Generate Results"</strong> to auto-create plausible semester-wise marks, grades and SGPA.</small>
           </div>
 
           <!-- 18. Completed Credits (Live Auto-Sync) -->
@@ -790,9 +866,48 @@ include __DIR__ . '/includes/admin-header.php';
         </div>
 
         <div style="padding:1.5rem;">
-          <p style="margin:0 0 1.5rem; font-size:0.88rem; color:#475569;">
-            Manage every semester and subject individually. Type obtained marks (0-100) to auto-calculate UGC letter grades, grade points, and semester GPA.
-          </p>
+          
+          <!-- One-Click CGPA Update & Auto-Estimated Result Generator Card -->
+          <div style="background: linear-gradient(135deg, #0f2c59 0%, #1e40af 100%); border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.75rem; color: #ffffff; box-shadow: 0 4px 12px rgba(15,44,89,0.15);">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;">
+              <div style="flex:1; min-width:280px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.35rem;">
+                  <span style="background:#f59e0b; color:#0f172a; font-size:0.75rem; font-weight:900; padding:2px 8px; border-radius:4px; text-transform:uppercase;">
+                    <i class="fas fa-magic"></i> Generator
+                  </span>
+                  <h4 style="margin:0; font-size:1.15rem; font-weight:800; color:#ffffff;">
+                    One-Click CGPA Update &amp; Automatic Estimated Results
+                  </h4>
+                </div>
+                <p style="margin:0; font-size:0.85rem; color:#cbd5e1; line-height:1.45;">
+                  Enter target CGPA below. The system automatically identifies degree level (<strong><?= ($editStudent && strtolower($editStudent['degree_level'] ?? '') === 'postgraduate') ? 'Postgraduate (4 Semesters)' : 'Undergraduate (8 Semesters)' ?></strong>), loads official curriculum subjects, and generates plausible marks &amp; grades mathematically matching your target CGPA.
+                </p>
+                <div style="margin-top:0.45rem; font-size:0.78rem; color:#fde68a;">
+                  <i class="fas fa-exclamation-triangle"></i> Results are clearly flagged: <em>"ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT"</em>
+                </div>
+              </div>
+
+              <!-- One-Click Target Input and Buttons -->
+              <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
+                <div style="background:#ffffff; border-radius:6px; padding:4px 10px; display:flex; align-items:center; border:2px solid #f59e0b;">
+                  <span style="font-weight:800; color:#0f2c59; font-size:0.85rem; margin-right:6px;">Target CGPA:</span>
+                  <input type="number" step="0.01" min="2.00" max="4.00" name="target_cgpa_input" id="targetCgpaInput" value="<?= number_format((float)($editStudent['cgpa'] ?? 3.50), 2) ?>" style="width:80px; font-weight:900; font-size:1.1rem; color:#1e40af; border:none; outline:none; text-align:center;">
+                </div>
+
+                <!-- Update CGPA & Auto-Generate Button -->
+                <button type="submit" name="submit_action" value="auto_generate_estimated" class="btn-primary" style="background:#f59e0b; color:#0f172a; font-weight:800; border:none; padding:0.65rem 1.25rem; font-size:0.88rem; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+                  <i class="fas fa-bolt"></i> Update CGPA &amp; Generate Results
+                </button>
+
+                <!-- Bulk Verify All Estimated Courses Button -->
+                <?php if (!empty($hasAnyEstimatedInStudent)): ?>
+                  <button type="submit" name="submit_action" value="verify_all_as_official" class="btn-primary" style="background:#15803d; color:#ffffff; font-weight:700; border:none; padding:0.65rem 1rem; font-size:0.85rem; cursor:pointer;" onclick="return confirm('Verify ALL estimated course results as Official University Examination Records?');">
+                    <i class="fas fa-check-double"></i> Verify All as Official
+                  </button>
+                <?php endif; ?>
+              </div>
+            </div>
+          </div>
 
           <!-- 8 Semesters Containers (Semesters 5-8 automatically hide for Postgraduate) -->
           <div id="semestersContainer">
@@ -801,9 +916,11 @@ include __DIR__ . '/includes/admin-header.php';
                 $existingSemCourses = $existingResultsBySem[$s] ?? [];
                 $hasCourses = !empty($existingSemCourses);
                 $allPub = true;
+                $hasEstimatedInSem = false;
                 if ($hasCourses) {
                     foreach ($existingSemCourses as $ec) {
-                        if (empty($ec['is_published'])) { $allPub = false; break; }
+                        if (empty($ec['is_published'])) { $allPub = false; }
+                        if (!empty($ec['is_estimated'])) { $hasEstimatedInSem = true; }
                     }
                 } else {
                     $allPub = false;
@@ -813,7 +930,7 @@ include __DIR__ . '/includes/admin-header.php';
                 
                 <!-- Semester Header -->
                 <div class="sem-header" onclick="toggleSemesterAccordion(<?= $s ?>)" style="background:#f8fafc; padding:0.85rem 1.25rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none; border-bottom:1px solid #e2e8f0;">
-                  <div style="display:flex; align-items:center; gap:0.75rem;">
+                  <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                     <span style="background:#0f2c59; color:#ffffff; font-weight:900; font-size:0.85rem; padding:2px 8px; border-radius:4px;">
                       <?= $s ?>
                     </span>
@@ -822,6 +939,15 @@ include __DIR__ . '/includes/admin-header.php';
                     <span class="sem-pub-badge" id="sem-pub-badge-<?= $s ?>" style="font-size:0.72rem; font-weight:700; padding:2px 7px; border-radius:4px; <?= $hasCourses ? ($allPub ? 'background:#dcfce7; color:#15803d;' : 'background:#fef3c7; color:#b45309;') : 'background:#e2e8f0; color:#64748b;' ?>">
                       <?= $hasCourses ? ($allPub ? 'Published' : 'Draft / Unpublished') : 'Pending (0 Subjects)' ?>
                     </span>
+
+                    <?php if ($hasEstimatedInSem): ?>
+                      <span style="font-size:0.72rem; font-weight:800; background:#fef3c7; color:#92400e; border:1px solid #fde68a; padding:2px 7px; border-radius:4px; text-transform:uppercase;">
+                        <i class="fas fa-robot"></i> Estimated
+                      </span>
+                      <button type="submit" name="submit_action" value="verify_semester_<?= $s ?>" style="background:#15803d; color:#ffffff; border:none; padding:2px 8px; border-radius:4px; font-size:0.72rem; font-weight:700; cursor:pointer;" onclick="event.stopPropagation();" title="Verify Semester <?= $s ?> as Official Examination Record">
+                        <i class="fas fa-check"></i> Verify Official
+                      </button>
+                    <?php endif; ?>
                   </div>
 
                   <div style="display:flex; align-items:center; gap:0.85rem; font-size:0.82rem;">
@@ -858,7 +984,12 @@ include __DIR__ . '/includes/admin-header.php';
                             <tr class="subject-row" data-sem="<?= $s ?>">
                               <td>
                                 <input type="hidden" name="results[<?= $s ?>][<?= $cIdx ?>][id]" value="<?= (int)$co['id'] ?>">
-                                <input type="text" name="results[<?= $s ?>][<?= $cIdx ?>][course_code]" class="form-control sub-code" value="<?= e($co['course_code']) ?>" placeholder="e.g. CSE 101" required style="text-transform:uppercase; font-weight:700; font-family:monospace; font-size:0.85rem;">
+                                <div style="display:flex; align-items:center; gap:4px;">
+                                  <input type="text" name="results[<?= $s ?>][<?= $cIdx ?>][course_code]" class="form-control sub-code" value="<?= e($co['course_code']) ?>" placeholder="e.g. CSE 101" required style="text-transform:uppercase; font-weight:700; font-family:monospace; font-size:0.85rem;">
+                                  <?php if (!empty($co['is_estimated'])): ?>
+                                    <span style="background:#fef3c7; color:#92400e; font-size:0.65rem; font-weight:800; padding:1px 4px; border-radius:3px; border:1px solid #fde68a;" title="Estimated / Auto-Generated">EST</span>
+                                  <?php endif; ?>
+                                </div>
                               </td>
                               <td>
                                 <input type="text" name="results[<?= $s ?>][<?= $cIdx ?>][course_name]" class="form-control sub-name" value="<?= e($co['course_name']) ?>" placeholder="Subject Title" required style="font-size:0.85rem;">
@@ -1519,6 +1650,18 @@ window.addEventListener('DOMContentLoaded', function() {
     var modal = document.getElementById('transcriptPreviewModal');
     if (e.target === modal) closeTranscriptPreview();
   });
+
+  // Synchronize target CGPA fields
+  var formCgpa = document.getElementById('formCgpa');
+  var targetCgpaInput = document.getElementById('targetCgpaInput');
+  if (formCgpa && targetCgpaInput) {
+    formCgpa.addEventListener('input', function() {
+      targetCgpaInput.value = this.value;
+    });
+    targetCgpaInput.addEventListener('input', function() {
+      formCgpa.value = this.value;
+    });
+  }
 });
 </script>
 
