@@ -143,6 +143,30 @@ $issueDate = date('d F Y');
     </div>
   <?php else: ?>
 
+    <?php if (count($semesters) >= 8): ?>
+      <!-- 8-Semester Degree Completion & Graduation Showcase (Section 9) -->
+      <div style="background: linear-gradient(135deg, #15803d 0%, #166534 100%); color:#ffffff; border-radius:12px; padding:1.5rem 2rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(22,101,52,0.25); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;" class="no-print">
+        <div style="display:flex; align-items:center; gap:1.25rem;">
+          <div style="width:58px; height:58px; border-radius:50%; background:rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; font-size:1.8rem; color:#fde047;">
+            <i class="fas fa-graduation-cap"></i>
+          </div>
+          <div>
+            <h3 style="margin:0 0 0.25rem; font-size:1.3rem; font-weight:800; color:#ffffff;">
+              Curriculum Completed: All 8 Semesters Published
+            </h3>
+            <p style="margin:0; font-size:0.9rem; color:#dcfce7;">
+              Congratulations! All 8 academic semesters have been evaluated and published. Final Cumulative CGPA: <strong><?= number_format($finalCgpa, 2) ?></strong> / 4.00 (<?= (int)$totalEarnedCredits ?> Credits Earned).
+            </p>
+          </div>
+        </div>
+        <div style="display:flex; gap:0.75rem;">
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="background:#ffffff; color:#166534; padding:0.6rem 1.25rem; border-radius:6px; font-weight:800; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 5px rgba(0,0,0,0.12);">
+            <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Official 8-Semester Transcript (PDF)
+          </a>
+        </div>
+      </div>
+    <?php endif; ?>
+
     <!-- 8-Semester GPA Progression Summary Grid (no-print) -->
     <div style="background:linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%); color:#ffffff; border-radius:12px; padding:1.5rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(15,44,89,0.15);" class="no-print">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem;">

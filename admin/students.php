@@ -91,7 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     );
 
                     log_audit('STUDENT_ADDED', "Enrolled new student: {$fullName} ({$studentId})");
-                    flash_set('success', "Student '{$fullName}' ({$studentId}) enrolled successfully! Initial password: {$password}. Student Portal account is active.");
+                    $resUrl = APP_URL . "/admin/results-manager.php?student_id={$newId}";
+                    flash_set('success', "Student '{$fullName}' ({$studentId}) enrolled successfully! Initial password: {$password}. Student Portal account is active. <a href='{$resUrl}' style='font-weight:800; text-decoration:underline; margin-left:8px;'><i class='fas fa-chart-line'></i> Manage 8-Semester Results</a>");
                 }
             }
         } elseif ($action === 'edit') {

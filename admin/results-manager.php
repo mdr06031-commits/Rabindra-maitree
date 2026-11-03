@@ -201,20 +201,20 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             }
         }
 
-        // 5. Unpublish / Revert Semester Results to Draft
-        elseif ($action === 'unpublish_semester') {
+        // 5. Unpublish / Save Semester Results as Draft
+        elseif ($action === 'unpublish_semester' || $action === 'save_draft_semester') {
             $semesterName = trim($_POST['semester_name'] ?? '');
             if ($targetStudentId > 0 && !empty($semesterName)) {
                 $unpubStmt = $db->prepare("
                     UPDATE student_results 
-                    SET publish_status = 'Draft', is_published = 0 
+                    SET publish_status = 'Draft', is_published = 0, published_at = NULL 
                     WHERE student_id = ? AND semester = ?
                 ");
                 $unpubStmt->execute([$targetStudentId, $semesterName]);
                 $resMetrics = recalculate_student_cgpa($targetStudentId);
 
-                log_audit('SEMESTER_RESULTS_UNPUBLISHED', "Reverted {$semesterName} results to draft for Student #{$targetStudentId}");
-                flash_set('info', "Results for '{$semesterName}' have been reverted to Draft (hidden from Student Portal).");
+                log_audit('SEMESTER_RESULTS_DRAFT', "Saved {$semesterName} results as draft for Student #{$targetStudentId}");
+                flash_set('info', "Results for '{$semesterName}' have been saved as Draft (hidden from Student Portal).");
             }
         }
 
@@ -439,6 +439,47 @@ $standardSemesters = [
     '8th Semester (Fall 2026)'
 ];
 
+// Map semesters by number for selected student
+$semestersByNumber = [];
+if (!empty($summary['semesters'])) {
+    foreach ($summary['semesters'] as $semKey => $semVal) {
+        $num = (int)$semVal['semester_number'];
+        $semestersByNumber[$num] = [
+            'name' => $semKey,
+            'data' => $semVal
+        ];
+    }
+}
+
+// Prepare preview data array for instant modal previews
+$previewData = [];
+for ($pSem = 1; $pSem <= 8; $pSem++) {
+    if (isset($semestersByNumber[$pSem])) {
+        $pData = $semestersByNumber[$pSem]['data'];
+        $previewData[$pSem] = [
+            'name' => $semestersByNumber[$pSem]['name'],
+            'number' => $pSem,
+            'courses' => $pData['courses'],
+            'reg_credits' => $pData['registered_credits'],
+            'earned_credits' => $pData['earned_credits'],
+            'sgpa' => $pData['sgpa'],
+            'cgpa' => $pData['cumulative_cgpa'],
+            'status' => $pData['status'],
+        ];
+    } else {
+        $previewData[$pSem] = [
+            'name' => $standardSemesters[$pSem - 1] ?? "Semester {$pSem}",
+            'number' => $pSem,
+            'courses' => [],
+            'reg_credits' => 0.0,
+            'earned_credits' => 0.0,
+            'sgpa' => 0.00,
+            'cgpa' => 0.00,
+            'status' => 'Pending',
+        ];
+    }
+}
+
 include __DIR__ . '/includes/admin-header.php';
 ?>
 
@@ -621,27 +662,54 @@ include __DIR__ . '/includes/admin-header.php';
       
       <!-- Left Column: Individual 8-Semester Managers -->
       <div>
-        <?php if (!empty($summary['semesters'])): ?>
-          <?php foreach ($summary['semesters'] as $semName => $sData): ?>
-            <?php 
-              $allCoursesPublished = true;
-              foreach ($sData['courses'] as $c) {
-                  if (!$c['is_published']) { $allCoursesPublished = false; break; }
-              }
-              $pubDate = !empty($sData['courses'][0]['published_at']) ? format_date($sData['courses'][0]['published_at']) : null;
-            ?>
-            <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; margin-bottom:2rem; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
-              
-              <!-- Semester Header with Metrics & Actions -->
-              <div style="background:linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%); color:#ffffff; padding:0.9rem 1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
-                <div style="display:flex; align-items:center; gap:0.6rem;">
-                  <span style="background:#f59e0b; color:#0f172a; padding:2px 9px; border-radius:4px; font-weight:900; font-size:0.85rem;">
-                    <?= $sData['semester_number'] ?>
+        <!-- Complete 8-Semester Results Workspace (Sections 1, 2, 3, 4, 6) -->
+        <?php for ($semNum = 1; $semNum <= 8; $semNum++): ?>
+          <?php
+            $hasData = isset($semestersByNumber[$semNum]);
+            $semName = $hasData ? $semestersByNumber[$semNum]['name'] : ($standardSemesters[$semNum - 1] ?? "{$semNum}" . ($semNum==1?'st':($semNum==2?'nd':($semNum==3?'rd':'th'))) . " Semester");
+            $sData = $hasData ? $semestersByNumber[$semNum]['data'] : null;
+            $allCoursesPublished = false;
+            $hasDraftCourses = false;
+            $pubDate = null;
+            if ($hasData && !empty($sData['courses'])) {
+                $allCoursesPublished = true;
+                foreach ($sData['courses'] as $c) {
+                    if (!$c['is_published']) { 
+                        $allCoursesPublished = false; 
+                        $hasDraftCourses = true;
+                    }
+                }
+                $pubDate = !empty($sData['courses'][0]['published_at']) ? format_date($sData['courses'][0]['published_at']) : null;
+            }
+          ?>
+          <div style="background:#ffffff; border:1px solid <?= $hasData ? '#cbd5e1' : '#e2e8f0' ?>; border-radius:10px; margin-bottom:1.75rem; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);" id="sem-card-<?= $semNum ?>">
+            
+            <!-- Semester Header with Metrics & Actions -->
+            <div style="background:<?= $hasData ? 'linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%)' : '#f8fafc' ?>; color:<?= $hasData ? '#ffffff' : '#1e293b' ?>; padding:0.85rem 1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; border-bottom:1px solid <?= $hasData ? '#1e3a8a' : '#e2e8f0' ?>;">
+              <div style="display:flex; align-items:center; gap:0.6rem;">
+                <span style="background:<?= $hasData ? '#f59e0b' : '#cbd5e1' ?>; color:#0f172a; padding:2px 9px; border-radius:4px; font-weight:900; font-size:0.85rem;">
+                  <?= $semNum ?>
+                </span>
+                <strong style="font-size:1rem; color:<?= $hasData ? '#ffffff' : '#0f2c59' ?>;"><?= e($semName) ?></strong>
+                <?php if ($hasData): ?>
+                  <?php if ($allCoursesPublished): ?>
+                    <span style="background:#15803d; color:#ffffff; font-size:0.72rem; font-weight:700; padding:2px 7px; border-radius:4px;">
+                      <i class="fas fa-check-circle"></i> Published <?= $pubDate ? "({$pubDate})" : '' ?>
+                    </span>
+                  <?php else: ?>
+                    <span style="background:#d97706; color:#ffffff; font-size:0.72rem; font-weight:700; padding:2px 7px; border-radius:4px;">
+                      <i class="fas fa-file-alt"></i> Draft (Unpublished)
+                    </span>
+                  <?php endif; ?>
+                <?php else: ?>
+                  <span style="background:#e2e8f0; color:#64748b; font-size:0.72rem; font-weight:700; padding:2px 7px; border-radius:4px;">
+                    Pending (No Subjects)
                   </span>
-                  <strong style="font-size:1rem;"><?= e($semName) ?></strong>
-                </div>
+                <?php endif; ?>
+              </div>
 
-                <div style="display:flex; align-items:center; gap:0.6rem; font-size:0.82rem; flex-wrap:wrap;">
+              <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.82rem; flex-wrap:wrap;">
+                <?php if ($hasData): ?>
                   <span style="background:rgba(255,255,255,0.18); padding:3px 8px; border-radius:4px;">
                     Reg: <strong><?= number_format($sData['registered_credits'], 1) ?> Cr</strong>
                   </span>
@@ -652,9 +720,32 @@ include __DIR__ . '/includes/admin-header.php';
                     CGPA: <?= number_format($sData['cumulative_cgpa'], 2) ?>
                   </span>
 
-                  <!-- Prominent Publish Result Button (Section 6) -->
+                  <!-- 1. Add Subject Button -->
+                  <button type="button" onclick="openAddModalForSemester('<?= e($semName) ?>')" style="background:#0284c7; color:#ffffff; border:none; padding:4px 10px; border-radius:4px; font-size:0.78rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px;" title="Add Subject to this Semester">
+                    <i class="fas fa-plus-circle"></i> Add Subject
+                  </button>
+
+                  <!-- 2. Save Draft Button -->
+                  <?php if ($allCoursesPublished): ?>
+                    <form action="" method="POST" style="display:inline;" onsubmit="return confirm('Save <?= e($semName) ?> results as Draft? Results will be hidden from the Student Portal until published.');">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="action" value="save_draft_semester">
+                      <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
+                      <input type="hidden" name="semester_name" value="<?= e($semName) ?>">
+                      <button type="submit" style="background:rgba(255,255,255,0.2); color:#ffffff; border:1px solid rgba(255,255,255,0.4); padding:3px 9px; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Revert to Draft">
+                        <i class="fas fa-eye-slash"></i> Save Draft
+                      </button>
+                    </form>
+                  <?php endif; ?>
+
+                  <!-- 3. Preview Result Button -->
+                  <button type="button" onclick="openPreviewModal(<?= $semNum ?>)" style="background:#6366f1; color:#ffffff; border:none; padding:4px 10px; border-radius:4px; font-size:0.78rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px;" title="Preview Unofficial Grade Sheet">
+                    <i class="fas fa-eye"></i> Preview
+                  </button>
+
+                  <!-- 4. Publish Result Button (Prominent) -->
                   <?php if (!$allCoursesPublished): ?>
-                    <form action="" method="POST" style="display:inline;" onsubmit="return confirm('Publish all results for <?= e($semName) ?> to the Student Portal? Students will immediately see their grades, marks, and SGPA.');">
+                    <form action="" method="POST" style="display:inline;" onsubmit="return confirm('Publish all results for <?= e($semName) ?> to the Student Portal? Students will immediately see their subjects, marks, grades, and SGPA.');">
                       <?= csrf_field() ?>
                       <input type="hidden" name="action" value="publish_semester">
                       <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
@@ -663,25 +754,24 @@ include __DIR__ . '/includes/admin-header.php';
                         <i class="fas fa-check-circle"></i> Publish Result
                       </button>
                     </form>
-                  <?php else: ?>
-                    <form action="" method="POST" style="display:inline;" onsubmit="return confirm('Revert <?= e($semName) ?> results to Draft? Results will be hidden from the Student Portal.');">
-                      <?= csrf_field() ?>
-                      <input type="hidden" name="action" value="unpublish_semester">
-                      <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
-                      <input type="hidden" name="semester_name" value="<?= e($semName) ?>">
-                      <button type="submit" style="background:rgba(255,255,255,0.2); color:#ffffff; border:1px solid rgba(255,255,255,0.4); padding:3px 9px; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer;" title="Click to unpublish">
-                        <i class="fas fa-eye-slash"></i> Published <?= $pubDate ? "({$pubDate})" : '' ?>
-                      </button>
-                    </form>
                   <?php endif; ?>
 
+                  <!-- 5. PDF Transcript Link -->
                   <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $selectedStudentId ?>&semester=<?= urlencode($semName) ?>" target="_blank" style="background:#ffffff; color:#0f2c59; border-radius:4px; padding:3px 9px; font-size:0.76rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
                     <i class="fas fa-file-pdf" style="color:#dc2626;"></i> PDF
                   </a>
-                </div>
-              </div>
 
-              <!-- Subject-wise Table with All Required Fields (Section 2) -->
+                <?php else: ?>
+                  <!-- Pending Semester Action: Add Subject -->
+                  <button type="button" onclick="openAddModalForSemester('<?= e($semName) ?>')" class="btn-primary" style="background:#0284c7; padding:4px 12px; font-size:0.8rem; font-weight:700; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+                    <i class="fas fa-plus-circle"></i> Add Subject
+                  </button>
+                <?php endif; ?>
+              </div>
+            </div>
+
+            <?php if ($hasData && !empty($sData['courses'])): ?>
+              <!-- Subject-wise Table with All 8 Required Fields (Section 2) -->
               <div class="table-responsive">
                 <table class="rmu-table" style="box-shadow:none; margin:0; font-size:0.86rem;">
                   <thead>
@@ -703,6 +793,9 @@ include __DIR__ . '/includes/admin-header.php';
                           <strong style="color:var(--rmu-primary); font-family:monospace;"><?= e($co['course_code']) ?></strong>
                           <div style="font-weight:600; color:#1e293b;"><?= e($co['course_name']) ?></div>
                           <small style="color:#64748b;"><?= e($co['exam_term']) ?></small>
+                          <?php if (!$co['is_published']): ?>
+                            <span style="display:inline-block; font-size:0.68rem; background:#fef3c7; color:#b45309; padding:1px 5px; border-radius:3px; font-weight:700; margin-left:4px;">Draft</span>
+                          <?php endif; ?>
                           <?php if (!empty($co['correction_reason'])): ?>
                             <div style="font-size:0.72rem; color:#b45309; margin-top:2px;"><i class="fas fa-info-circle"></i> <?= e($co['correction_reason']) ?></div>
                           <?php endif; ?>
@@ -768,26 +861,36 @@ include __DIR__ . '/includes/admin-header.php';
                   </tfoot>
                 </table>
               </div>
+            <?php else: ?>
+              <!-- Clean Pending State for Empty Semester -->
+              <div style="padding:1.75rem 1.5rem; text-align:center; background:#fafafa;">
+                <p style="margin:0 0 0.75rem; color:#64748b; font-size:0.88rem;">
+                  No subjects or examination marks recorded for <strong><?= e($semName) ?></strong> yet.
+                </p>
+                <button type="button" onclick="openAddModalForSemester('<?= e($semName) ?>')" class="btn-primary" style="background:#0284c7; padding:0.45rem 1.1rem; font-size:0.84rem; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+                  <i class="fas fa-plus-circle"></i> Add Subject to <?= e($semName) ?>
+                </button>
+              </div>
+            <?php endif; ?>
 
-            </div>
-          <?php endforeach; ?>
-        <?php else: ?>
-          <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:3rem 2rem; text-align:center;">
-            <i class="fas fa-folder-open" style="font-size:3rem; color:#cbd5e1; margin-bottom:1rem;"></i>
-            <h3 style="color:#0f172a; margin:0 0 0.5rem;">No academic results recorded yet.</h3>
-            <p style="color:#64748b; font-size:0.9rem; margin-bottom:1.5rem;">
-              You can populate the full standard RMU 8-semester curriculum or add individual subject results using the form on the right.
-            </p>
-            <form action="" method="POST" style="display:inline;">
-              <?= csrf_field() ?>
-              <input type="hidden" name="action" value="populate_all_8_semesters">
-              <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
-              <button type="submit" class="btn-primary" style="background:#15803d; padding:0.75rem 1.5rem; font-size:0.95rem;">
-                <i class="fas fa-magic"></i> Populate Standard RMU 8-Semester Curriculum (32 Subjects)
-              </button>
-            </form>
           </div>
-        <?php endif; ?>
+        <?php endfor; ?>
+
+        <!-- Quick Bulk Action Card -->
+        <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:1.25rem 1.5rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); margin-bottom:2rem;">
+          <div>
+            <strong style="color:#0f2c59; font-size:0.95rem; display:block;">Need standard full curriculum?</strong>
+            <small style="color:#64748b;">Populate or refresh the standard RMU 8-semester curriculum (32 subjects) with standard credit hours.</small>
+          </div>
+          <form action="" method="POST" style="margin:0;" onsubmit="return confirm('Populate / reset standard RMU 8-semester curriculum (32 courses) for this student?');">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="populate_all_8_semesters">
+            <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
+            <button type="submit" class="btn-primary" style="background:#0f766e; padding:0.5rem 1.1rem; font-size:0.84rem; border:none; cursor:pointer;">
+              <i class="fas fa-magic"></i> Populate Standard RMU 8 Semesters
+            </button>
+          </form>
+        </div>
       </div>
 
       <!-- Right Column: Add Subject Result Form with Live Auto-Grading & Reference Scale -->
@@ -1229,8 +1332,175 @@ include __DIR__ . '/includes/admin-header.php';
 </div>
 
 <!-- ========================================================================= -->
-<!-- MODAL: PROCESS STUDENT RESULT REQUEST (Section 5)                          -->
+<!-- MODAL: ADD SUBJECT RESULT FOR SPECIFIC SEMESTER (Section 2 & 3)            -->
 <!-- ========================================================================= -->
+<div id="addSubjectModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:9999; justify-content:center; align-items:center; padding:1.5rem; overflow-y:auto;">
+  <div style="background:#ffffff; border-radius:12px; max-width:580px; width:100%; padding:2rem; box-shadow:0 25px 50px rgba(0,0,0,0.25); position:relative;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem;">
+      <h3 style="margin:0; font-size:1.25rem; color:#0f2c59; display:flex; align-items:center; gap:8px;">
+        <i class="fas fa-plus-circle" style="color:var(--rmu-primary);"></i> Add Subject Result
+      </h3>
+      <button type="button" onclick="closeAddSubjectModal()" style="border:none; background:none; font-size:1.35rem; color:#64748b; cursor:pointer;" title="Close">&times;</button>
+    </div>
+
+    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:0.65rem 0.9rem; margin-bottom:1.25rem; font-size:0.86rem; color:#334155;">
+      Student: <strong style="color:#0f2c59;"><?= e($summary['student']['full_name'] ?? '') ?></strong> &bull;
+      <span style="font-family:monospace; color:#0284c7; font-weight:700;"><?= e($summary['student']['student_id'] ?? '') ?></span>
+    </div>
+
+    <form action="" method="POST" id="addSubjectModalForm">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="add_result">
+      <input type="hidden" name="student_id" value="<?= $selectedStudentId ?>">
+
+      <div class="form-group">
+        <label class="form-label">Semester *</label>
+        <select name="semester" id="addSubjectModalSemester" class="form-select" required>
+          <?php foreach ($standardSemesters as $semOption): ?>
+            <option value="<?= e($semOption) ?>"><?= e($semOption) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 2fr; gap:0.75rem;">
+        <div class="form-group">
+          <label class="form-label">Course Code *</label>
+          <input type="text" name="course_code" id="addModalCourseCode" placeholder="e.g. CSE 101" class="form-control" required style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Course Title *</label>
+          <input type="text" name="course_name" id="addModalCourseName" placeholder="e.g. Structured Programming Language" class="form-control" required>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+        <div class="form-group">
+          <label class="form-label">Credit Hours *</label>
+          <input type="number" step="0.5" min="0.5" max="6.0" name="credit" id="addModalCredit" value="3.0" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Full Marks</label>
+          <input type="number" name="full_marks" value="100" class="form-control" readonly style="background:#f1f5f9;">
+        </div>
+      </div>
+
+      <!-- Live Auto-Grading & Marks Input -->
+      <div style="background:#f0fdf4; border:1.5px solid #86efac; border-radius:8px; padding:1rem; margin-bottom:1rem;">
+        <label class="form-label" style="color:#166534; font-weight:700;">
+          Obtained Marks (out of 100) *
+        </label>
+        <input type="number" step="0.5" min="0" max="100" name="marks" id="addModalMarks" placeholder="e.g. 85.00" class="form-control" required style="font-size:1.15rem; font-weight:800; color:#0f2c59;" oninput="autoCalculateAddGrade(this.value)">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.75rem; margin-top:0.75rem;">
+          <div>
+            <label class="form-label" style="font-size:0.78rem; color:#475569;">Letter Grade</label>
+            <input type="text" name="letter_grade" id="addModalGrade" class="form-control" readonly style="font-weight:800; text-align:center; background:#ffffff; color:#1e40af;">
+          </div>
+          <div>
+            <label class="form-label" style="font-size:0.78rem; color:#475569;">Grade Point</label>
+            <input type="text" name="grade_point" id="addModalPoint" class="form-control" readonly style="font-weight:800; text-align:center; background:#ffffff; color:#15803d;">
+          </div>
+          <div>
+            <label class="form-label" style="font-size:0.78rem; color:#475569;">Status</label>
+            <input type="text" id="addModalStatus" class="form-control" readonly style="font-weight:800; text-align:center; background:#ffffff; color:#15803d;">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Exam Term</label>
+        <input type="text" name="exam_term" value="Semester Final Examination" class="form-control">
+      </div>
+
+      <div class="form-group" style="margin-bottom:1.5rem;">
+        <label class="form-label" style="font-weight:700;">Publication State</label>
+        <select name="publish_status" class="form-select">
+          <option value="Published">Publish Immediately to Student Portal (Published)</option>
+          <option value="Draft">Save as Draft (Hidden from Student Portal until published)</option>
+        </select>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+        <button type="button" onclick="closeAddSubjectModal()" class="btn-primary" style="background:#e2e8f0; color:#334155; border:none; padding:0.6rem 1.25rem;">
+          Cancel
+        </button>
+        <button type="submit" class="btn-primary" style="background:#0284c7; padding:0.6rem 1.5rem;">
+          <i class="fas fa-save"></i> Save Subject Result
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================================================================= -->
+<!-- MODAL: PREVIEW UNOFFICIAL GRADE SHEET & CGPA (Section 6)                   -->
+<!-- ========================================================================= -->
+<div id="previewResultModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.7); z-index:9999; justify-content:center; align-items:center; padding:1.5rem; overflow-y:auto;">
+  <div style="background:#ffffff; border-radius:12px; max-width:760px; width:100%; padding:2.25rem; box-shadow:0 25px 60px rgba(0,0,0,0.3); position:relative; max-height:90vh; overflow-y:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.25rem; border-bottom:2px solid #0f2c59; padding-bottom:1rem;">
+      <div>
+        <h3 id="prevSemTitle" style="margin:0 0 0.25rem; font-size:1.3rem; color:#0f2c59; font-weight:800;">
+          Semester Grade Sheet Preview
+        </h3>
+        <p style="margin:0; font-size:0.85rem; color:#64748b;">
+          Rabindra Maitree University &bull; Office of the Controller of Examinations
+        </p>
+      </div>
+      <button type="button" onclick="closePreviewModal()" style="border:none; background:none; font-size:1.5rem; color:#64748b; cursor:pointer;" title="Close">&times;</button>
+    </div>
+
+    <!-- Student Metadata -->
+    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1.5rem; display:grid; grid-template-columns:1fr 1fr; gap:0.6rem 1.5rem; font-size:0.86rem;">
+      <div><span style="color:#64748b;">Student Name:</span> <strong id="prevStName" style="color:#0f172a;"></strong></div>
+      <div><span style="color:#64748b;">Student ID:</span> <strong id="prevStId" style="font-family:monospace; color:#0284c7;"></strong></div>
+      <div><span style="color:#64748b;">Department:</span> <strong id="prevStDept"></strong></div>
+      <div><span style="color:#64748b;">Session / Batch:</span> <strong id="prevStBatch"></strong></div>
+    </div>
+
+    <!-- Preview Course Table -->
+    <div class="table-responsive" style="margin-bottom:1.5rem;">
+      <table class="rmu-table" style="box-shadow:none; margin:0; font-size:0.86rem; border:1px solid #cbd5e1;">
+        <thead style="background:#0f2c59; color:#ffffff;">
+          <tr>
+            <th style="color:#ffffff;">Code</th>
+            <th style="color:#ffffff;">Subject Title</th>
+            <th style="color:#ffffff; text-align:center;">Credit</th>
+            <th style="color:#ffffff; text-align:center;">Marks</th>
+            <th style="color:#ffffff; text-align:center;">Grade</th>
+            <th style="color:#ffffff; text-align:center;">Point</th>
+            <th style="color:#ffffff; text-align:center;">Status</th>
+          </tr>
+        </thead>
+        <tbody id="prevTableBody">
+          <!-- Populated by JS -->
+        </tbody>
+        <tfoot style="background:#f1f5f9; font-weight:700;">
+          <tr>
+            <td colspan="2" style="text-align:right;">Registered Credits:</td>
+            <td id="prevRegCredits" style="text-align:center; color:#0f2c59;"></td>
+            <td colspan="2" style="text-align:right;">Earned: <span id="prevEarnedCredits"></span></td>
+            <td style="text-align:right; color:#1e40af;">SGPA: <strong id="prevSgpa" style="font-size:0.95rem;"></strong></td>
+            <td style="text-align:center; color:#15803d; font-weight:800;">CGPA: <span id="prevCgpa"></span></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+      <div style="font-size:0.8rem; color:#64748b;">
+        <i class="fas fa-info-circle" style="color:#0284c7;"></i> Note: Once published, this result is instantly accessible to the student.
+      </div>
+      <div style="display:flex; gap:0.75rem;">
+        <a id="prevPdfLink" href="#" target="_blank" class="btn-primary" style="background:#15803d; text-decoration:none; padding:0.55rem 1.1rem; font-size:0.85rem; display:inline-flex; align-items:center; gap:5px;">
+          <i class="fas fa-file-pdf"></i> Official PDF Transcript
+        </a>
+        <button type="button" onclick="closePreviewModal()" class="btn-primary" style="background:#64748b; border:none; padding:0.55rem 1.25rem; font-size:0.85rem;">
+          Close Preview
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
 <div id="processRequestModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.6); z-index:9999; justify-content:center; align-items:center; padding:1.5rem; overflow-y:auto;">
   <div style="background:#ffffff; border-radius:12px; max-width:540px; width:100%; padding:2rem; box-shadow:0 20px 40px rgba(0,0,0,0.2); position:relative;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem;">
@@ -1287,8 +1557,18 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<!-- Auto-Grading Javascript Scripts -->
+<!-- Auto-Grading & Modal Management Javascript Scripts -->
 <script>
+var previewData = <?= json_encode($previewData, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var currentStudentInfo = {
+  name: <?= json_encode($summary['student']['full_name'] ?? '') ?>,
+  id: <?= json_encode($summary['student']['student_id'] ?? '') ?>,
+  dept: <?= json_encode($summary['student']['department_name'] ?? '') ?>,
+  batch: <?= json_encode($summary['student']['batch'] ?? '') ?>,
+  program: <?= json_encode($summary['student']['program_name'] ?? '') ?>,
+  final_cgpa: <?= json_encode(number_format((float)($summary['final_cgpa'] ?? 0), 2)) ?>
+};
+
 function autoCalculateGrade(marksVal) {
   var m = parseFloat(marksVal);
   var gradeEl = document.getElementById('gradeOutput');
@@ -1312,6 +1592,31 @@ function autoCalculateGrade(marksVal) {
   else { gradeEl.value = 'F'; pointEl.value = '0.00'; }
 }
 
+function autoCalculateAddGrade(marksVal) {
+  var m = parseFloat(marksVal);
+  var gradeEl = document.getElementById('addModalGrade');
+  var pointEl = document.getElementById('addModalPoint');
+  var statusEl = document.getElementById('addModalStatus');
+
+  if (isNaN(m) || m < 0) {
+    gradeEl.value = '';
+    pointEl.value = '';
+    statusEl.value = '';
+    return;
+  }
+
+  if (m >= 80) { gradeEl.value = 'A+'; pointEl.value = '4.00'; statusEl.value = 'Pass'; }
+  else if (m >= 75) { gradeEl.value = 'A'; pointEl.value = '3.75'; statusEl.value = 'Pass'; }
+  else if (m >= 70) { gradeEl.value = 'A-'; pointEl.value = '3.50'; statusEl.value = 'Pass'; }
+  else if (m >= 65) { gradeEl.value = 'B+'; pointEl.value = '3.25'; statusEl.value = 'Pass'; }
+  else if (m >= 60) { gradeEl.value = 'B'; pointEl.value = '3.00'; statusEl.value = 'Pass'; }
+  else if (m >= 55) { gradeEl.value = 'B-'; pointEl.value = '2.75'; statusEl.value = 'Pass'; }
+  else if (m >= 50) { gradeEl.value = 'C+'; pointEl.value = '2.50'; statusEl.value = 'Pass'; }
+  else if (m >= 45) { gradeEl.value = 'C'; pointEl.value = '2.25'; statusEl.value = 'Pass'; }
+  else if (m >= 40) { gradeEl.value = 'D'; pointEl.value = '2.00'; statusEl.value = 'Pass'; }
+  else { gradeEl.value = 'F'; pointEl.value = '0.00'; statusEl.value = 'Fail'; }
+}
+
 function autoCalculateEditGrade(marksVal) {
   var m = parseFloat(marksVal);
   var gradeEl = document.getElementById('editGradeOutput');
@@ -1333,6 +1638,109 @@ function autoCalculateEditGrade(marksVal) {
   else if (m >= 45) { gradeEl.value = 'C'; pointEl.value = '2.25'; }
   else if (m >= 40) { gradeEl.value = 'D'; pointEl.value = '2.00'; }
   else { gradeEl.value = 'F'; pointEl.value = '0.00'; }
+}
+
+function openAddModalForSemester(semName) {
+  var sel = document.getElementById('addSubjectModalSemester');
+  if (sel) {
+    sel.value = semName;
+  }
+  document.getElementById('addModalCourseCode').value = '';
+  document.getElementById('addModalCourseName').value = '';
+  document.getElementById('addModalMarks').value = '';
+  document.getElementById('addModalGrade').value = '';
+  document.getElementById('addModalPoint').value = '';
+  document.getElementById('addModalStatus').value = '';
+  document.getElementById('addSubjectModal').style.display = 'flex';
+}
+
+function closeAddSubjectModal() {
+  document.getElementById('addSubjectModal').style.display = 'none';
+}
+
+function openPreviewModal(semNum) {
+  var tbody = document.getElementById('prevTableBody');
+  tbody.innerHTML = '';
+
+  document.getElementById('prevStName').textContent = currentStudentInfo.name;
+  document.getElementById('prevStId').textContent = currentStudentInfo.id;
+  document.getElementById('prevStDept').textContent = currentStudentInfo.dept;
+  document.getElementById('prevStBatch').textContent = currentStudentInfo.batch;
+
+  if (semNum === 'all') {
+    document.getElementById('prevSemTitle').textContent = 'Complete 8-Semester Academic Transcript Preview';
+    var totalReg = 0, totalEarn = 0;
+    for (var k = 1; k <= 8; k++) {
+      var d = previewData[k];
+      if (d && d.courses && d.courses.length > 0) {
+        totalReg += parseFloat(d.reg_credits);
+        totalEarn += parseFloat(d.earned_credits);
+        var semRow = document.createElement('tr');
+        semRow.style.background = '#e2e8f0';
+        semRow.innerHTML = '<td colspan="7" style="font-weight:800; color:#0f2c59; padding:6px 10px;">Semester ' + k + ': ' + d.name + ' (SGPA: ' + parseFloat(d.sgpa).toFixed(2) + ')</td>';
+        tbody.appendChild(semRow);
+
+        d.courses.forEach(function(c) {
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td style="font-family:monospace; font-weight:700; color:#1e40af;">' + (c.course_code || '') + '</td>' +
+            '<td><strong>' + (c.course_name || '') + '</strong></td>' +
+            '<td style="text-align:center;">' + parseFloat(c.credit).toFixed(1) + '</td>' +
+            '<td style="text-align:center; font-weight:700;">' + (c.marks !== null ? parseFloat(c.marks).toFixed(1) : '—') + '</td>' +
+            '<td style="text-align:center; font-weight:800; color:#1e40af;">' + (c.letter_grade || '') + '</td>' +
+            '<td style="text-align:center; font-weight:700; color:#047857;">' + parseFloat(c.grade_point).toFixed(2) + '</td>' +
+            '<td style="text-align:center;"><span style="font-size:0.75rem; font-weight:700; color:' + (c.status === 'Pass' ? '#15803d' : '#dc2626') + ';">' + (c.status || '') + '</span></td>';
+          tbody.appendChild(tr);
+        });
+      }
+    }
+    if (tbody.children.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:#64748b;">No academic results recorded yet for any semester.</td></tr>';
+    }
+    document.getElementById('prevRegCredits').textContent = totalReg.toFixed(1) + ' Cr';
+    document.getElementById('prevEarnedCredits').textContent = totalEarn.toFixed(1) + ' Cr';
+    document.getElementById('prevSgpa').textContent = 'N/A';
+    document.getElementById('prevCgpa').textContent = currentStudentInfo.final_cgpa;
+    var pdfLink = document.getElementById('prevPdfLink');
+    if (pdfLink) {
+      pdfLink.href = '<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $selectedStudentId ?>&semester=all';
+    }
+  } else {
+    var data = previewData[semNum];
+    if (!data) return;
+    document.getElementById('prevSemTitle').textContent = data.name + ' - Unofficial Grade Sheet Preview';
+
+    if (!data.courses || data.courses.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:1.5rem; color:#64748b;">No subjects added to this semester yet.</td></tr>';
+    } else {
+      data.courses.forEach(function(c) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td style="font-family:monospace; font-weight:700; color:#1e40af;">' + (c.course_code || '') + '</td>' +
+          '<td><strong>' + (c.course_name || '') + '</strong></td>' +
+          '<td style="text-align:center;">' + parseFloat(c.credit).toFixed(1) + '</td>' +
+          '<td style="text-align:center; font-weight:700;">' + (c.marks !== null ? parseFloat(c.marks).toFixed(1) : '—') + '</td>' +
+          '<td style="text-align:center; font-weight:800; color:#1e40af;">' + (c.letter_grade || '') + '</td>' +
+          '<td style="text-align:center; font-weight:700; color:#047857;">' + parseFloat(c.grade_point).toFixed(2) + '</td>' +
+          '<td style="text-align:center;"><span style="font-size:0.75rem; font-weight:700; color:' + (c.status === 'Pass' ? '#15803d' : '#dc2626') + ';">' + (c.status || '') + '</span></td>';
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('prevRegCredits').textContent = parseFloat(data.reg_credits).toFixed(1) + ' Cr';
+    document.getElementById('prevEarnedCredits').textContent = parseFloat(data.earned_credits).toFixed(1) + ' Cr';
+    document.getElementById('prevSgpa').textContent = parseFloat(data.sgpa).toFixed(2);
+    document.getElementById('prevCgpa').textContent = parseFloat(data.cgpa).toFixed(2);
+
+    var pdfLink = document.getElementById('prevPdfLink');
+    if (pdfLink) {
+      pdfLink.href = '<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= $selectedStudentId ?>&semester=' + encodeURIComponent(data.name);
+    }
+  }
+
+  document.getElementById('previewResultModal').style.display = 'flex';
+}
+
+function closePreviewModal() {
+  document.getElementById('previewResultModal').style.display = 'none';
 }
 
 function openEditModal(data) {
@@ -1379,14 +1787,14 @@ function closeProcessRequestModal() {
 }
 
 window.addEventListener('click', function(e) {
+  var addModal = document.getElementById('addSubjectModal');
+  if (e.target === addModal) closeAddSubjectModal();
+  var prevModal = document.getElementById('previewResultModal');
+  if (e.target === prevModal) closePreviewModal();
   var editModal = document.getElementById('editResultModal');
-  if (e.target === editModal) {
-    closeEditModal();
-  }
+  if (e.target === editModal) closeEditModal();
   var procModal = document.getElementById('processRequestModal');
-  if (e.target === procModal) {
-    closeProcessRequestModal();
-  }
+  if (e.target === procModal) closeProcessRequestModal();
 });
 </script>
 

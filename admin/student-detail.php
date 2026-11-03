@@ -127,12 +127,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $point = (float)($_POST['grade_point'] ?? 4.00);
                 }
 
+                $publishStatus = $isPublished ? 'Published' : 'Draft';
+                $pubAt = $isPublished ? date('Y-m-d H:i:s') : null;
+                $pubBy = $isPublished ? (int)($_SESSION['user_id'] ?? 1) : null;
+
                 $rStmt = $db->prepare("
                     INSERT INTO student_results 
-                    (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, publish_status, published_at, published_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $rStmt->execute([$studentId, $semester, $courseCode, $courseName, $credit, $fullMarks, $marks, $grade, $point, $term, $isPublished]);
+                $rStmt->execute([$studentId, $semester, $courseCode, $courseName, $credit, $fullMarks, $marks, $grade, $point, $term, $isPublished, $publishStatus, $pubAt, $pubBy]);
+
+                if ($isPublished) {
+                    create_student_notification(
+                        $studentId,
+                        "New Course Result: {$courseCode}",
+                        "Your result for {$courseCode} - {$courseName} ({$semester}) has been published. Grade: {$grade} ({$point}).",
+                        'result_published'
+                    );
+                }
 
                 $resMetrics = recalculate_student_cgpa($studentId);
                 log_audit('STUDENT_RESULT_ADDED', "Added result for {$student['student_id']}: {$courseCode} ({$grade}, {$marks} marks)");
