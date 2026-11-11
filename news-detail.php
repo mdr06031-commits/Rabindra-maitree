@@ -44,7 +44,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
       </div>
 
       <div style="color: var(--rmu-dark); line-height: 1.85; font-size: 1.05rem; margin-bottom: 2.5rem;">
-        <?= $news['content'] ?>
+        <?= sanitize_rich_html($news['content']) ?>
       </div>
 
       <div style="border-top: 1px solid var(--rmu-border); padding-top: 1.5rem; display: flex; justify-content: space-between;">

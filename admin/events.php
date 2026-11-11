@@ -22,10 +22,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT title_en FROM events WHERE id = ?");
                 $st->execute([$id]);
                 $eData = $st->fetch();
-                $del = $db->prepare("DELETE FROM events WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('EVENT_DELETED', "Deleted event: {$eData['title_en']}");
-                flash_set('success', "Event deleted successfully.");
+                if (!$eData) {
+                    flash_set('error', 'Selected event could not be found.');
+                } else {
+                    $del = $db->prepare("DELETE FROM events WHERE id = ?");
+                    $del->execute([$id]);
+                    log_audit('EVENT_DELETED', "Deleted event: {$eData['title_en']}");
+                    flash_set('success', "Event deleted successfully.");
+                }
             }
         } else {
             $titleEn = trim($_POST['title_en'] ?? '');
@@ -86,7 +90,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -110,7 +114,7 @@ include __DIR__ . '/includes/admin-header.php';
         <input type="text" name="title_bn" value="<?= e($editEvent['title_bn'] ?? '') ?>" class="form-control" placeholder="e.g. Orientation Gala">
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
         <div class="form-group">
           <label class="form-label">Event Date <span class="required">*</span></label>
           <input type="date" name="event_date" value="<?= e($editEvent['event_date'] ?? date('Y-m-d')) ?>" class="form-control" required>
@@ -170,7 +174,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/events.php?edit=<?= (int)$evt['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/events.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete event <?= addslashes(e($evt['title_en'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/events.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete event ' . $evt['title_en'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$evt['id'] ?>">

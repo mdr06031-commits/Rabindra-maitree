@@ -22,10 +22,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT name_en FROM departments WHERE id = ?");
                 $st->execute([$id]);
                 $dData = $st->fetch();
-                $del = $db->prepare("DELETE FROM departments WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('DEPARTMENT_DELETED', "Deleted department: {$dData['name_en']}");
-                flash_set('success', "Department deleted successfully.");
+                if (!$dData) {
+                    flash_set('error', 'Selected department could not be found.');
+                } else {
+                    try {
+                        $del = $db->prepare("DELETE FROM departments WHERE id = ?");
+                        $del->execute([$id]);
+                        log_audit('DEPARTMENT_DELETED', "Deleted department: {$dData['name_en']}");
+                        flash_set('success', "Department deleted successfully.");
+                    } catch (PDOException $e) {
+                        flash_set('error', "Cannot delete department '{$dData['name_en']}' because active degree programs, faculty profiles, or student records reference it.");
+                    }
+                }
             }
         } else {
             $facultyId = (int)($_POST['faculty_id'] ?? 0);
@@ -41,25 +49,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($nameEn) || empty($code) || $facultyId <= 0) {
                 flash_set('error', 'Faculty, department name, and code are required.');
             } else {
-                if ($action === 'add') {
-                    $slug = slugify($nameEn);
-                    $stmt = $db->prepare("
-                        INSERT INTO departments (faculty_id, slug, name_en, name_bn, code, head_name, email, phone, overview, sort_order)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ");
-                    $stmt->execute([$facultyId, $slug, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder]);
-                    log_audit('DEPARTMENT_ADDED', "Added department: {$nameEn} ({$code})");
-                    flash_set('success', "Department '{$nameEn}' added successfully.");
-                } elseif ($action === 'edit') {
-                    $id = (int)($_POST['id'] ?? 0);
-                    $stmt = $db->prepare("
-                        UPDATE departments 
-                        SET faculty_id = ?, name_en = ?, name_bn = ?, code = ?, head_name = ?, email = ?, phone = ?, overview = ?, sort_order = ?
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$facultyId, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder, $id]);
-                    log_audit('DEPARTMENT_EDITED', "Updated department ID {$id}: {$nameEn}");
-                    flash_set('success', "Department '{$nameEn}' updated successfully.");
+                try {
+                    if ($action === 'add') {
+                        $slug = generate_unique_slug($db, 'departments', $nameEn);
+                        $stmt = $db->prepare("
+                            INSERT INTO departments (faculty_id, slug, name_en, name_bn, code, head_name, email, phone, overview, sort_order)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ");
+                        $stmt->execute([$facultyId, $slug, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder]);
+                        log_audit('DEPARTMENT_ADDED', "Added department: {$nameEn} ({$code})");
+                        flash_set('success', "Department '{$nameEn}' added successfully.");
+                    } elseif ($action === 'edit') {
+                        $id = (int)($_POST['id'] ?? 0);
+                        $stmt = $db->prepare("
+                            UPDATE departments 
+                            SET faculty_id = ?, name_en = ?, name_bn = ?, code = ?, head_name = ?, email = ?, phone = ?, overview = ?, sort_order = ?
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$facultyId, $nameEn, $nameBn, $code, $headName, $email, $phone, $overview, $sortOrder, $id]);
+                        log_audit('DEPARTMENT_EDITED', "Updated department ID {$id}: {$nameEn}");
+                        flash_set('success', "Department '{$nameEn}' updated successfully.");
+                    }
+                } catch (PDOException $e) {
+                    flash_set('error', "Could not save department '{$nameEn}' ({$code}). A department with this code or identifier already exists.");
                 }
             }
         }
@@ -100,7 +112,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -136,7 +148,7 @@ include __DIR__ . '/includes/admin-header.php';
         <input type="text" name="name_bn" value="<?= e($editDept['name_bn'] ?? '') ?>" class="form-control" placeholder="e.g. Dept of English">
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
         <div class="form-group">
           <label class="form-label">Dept Code <span class="required">*</span></label>
           <input type="text" name="code" value="<?= e($editDept['code'] ?? '') ?>" class="form-control" placeholder="e.g. ENG" required>
@@ -152,7 +164,7 @@ include __DIR__ . '/includes/admin-header.php';
         <input type="text" name="head_name" value="<?= e($editDept['head_name'] ?? '') ?>" class="form-control" placeholder="e.g. Dr. Shamsul Alam">
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
         <div class="form-group">
           <label class="form-label">Dept Email</label>
           <input type="email" name="email" value="<?= e($editDept['email'] ?? '') ?>" class="form-control" placeholder="dept@rmu.ac.bd">
@@ -214,7 +226,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/departments.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/departments.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete department <?= addslashes(e($d['name_en'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/departments.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete department ' . $d['name_en'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">

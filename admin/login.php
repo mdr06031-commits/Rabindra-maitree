@@ -14,10 +14,19 @@ if (is_logged_in()) {
 $error = '';
 $db = getDb();
 
+$now = time();
+$adminThrottle = $_SESSION['rmu_admin_login_fails'] ?? ['count' => 0, 'first_at' => $now, 'locked_until' => 0];
+if (($now - (int)($adminThrottle['first_at'] ?? $now)) > 900 && (int)($adminThrottle['locked_until'] ?? 0) <= $now) {
+    $adminThrottle = ['count' => 0, 'first_at' => $now, 'locked_until' => 0];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // 1. Check CSRF
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error = 'Session expired. Please try again.';
+    } elseif ((int)($adminThrottle['locked_until'] ?? 0) > $now) {
+        $waitMins = max(1, (int)ceil(((int)$adminThrottle['locked_until'] - $now) / 60));
+        $error = "Too many failed login attempts. Please wait {$waitMins} minute(s) before trying again.";
     } else {
         $username = trim($_POST['username'] ?? '');
         $password = (string)($_POST['password'] ?? '');
@@ -30,39 +39,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$username, $username]);
             $user = $stmt->fetch();
 
-            $isPasswordValid = false;
-            if ($user) {
-                if (password_verify($password, $user['password_hash']) || $password === '123456') {
-                    $isPasswordValid = true;
+            $isAccountLocked = false;
+            if ($user && (int)($user['failed_login_attempts'] ?? 0) >= 6 && !empty($user['updated_at'])) {
+                $lastTouch = strtotime((string)$user['updated_at']);
+                if ($lastTouch !== false && $lastTouch > ($now - 900)) {
+                    $isAccountLocked = true;
+                    $waitMins = max(1, (int)ceil((($lastTouch + 900) - $now) / 60));
+                    $error = "Account temporarily locked due to repeated failed login attempts. Please wait {$waitMins} minute(s) and try again.";
                 }
             }
 
-            if ($user && $isPasswordValid) {
-                // Successful Login
-                // Session regeneration to prevent fixation
-                session_regenerate_id(true);
-
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['user_name'] = $user['username'];
-                $_SESSION['user_fullname'] = $user['full_name'];
-                $_SESSION['user_role'] = $user['role'];
-                $_SESSION['user_email'] = $user['email'];
-
-                // Update last login and reset failed attempts
-                $updateStmt = $db->prepare("UPDATE users SET last_login = NOW(), failed_login_attempts = 0 WHERE id = ?");
-                $updateStmt->execute([$user['id']]);
-
-                log_audit('USER_LOGIN', "Administrator '{$user['username']}' logged in successfully.");
-                flash_set('success', "Welcome back, {$user['full_name']}!");
-                header("Location: " . APP_URL . "/admin/dashboard.php");
-                exit;
-            } else {
-                // Failed login attempt tracking
-                if ($user) {
-                    $db->prepare("UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?")->execute([$user['id']]);
+            if (!$isAccountLocked) {
+                $isPasswordValid = false;
+                if ($user && password_verify($password, $user['password_hash'])) {
+                    $isPasswordValid = true;
                 }
-                log_audit('FAILED_LOGIN_ATTEMPT', "Failed login attempt for username: '{$username}'.");
-                $error = 'Invalid username/email or password.';
+
+                if ($user && $isPasswordValid) {
+                    // Successful Login - clear throttling & regenerate session to prevent fixation
+                    unset($_SESSION['rmu_admin_login_fails']);
+                    session_regenerate_id(true);
+
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['user_name'] = $user['username'];
+                    $_SESSION['user_fullname'] = $user['full_name'];
+                    $_SESSION['user_role'] = $user['role'];
+                    $_SESSION['user_email'] = $user['email'];
+
+                    // Update last login and reset failed attempts
+                    $updateStmt = $db->prepare("UPDATE users SET last_login = NOW(), failed_login_attempts = 0 WHERE id = ?");
+                    $updateStmt->execute([$user['id']]);
+
+                    log_audit('USER_LOGIN', "Administrator '{$user['username']}' logged in successfully.");
+                    flash_set('success', "Welcome back, {$user['full_name']}!");
+                    header("Location: " . APP_URL . "/admin/dashboard.php");
+                    exit;
+                } else {
+                    // Failed login attempt tracking (DB + session throttle)
+                    if ($user) {
+                        $db->prepare("UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?")->execute([$user['id']]);
+                    }
+                    $adminThrottle['count'] = (int)($adminThrottle['count'] ?? 0) + 1;
+                    if ($adminThrottle['count'] === 1) {
+                        $adminThrottle['first_at'] = $now;
+                    }
+                    if ($adminThrottle['count'] >= 6) {
+                        $adminThrottle['locked_until'] = $now + 900;
+                        $error = 'Too many failed login attempts. Please wait 15 minute(s) before trying again.';
+                    } else {
+                        $error = 'Invalid username/email or password.';
+                    }
+                    $_SESSION['rmu_admin_login_fails'] = $adminThrottle;
+                    log_audit('FAILED_LOGIN_ATTEMPT', "Failed login attempt for username: '{$username}'.");
+                }
             }
         }
     }
@@ -72,10 +101,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title>Admin Login - Rabindra Maitree University</title>
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/style.css')) ?>">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/responsive.css')) ?>">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
     body {
@@ -108,6 +138,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     .login-body {
       padding: 2.2rem;
+    }
+    @media screen and (max-width: 767px) {
+      body {
+        padding: 0.85rem;
+      }
+      .login-header {
+        padding: 1.65rem 1.25rem 1.35rem;
+      }
+      .login-body {
+        padding: 1.5rem 1.15rem;
+      }
+      .form-control {
+        font-size: 16px !important;
+        min-height: 46px;
+      }
+      .btn-primary {
+        min-height: 46px;
+      }
     }
   </style>
 </head>
@@ -146,16 +194,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <i class="fas fa-lock"></i> Secure Sign In
           </button>
         </div>
-
-        <div style="margin-top: 1.25rem; padding: 0.85rem 1rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; font-size: 0.84rem; color: #166534;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-            <strong><i class="fas fa-key"></i> Admin Access:</strong>
-            <button type="button" onclick="document.querySelector('[name=username]').value='admin'; document.querySelector('[name=password]').value='123456'; this.form.submit();" style="background:#15803d; color:#ffffff; border:none; border-radius:4px; padding:3px 8px; font-size:0.75rem; font-weight:700; cursor:pointer;">
-              1-Click Instant Login &rarr;
-            </button>
-          </div>
-          <div>User: <code style="font-weight:700;">admin</code> &bull; Pass: <code style="font-weight:700;">123456</code></div>
-        </div>
       </form>
 
       <div style="margin-top: 1.8rem; padding-top: 1.25rem; border-top: 1px solid var(--rmu-border); text-align: center;">
@@ -166,6 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
   </div>
 
+  <script src="<?= e(rmu_asset_url('assets/js/pwa.js')) ?>"></script>
 </body>
 </html>
 

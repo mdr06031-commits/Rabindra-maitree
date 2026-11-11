@@ -5,8 +5,8 @@
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-// If already logged in, redirect directly to dashboard
-if (is_student_logged_in()) {
+// If already logged in with an active, valid session, redirect directly to dashboard
+if (get_logged_in_student()) {
     header("Location: " . APP_URL . "/student/dashboard.php");
     exit;
 }
@@ -14,9 +14,18 @@ if (is_student_logged_in()) {
 $error = '';
 $db = getDb();
 
+$now = time();
+$loginThrottle = $_SESSION['rmu_student_login_fails'] ?? ['count' => 0, 'first_at' => $now, 'locked_until' => 0];
+if (($now - (int)($loginThrottle['first_at'] ?? $now)) > 900 && (int)($loginThrottle['locked_until'] ?? 0) <= $now) {
+    $loginThrottle = ['count' => 0, 'first_at' => $now, 'locked_until' => 0];
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error = 'Security session expired. Please refresh and try again.';
+    } elseif ((int)($loginThrottle['locked_until'] ?? 0) > $now) {
+        $waitMins = max(1, (int)ceil(((int)$loginThrottle['locked_until'] - $now) / 60));
+        $error = "Too many failed login attempts. Please wait {$waitMins} minute(s) before trying again.";
     } else {
         $studentId = trim($_POST['student_id'] ?? '');
         $password = (string)($_POST['password'] ?? '');
@@ -26,26 +35,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $stmt = $db->prepare("
                 SELECT * FROM students 
-                WHERE (student_id = ? OR email = ?) AND status != 'Suspended' 
+                WHERE (student_id = ? OR email = ? OR username = ?)
                 LIMIT 1
             ");
-            $stmt->execute([$studentId, $studentId]);
+            $stmt->execute([$studentId, $studentId, $studentId]);
             $student = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if ($student && password_verify($password, $student['password_hash'])) {
+            if ($student && ($student['status'] ?? '') === 'Deleted') {
+                $error = 'This student account has been permanently deleted and login access has been revoked.';
+            } elseif ($student && ($student['status'] ?? '') === 'Deactivated') {
+                $error = 'Your student portal account has been deactivated by university administration. Please contact the Registrar Office.';
+            } elseif ($student && ($student['status'] ?? '') === 'Suspended') {
+                $error = 'Your student portal account is currently suspended. Please contact administration.';
+            } elseif ($student && password_verify($password, $student['password_hash'])) {
                 // Successful student login
+                unset($_SESSION['rmu_student_login_fails']);
                 session_regenerate_id(true);
 
-                $_SESSION['student_pk_id'] = $student['id'];
+                $_SESSION['student_pk_id'] = (int)$student['id'];
                 $_SESSION['student_id'] = $student['student_id'];
                 $_SESSION['student_name'] = $student['full_name'];
                 $_SESSION['student_email'] = $student['email'];
+                $_SESSION['student_session_version'] = (int)($student['session_version'] ?? 1);
 
                 flash_set('success', "Welcome back, {$student['full_name']}!");
                 header("Location: " . APP_URL . "/student/dashboard.php");
                 exit;
             } else {
-                $error = 'Invalid Student ID or Password. Please try again.';
+                $loginThrottle['count'] = (int)($loginThrottle['count'] ?? 0) + 1;
+                if ($loginThrottle['count'] === 1) {
+                    $loginThrottle['first_at'] = $now;
+                }
+                if ($loginThrottle['count'] >= 6) {
+                    $loginThrottle['locked_until'] = $now + 900;
+                    $error = 'Too many failed login attempts. Please wait 15 minute(s) before trying again.';
+                } else {
+                    $error = 'Invalid Student ID or Password. Please try again.';
+                }
+                $_SESSION['rmu_student_login_fails'] = $loginThrottle;
             }
         }
     }
@@ -57,7 +84,7 @@ $csrfToken = csrf_token();
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title>Student Portal Login | <?= APP_NAME ?></title>
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
   
@@ -203,6 +230,26 @@ $csrfToken = csrf_token();
       background: #eff6ff;
       border-color: #93c5fd;
     }
+    @media screen and (max-width: 767px) {
+      body {
+        padding: 0.85rem;
+      }
+      .login-header {
+        padding: 1.65rem 1.25rem 1.35rem;
+      }
+      .login-body {
+        padding: 1.5rem 1.15rem;
+      }
+      .form-control {
+        font-size: 16px;
+        min-height: 46px;
+      }
+      .btn-login,
+      button[aria-label="Toggle password visibility"] {
+        min-height: 44px;
+        min-width: 44px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -221,15 +268,24 @@ $csrfToken = csrf_token();
         </div>
       <?php endif; ?>
 
+      <?php if ($flashErr = flash_get('error')): ?>
+        <div class="alert-error">
+          <i class="fas fa-ban"></i> <?= e($flashErr) ?>
+        </div>
+      <?php endif; ?>
+
       <?php if ($msg = flash_get('success')): ?>
         <div style="background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; padding:0.75rem 1rem; border-radius:6px; font-size:0.85rem; margin-bottom:1.25rem;">
           <i class="fas fa-check-circle"></i> <?= e($msg) ?>
         </div>
       <?php endif; ?>
 
-      <?php if (!empty($_GET['student_id'])): ?>
+      <?php
+        $hasPreStudentId = !empty($_GET['student_id']);
+      ?>
+      <?php if ($hasPreStudentId): ?>
         <div style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; padding:0.75rem 1rem; border-radius:6px; font-size:0.85rem; margin-bottom:1.25rem;">
-          <i class="fas fa-check-circle" style="color:#2563eb;"></i> <strong>Admit Card Credentials Auto-Filled:</strong> Your newly issued Student ID and Password have been filled in below. Click Sign In to enter your portal!
+          <i class="fas fa-id-badge" style="color:#2563eb;"></i> <strong>Student ID Pre-Filled:</strong> Enter your Student Portal password below to sign in.
         </div>
       <?php endif; ?>
 
@@ -238,12 +294,17 @@ $csrfToken = csrf_token();
 
         <div class="form-group">
           <label for="student_id" class="form-label"><i class="fas fa-id-badge"></i> Student ID or Email</label>
-          <input type="text" name="student_id" id="student_id" class="form-control" placeholder="e.g. RMU2601001" required autofocus value="<?= e($_POST['student_id'] ?? ($_GET['student_id'] ?? 'RMU2601001')) ?>">
+          <input type="text" name="student_id" id="student_id" class="form-control" placeholder="e.g. RMU2601001" required autofocus value="<?= e($_POST['student_id'] ?? ($_GET['student_id'] ?? '')) ?>">
         </div>
 
         <div class="form-group">
           <label for="password" class="form-label"><i class="fas fa-lock"></i> Password</label>
-          <input type="password" name="password" id="password" class="form-control" placeholder="••••••••" required value="<?= e($_POST['password'] ?? ($_GET['pwd'] ?? 'student123')) ?>">
+          <div style="position:relative;">
+            <input type="password" name="password" id="password" class="form-control" style="padding-right:2.75rem;" placeholder="Enter your portal password" required value="">
+            <button type="button" onclick="var p=document.getElementById('password'),i=this.querySelector('i'); if(p.type==='password'){p.type='text';i.className='fas fa-eye-slash';}else{p.type='password';i.className='fas fa-eye';}" aria-label="Toggle password visibility" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:#64748b; cursor:pointer; padding:4px 6px;">
+              <i class="fas fa-eye"></i>
+            </button>
+          </div>
         </div>
 
         <button type="submit" class="btn-login">
@@ -251,21 +312,9 @@ $csrfToken = csrf_token();
         </button>
       </form>
 
-      <!-- Quick Fill Demo Accounts -->
-      <div class="demo-box">
-        <div class="demo-title"><i class="fas fa-key"></i> Quick Demo Accounts (Click to Auto-Fill):</div>
-        
-        <button type="button" class="demo-account-btn" onclick="fillDemo('RMU2601001', 'student123')">
-          <strong>RMU2601001</strong> — Tanvir Hasan <em>(BSc in CSE • 2nd Year)</em>
-        </button>
-        
-        <button type="button" class="demo-account-btn" onclick="fillDemo('RMU2601002', 'student123')">
-          <strong>RMU2601002</strong> — Nusrat Jahan <em>(BA in Bangla • 1st Year)</em>
-        </button>
-
-        <button type="button" class="demo-account-btn" onclick="fillDemo('RMU2601003', 'student123')">
-          <strong>RMU2601003</strong> — Ahsan Habib <em>(BBA • 3rd Year)</em>
-        </button>
+      <div class="demo-box" style="color:#475569; line-height:1.55;">
+        <div class="demo-title"><i class="fas fa-shield-alt"></i> Student Access Notice</div>
+        Use your official <strong>Student ID</strong> and issued portal password to sign in. For credential recovery or enrollment assistance, please contact the Office of the Registrar.
       </div>
 
       <div style="text-align: center; margin-top: 1.5rem; font-size: 0.85rem;">
@@ -275,12 +324,6 @@ $csrfToken = csrf_token();
       </div>
     </div>
   </div>
-
-  <script>
-    function fillDemo(id, pass) {
-      document.getElementById('student_id').value = id;
-      document.getElementById('password').value = pass;
-    }
-  </script>
+  <script src="<?= e(rmu_asset_url('assets/js/pwa.js')) ?>"></script>
 </body>
 </html>

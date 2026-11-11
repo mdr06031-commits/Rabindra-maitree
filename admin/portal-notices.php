@@ -90,7 +90,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">

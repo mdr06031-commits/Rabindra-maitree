@@ -52,29 +52,63 @@ if (!$student) {
 
 $studentId = (int)$student['id'];
 
-// Retrieve structured academic summary (published only for students, all for admin)
+// Retrieve structured academic summary (published & visible for students, all for admin)
 $academicSummary = get_student_academic_summary($studentId, !$isAdminViewing);
 $hasResults = $academicSummary['has_results'];
+$isResultsHidden = !empty($academicSummary['results_hidden']);
+$isResultsSuspended = !empty($academicSummary['results_suspended']);
+$progStruct = $academicSummary['program_structure'] ?? [
+    'degree_type' => $student['degree_type'] ?? 'Bachelor / Honours',
+    'duration_label' => $student['program_duration'] ?? '4 Years (8 Semesters)',
+    'total_semesters' => (int)($student['total_semesters'] ?? 8),
+];
+$totalSemesters = max(1, (int)($progStruct['total_semesters'] ?? 8));
+$semSchedule = $academicSummary['semester_schedule'] ?? [];
+$pubDateDisplay = !empty($student['result_publication_date']) ? format_date($student['result_publication_date']) : '';
 $hasAnyEstimated = !empty($academicSummary['has_estimated_results']);
 $groupedSemesters = $academicSummary['semesters'] ?? [];
+$allSemesters = $academicSummary['all_semesters'] ?? [];
 $availableSemesters = array_keys($groupedSemesters);
 $semesterGpas = $academicSummary['semester_gpas'] ?? [];
 $finalCgpa = $academicSummary['final_cgpa'] ?? 0.00;
 $totalRegCredits = $academicSummary['total_registered_credits'] ?? 0.0;
 $totalEarnedCredits = $academicSummary['total_earned_credits'] ?? 0.0;
+$totalReqCredits = (int)($academicSummary['total_required_credits'] ?? ($student['total_credits_required'] ?? 140));
+$publishedSemCount = (int)($academicSummary['published_semesters_count'] ?? count($groupedSemesters));
+$overallStatus = $academicSummary['overall_academic_status'] ?? ($student['status'] ?? 'Active');
 
-// Determine requested semester
+if ($isResultsSuspended && !$isAdminViewing) {
+    $hasResults = false;
+    $hasAnyEstimated = false;
+    $groupedSemesters = [];
+    $allSemesters = [];
+    $availableSemesters = [];
+    $semesterGpas = [];
+    $finalCgpa = 0.00;
+    $totalRegCredits = 0.0;
+    $totalEarnedCredits = 0.0;
+    $publishedSemCount = 0;
+    $overallStatus = 'Result Access Suspended';
+}
+
+// Determine requested semester (always default to consolidated full transcript)
 $requestedSemester = trim($_GET['semester'] ?? '');
-if (empty($requestedSemester)) {
-    if (!empty($availableSemesters)) {
-        // Default to consolidated if all 8 semesters exist or user wants full, else latest semester
-        $requestedSemester = (count($availableSemesters) >= 8) ? 'all' : end($availableSemesters);
-    } else {
-        $requestedSemester = 'all';
-    }
+if ($requestedSemester === '') {
+    $requestedSemester = 'all';
 }
 
 $isConsolidated = ($requestedSemester === 'all');
+$singleSemData = null;
+if (!$isConsolidated) {
+    if (isset($groupedSemesters[$requestedSemester])) {
+        $singleSemData = $groupedSemesters[$requestedSemester];
+    } else {
+        $reqSemNum = get_semester_number($requestedSemester);
+        if ($reqSemNum >= 1 && $reqSemNum <= $totalSemesters && isset($allSemesters[$reqSemNum])) {
+            $singleSemData = $allSemesters[$reqSemNum];
+        }
+    }
+}
 
 // Mode-specific metrics
 if ($isConsolidated) {
@@ -83,23 +117,37 @@ if ($isConsolidated) {
     $displaySgpa = $finalCgpa;
     $displayCgpa = $finalCgpa;
 } else {
-    $currStat = $groupedSemesters[$requestedSemester] ?? null;
-    $displaySemCredits = $currStat ? $currStat['registered_credits'] : 0.0;
-    $displayEarnedCredits = $currStat ? $currStat['earned_credits'] : 0.0;
-    $displaySgpa = $currStat ? $currStat['sgpa'] : 0.00;
-    $displayCgpa = $currStat ? $currStat['cumulative_cgpa'] : 0.00;
+    $currStat = $singleSemData;
+    $displaySemCredits = $currStat ? (float)($currStat['registered_credits'] ?? 0.0) : 0.0;
+    $displayEarnedCredits = $currStat ? (float)($currStat['earned_credits'] ?? 0.0) : 0.0;
+    $displaySgpa = ($currStat && $currStat['sgpa'] !== null) ? (float)$currStat['sgpa'] : 0.00;
+    $displayCgpa = ($currStat && $currStat['cumulative_cgpa'] !== null) ? (float)$currStat['cumulative_cgpa'] : 0.00;
 }
 
 // Transcript unique serial & verification codes
 $transcriptSerial = 'RMU-TR-' . date('Y') . '-' . strtoupper(substr(md5($student['student_id'] . $requestedSemester), 0, 8));
 $issueDate = date('d F Y');
+
+// Genuine binary PDF transcript download endpoint (?download=pdf)
+if (($_GET['download'] ?? '') === 'pdf') {
+    if (!$isAdminViewing && ($isResultsSuspended || $isResultsHidden)) {
+        http_response_code(403);
+        header('Content-Type: text/html; charset=UTF-8');
+        $blockTitle = $isResultsSuspended ? 'Result Access Suspended' : 'Academic Results Temporarily Hidden';
+        echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' . htmlspecialchars($blockTitle) . '</title></head><body style="font-family:Arial,sans-serif;padding:2rem;text-align:center;"><h2 style="color:#9a3412;">' . htmlspecialchars($blockTitle) . '</h2><p>PDF transcript download is unavailable while academic results are restricted.</p></body></html>';
+        exit;
+    }
+    require_once __DIR__ . '/../includes/pdf_transcript.php';
+    output_student_transcript_pdf($student, $academicSummary, $requestedSemester, $transcriptSerial, $issueDate, $isAdminViewing);
+}
+
 $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title>Official Academic Transcript - <?= e($student['full_name']) ?> | Rabindra Maitree University</title>
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
   
@@ -168,6 +216,9 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      min-width: 0;
+      max-width: 100%;
+      flex-wrap: wrap;
     }
 
     .semester-picker-select {
@@ -180,6 +231,8 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
       font-weight: 600;
       outline: none;
       cursor: pointer;
+      max-width: 100%;
+      min-width: 0;
     }
 
     .semester-picker-select option {
@@ -259,8 +312,8 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 440px;
-      height: 440px;
+      width: min(440px, 75vw);
+      height: min(440px, 75vw);
       opacity: 0.04;
       pointer-events: none;
       z-index: 1;
@@ -390,6 +443,8 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
       font-weight: 700;
       color: #0f172a;
       flex: 1;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .info-value.highlight {
@@ -586,9 +641,41 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 
     .summary-grid-bottom {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.85rem;
       font-size: 0.86rem;
+    }
+
+    .cumulative-kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed #cbd5e1;
+    }
+
+    .cumulative-kpi-item {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      padding: 0.45rem 0.6rem;
+      text-align: center;
+    }
+
+    .cumulative-kpi-lbl {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .cumulative-kpi-val {
+      font-size: 0.92rem;
+      font-weight: 800;
+      color: #0f2c59;
+      margin-top: 2px;
     }
 
     /* Official Signatures Section */
@@ -724,10 +811,37 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
       }
 
       .transcript-watermark {
+        width: 440px !important;
+        height: 440px !important;
         opacity: 0.05 !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
+    }
+
+    @media screen and (max-width: 767px) {
+      .action-bar { padding: 0.75rem 1rem; gap: 0.65rem; }
+      .action-bar-left, .action-bar-right { flex-wrap: wrap; width: 100%; min-width: 0; }
+      .semester-picker-form { width: 100%; }
+      .semester-picker-select { width: 100%; max-width: 100%; font-size: 16px; min-height: 44px; text-overflow: ellipsis; overflow: hidden; }
+      .btn-download-pdf, .btn-portal-back { min-height: 44px; flex: 1 1 auto; justify-content: center; text-align: center; }
+      .transcript-sheet { padding: 1.25rem 1rem; max-width: 100%; }
+      .transcript-meta-strip { flex-wrap: wrap; gap: 0.4rem; }
+      .uni-header { grid-template-columns: 1fr; text-align: center; gap: 0.75rem; }
+      .uni-logo { margin: 0 auto; }
+      .student-info-grid, .summary-section, .performance-card, .signature-area { grid-template-columns: 1fr; }
+      .student-info-grid > *, .summary-section > *, .performance-card > *, .gpa-progression-box, .transcript-summary-box { min-width: 0; }
+      .gpa-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      .summary-grid-bottom, .cumulative-kpi-strip, .scale-grid { grid-template-columns: repeat(2, 1fr); }
+      .transcript-table { display: block; width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    }
+    @media (max-width: 480px) {
+      .sheet-wrapper { margin: 0.75rem auto; padding: 0 0.4rem; }
+      .transcript-sheet { padding: 0.9rem 0.65rem; }
+      .info-row { flex-wrap: wrap; gap: 2px; }
+      .info-label { width: 120px; font-size: 0.78rem; }
+      .summary-grid-bottom, .cumulative-kpi-strip, .scale-grid { grid-template-columns: 1fr; }
+      .security-footer { flex-direction: column; text-align: center; gap: 0.5rem; }
     }
   </style>
 </head>
@@ -746,24 +860,42 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
         <?php if (!empty($_GET['student_id'])): ?>
           <input type="hidden" name="student_id" value="<?= (int)$_GET['student_id'] ?>">
         <?php endif; ?>
-        <label for="semSelect" style="font-size:0.84rem; font-weight:600; color:#cbd5e1;">সেমিস্টার বাছাই করুন:</label>
+        <label for="semSelect" style="font-size:0.84rem; font-weight:600; color:#cbd5e1;">Select Semester:</label>
         <select name="semester" id="semSelect" class="semester-picker-select" onchange="this.form.submit()">
           <option value="all" <?= ($requestedSemester === 'all') ? 'selected' : '' ?>>
-            ★ Full 8 Semesters (Consolidated Academic Transcript)
+            Full <?= $totalSemesters ?> Semesters (Consolidated Academic Transcript)
           </option>
-          <?php foreach ($availableSemesters as $semName): ?>
-            <option value="<?= e($semName) ?>" <?= ($semName === $requestedSemester) ? 'selected' : '' ?>>
-              Semester <?= get_semester_number($semName) ?>: <?= e($semName) ?>
+          <?php for ($sn = 1; $sn <= $totalSemesters; $sn++): ?>
+            <?php
+              $semSlot = $allSemesters[$sn] ?? null;
+              $semOptName = $semSlot['semester_name'] ?? get_semester_ordinal_title($sn);
+              $semOptHas = !empty($semSlot['has_courses']);
+              $isOptSel = ($semOptName === $requestedSemester) || (!$isConsolidated && get_semester_number($requestedSemester) === $sn);
+            ?>
+            <option value="<?= e($semOptName) ?>" <?= $isOptSel ? 'selected' : '' ?>>
+              Semester <?= $sn ?>: <?= e($semOptName) ?><?= $semOptHas ? '' : ' (Not Published Yet)' ?>
             </option>
+          <?php endfor; ?>
+          <?php foreach ($groupedSemesters as $extraName => $extraData): ?>
+            <?php $exNum = (int)($extraData['semester_number'] ?? 99); ?>
+            <?php if ($exNum < 1 || $exNum > $totalSemesters): ?>
+              <option value="<?= e($extraName) ?>" <?= ($extraName === $requestedSemester) ? 'selected' : '' ?>>
+                Semester <?= $exNum ?>: <?= e($extraName) ?>
+              </option>
+            <?php endif; ?>
           <?php endforeach; ?>
         </select>
       </form>
     </div>
 
     <div class="action-bar-right">
-      <button type="button" onclick="window.print()" class="btn-download-pdf">
-        <i class="fas fa-download"></i>
-        <span>Download / Save as PDF</span>
+      <a href="?<?= $isAdminViewing ? 'student_id=' . (int)$studentId . '&amp;' : '' ?>semester=<?= urlencode($requestedSemester) ?>&amp;download=pdf" class="btn-download-pdf">
+        <i class="fas fa-file-pdf"></i>
+        <span>Download Transcript (PDF)</span>
+      </a>
+      <button type="button" onclick="window.print()" class="btn-portal-back">
+        <i class="fas fa-print"></i>
+        <span>Print View</span>
       </button>
 
       <?php if ($isAdminViewing): ?>
@@ -808,9 +940,19 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 
         <!-- Document Title Banner -->
         <div class="transcript-badge-wrapper">
+          <?php if ($isAdminViewing && $isResultsSuspended): ?>
+            <div class="no-print" style="background:#c2410c; color:#ffffff; font-weight:700; font-size:0.82rem; padding:6px 14px; border-radius:4px; margin-bottom:8px; text-align:center;">
+              <i class="fas fa-user-lock"></i> ADMIN PREVIEW — Result Access is currently SUSPENDED for this student.
+            </div>
+          <?php endif; ?>
+          <?php if ($isAdminViewing && $isResultsHidden): ?>
+            <div class="no-print" style="background:#991b1b; color:#ffffff; font-weight:700; font-size:0.82rem; padding:6px 14px; border-radius:4px; margin-bottom:8px; text-align:center;">
+              <i class="fas fa-eye-slash"></i> ADMIN PREVIEW — These results are currently HIDDEN from Student Portal view.
+            </div>
+          <?php endif; ?>
           <?php if (!empty($hasAnyEstimated)): ?>
             <div style="background:#dc2626; color:#ffffff; font-weight:900; font-size:0.85rem; padding:6px 16px; border-radius:4px; margin-bottom:8px; letter-spacing:0.5px; text-transform:uppercase; text-align:center;">
-              <i class="fas fa-exclamation-triangle"></i> ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+              <i class="fas fa-exclamation-triangle"></i> ESTIMATED / GENERATED &mdash; ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
             </div>
             <div class="transcript-title-badge" style="background:#b45309;">
               <?= $isConsolidated ? 'Consolidated Academic Transcript (Unofficial Estimate)' : 'Semester Grade Sheet (Unofficial Estimate)' ?>
@@ -823,12 +965,19 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
           
           <div class="transcript-meta-strip">
             <span><strong>Transcript Serial:</strong> <span style="font-family:monospace;"><?= e($transcriptSerial) ?></span></span>
-            <span><strong>Academic Session:</strong> <?= e($student['batch']) ?></span>
+            <span><strong>Academic Session:</strong> <?= e($student['academic_session'] ?? $student['batch']) ?></span>
             <span><strong>Date of Issue:</strong> <?= e($issueDate) ?></span>
           </div>
         </div>
 
-        <!-- 1. Student Identification Matrix (All 9 Mandatory Requirements) -->
+        <!-- 1. Student Identification Matrix (All 9 Mandatory Requirements + Dynamic Structure) -->
+        <?php
+          $lastSemOrd = preg_replace('/\s+Semester$/', '', get_semester_ordinal_title($totalSemesters));
+          $stSessVal = !empty($student['academic_session']) ? $student['academic_session'] : ($student['batch'] ?? '');
+          $stDurY = (float)($student['duration_years'] ?? ($progStruct['duration_years'] ?? ($totalSemesters / 2.0)));
+          $stExpCalc = calculate_expected_passing_year($stSessVal, $stDurY);
+          $stExpPassYear = $stExpCalc ? (int)$stExpCalc['expected_year'] : null;
+        ?>
         <div class="student-info-grid">
           <div>
             <div class="info-row">
@@ -839,7 +988,12 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
             <div class="info-row">
               <span class="info-label">Student ID / Roll No</span>
               <span class="info-colon">:</span>
-              <span class="info-value highlight"><?= e($student['student_id']) ?></span>
+              <span class="info-value highlight"><?= e($student['student_id']) ?><?= !empty($student['roll_number']) ? ' / ' . e($student['roll_number']) : '' ?></span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Degree / Course Type</span>
+              <span class="info-colon">:</span>
+              <span class="info-value"><?= e($progStruct['degree_type'] ?? 'Bachelor / Honours') ?> (<?= e($progStruct['duration_label'] ?? "{$totalSemesters} Semesters") ?>)</span>
             </div>
             <div class="info-row">
               <span class="info-label">Program of Study</span>
@@ -862,20 +1016,40 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
             <div class="info-row">
               <span class="info-label">Academic Session</span>
               <span class="info-colon">:</span>
-              <span class="info-value"><?= e($student['batch']) ?></span>
+              <span class="info-value"><?= e($stSessVal) ?></span>
             </div>
+            <?php if (!empty($student['passing_year'])): ?>
+              <div class="info-row">
+                <span class="info-label">Passing Year</span>
+                <span class="info-colon">:</span>
+                <span class="info-value"><?= e($student['passing_year']) ?><?php if ($stExpPassYear !== null): ?> <small style="color:#64748b; font-weight:500;">(Est. <?= (int)$stExpPassYear ?>)</small><?php endif; ?></span>
+              </div>
+            <?php elseif ($stExpPassYear !== null): ?>
+              <div class="info-row">
+                <span class="info-label">Expected Passing</span>
+                <span class="info-colon">:</span>
+                <span class="info-value"><?= (int)$stExpPassYear ?> <small style="color:#64748b; font-weight:500;">(Advisory)</small></span>
+              </div>
+            <?php endif; ?>
             <div class="info-row">
               <span class="info-label">Semester / Term</span>
               <span class="info-colon">:</span>
               <span class="info-value" style="color:var(--rmu-navy); font-weight:800;">
-                <?= $isConsolidated ? 'All Semesters (1st to 8th Semester)' : e($requestedSemester) ?>
+                <?= $isConsolidated ? "All Semesters (1st to {$lastSemOrd} Semester)" : e($requestedSemester) ?>
               </span>
             </div>
+            <?php if ($pubDateDisplay !== '' && !($isResultsSuspended && !$isAdminViewing)): ?>
+              <div class="info-row">
+                <span class="info-label">Publication Date</span>
+                <span class="info-colon">:</span>
+                <span class="info-value"><?= e($pubDateDisplay) ?></span>
+              </div>
+            <?php endif; ?>
             <div class="info-row">
               <span class="info-label">Current Academic Status</span>
               <span class="info-colon">:</span>
               <span class="info-value" style="color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0369a1' ?>;">
-                <?= e($student['status']) ?> (<?= ($student['status'] === 'Graduated') ? 'Degree Awarded' : 'Undergraduate' ?>)
+                <?= e($student['status']) ?>
               </span>
             </div>
             <div class="info-row">
@@ -887,7 +1061,9 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
               <span class="info-label">Cumulative CGPA</span>
               <span class="info-colon">:</span>
               <span class="info-value" style="color:#15803d; font-size:1rem;">
-                <?php if ($hasResults): ?>
+                <?php if ($isResultsSuspended && !$isAdminViewing): ?>
+                  <span style="color:#c2410c; font-size:0.88rem; font-weight:800;">Result Access Suspended</span>
+                <?php elseif ($hasResults): ?>
                   <?= number_format($finalCgpa, 2) ?> / 4.00
                 <?php else: ?>
                   <span style="color:#94a3b8; font-size:0.85rem; font-weight:normal;">No published results yet</span>
@@ -898,32 +1074,57 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
         </div>
 
         <?php if (!$hasResults): ?>
-          <!-- Clean empty message if no published results (Requirement 10) -->
-          <div style="border:1.5px dashed #cbd5e1; border-radius:8px; padding:3.5rem 1.5rem; text-align:center; margin:2rem 0; background:#f8fafc;">
-            <div style="font-size:2.5rem; color:#94a3b8; margin-bottom:1rem;"><i class="fas fa-graduation-cap"></i></div>
-            <h3 style="margin:0 0 0.5rem; font-size:1.25rem; font-weight:800; color:#0f2c59;">No academic results published yet</h3>
-            <p style="margin:0 auto; max-width:480px; font-size:0.88rem; color:#64748b; line-height:1.6;">
-              No course results have been officially published for this student record. Grade sheets and official transcripts will become available once published by the Controller of Examinations.
-            </p>
-          </div>
+          <?php if ($isResultsSuspended && !$isAdminViewing): ?>
+            <div style="border:2px solid #fb923c; border-radius:8px; padding:3.5rem 1.5rem; text-align:center; margin:2rem 0; background:#fff7ed;">
+              <div style="font-size:2.5rem; color:#c2410c; margin-bottom:1rem;"><i class="fas fa-user-lock"></i></div>
+              <h3 style="margin:0 0 0.5rem; font-size:1.25rem; font-weight:800; color:#9a3412;">Result Access Suspended</h3>
+              <p style="margin:0 auto; max-width:480px; font-size:0.88rem; color:#7c2d12; line-height:1.6;">
+                Your access to view transcripts and semester grade sheets has been temporarily suspended by university administration.
+                <?php if (!empty($academicSummary['results_suspended_reason'])): ?>
+                  <br><strong>Reason:</strong> <?= e($academicSummary['results_suspended_reason']) ?>
+                <?php endif; ?>
+              </p>
+            </div>
+          <?php elseif ($isResultsHidden && !$isAdminViewing): ?>
+            <div style="border:1.5px solid #fdba74; border-radius:8px; padding:3.5rem 1.5rem; text-align:center; margin:2rem 0; background:#fff7ed;">
+              <div style="font-size:2.5rem; color:#c2410c; margin-bottom:1rem;"><i class="fas fa-eye-slash"></i></div>
+              <h3 style="margin:0 0 0.5rem; font-size:1.25rem; font-weight:800; color:#9a3412;">Academic Results Temporarily Hidden</h3>
+              <p style="margin:0 auto; max-width:480px; font-size:0.88rem; color:#7c2d12; line-height:1.6;">
+                Your transcript and semester grade details are temporarily hidden by the Office of the Controller of Examinations.
+                <?php if (!empty($academicSummary['results_hidden_reason'])): ?>
+                  <br><strong>Reason:</strong> <?= e($academicSummary['results_hidden_reason']) ?>
+                <?php endif; ?>
+              </p>
+            </div>
+          <?php else: ?>
+            <!-- Clean empty message if no published results (Requirement 10) -->
+            <div style="border:1.5px dashed #cbd5e1; border-radius:8px; padding:3.5rem 1.5rem; text-align:center; margin:2rem 0; background:#f8fafc;">
+              <div style="font-size:2.5rem; color:#94a3b8; margin-bottom:1rem;"><i class="fas fa-graduation-cap"></i></div>
+              <h3 style="margin:0 0 0.5rem; font-size:1.25rem; font-weight:800; color:#0f2c59;">No academic results published yet</h3>
+              <p style="margin:0 auto; max-width:480px; font-size:0.88rem; color:#64748b; line-height:1.6;">
+                No course results have been officially published for this student record. Grade sheets and official transcripts will become available once published by the Controller of Examinations.
+              </p>
+            </div>
+          <?php endif; ?>
         <?php else: ?>
 
-          <!-- 6. Overall Cumulative CGPA & 8-Semester GPA Progression Summary -->
+          <!-- 6. Overall Cumulative CGPA & Dynamic N-Semester GPA Progression Summary -->
           <div class="gpa-progression-box">
             <div class="gpa-progression-title">
-              <span><i class="fas fa-chart-line" style="color:var(--rmu-blue);"></i> Eight-Semester Academic GPA Breakdown</span>
+              <span><i class="fas fa-chart-line" style="color:var(--rmu-blue);"></i> <?= ($totalSemesters === 8) ? 'Eight-Semester' : "{$totalSemesters}-Semester" ?> Academic GPA Breakdown</span>
               <span style="font-size:0.8rem; font-weight:700; color:#15803d;">
                 Credit-Weighted Formula Applied
               </span>
             </div>
-            <div class="gpa-grid">
-              <?php for ($sn = 1; $sn <= 8; $sn++): ?>
+            <div class="gpa-grid" style="grid-template-columns: repeat(<?= min(8, $totalSemesters) ?>, 1fr) 1.2fr;">
+              <?php for ($sn = 1; $sn <= $totalSemesters; $sn++): ?>
                 <?php 
                   $sg = $semesterGpas[$sn] ?? null;
                   $hasSem = ($sg !== null);
+                  $semEst = !empty($semSchedule[$sn]['is_estimated']);
                 ?>
                 <div class="gpa-cell">
-                  <div class="gpa-cell-lbl"><?= $sn ?><?= ($sn == 1 ? 'st' : ($sn == 2 ? 'nd' : ($sn == 3 ? 'rd' : 'th'))) ?> Sem</div>
+                  <div class="gpa-cell-lbl"><?= e(preg_replace('/\s+Semester$/', '', get_semester_ordinal_title($sn))) ?> Sem<?= ($hasSem && $semEst) ? ' (EST)' : '' ?></div>
                   <div class="gpa-cell-val" style="color:<?= $hasSem ? '#0f2c59' : '#94a3b8' ?>;">
                     <?= $hasSem ? number_format($sg, 2) : '—' ?>
                   </div>
@@ -937,79 +1138,164 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
                 </div>
               </div>
             </div>
+
+            <div class="cumulative-kpi-strip">
+              <div class="cumulative-kpi-item">
+                <div class="cumulative-kpi-lbl">Total Registered Credits</div>
+                <div class="cumulative-kpi-val"><?= number_format((float)$totalRegCredits, 1) ?> Cr</div>
+              </div>
+              <div class="cumulative-kpi-item">
+                <div class="cumulative-kpi-lbl">Total Earned Credits</div>
+                <div class="cumulative-kpi-val" style="color:#15803d;"><?= number_format((float)$totalEarnedCredits, 1) ?> Cr</div>
+              </div>
+              <div class="cumulative-kpi-item">
+                <div class="cumulative-kpi-lbl">Overall Completed Credits</div>
+                <div class="cumulative-kpi-val"><?= (int)$totalEarnedCredits ?> / <?= $totalReqCredits ?> Cr</div>
+              </div>
+              <div class="cumulative-kpi-item">
+                <div class="cumulative-kpi-lbl">Published Semesters</div>
+                <div class="cumulative-kpi-val"><?= $publishedSemCount ?> / <?= $totalSemesters ?></div>
+              </div>
+              <div class="cumulative-kpi-item">
+                <div class="cumulative-kpi-lbl">Final Academic Status</div>
+                <div class="cumulative-kpi-val" style="color:#0369a1; font-size:0.82rem;"><?= e($overallStatus) ?></div>
+              </div>
+            </div>
           </div>
 
           <!-- 2 & 3. Course Marks, Grades & SGPA Display -->
           <?php if ($isConsolidated): ?>
-            <!-- All 8 Semesters Tables Loop -->
-            <?php foreach ($groupedSemesters as $semKey => $semData): ?>
-              <?php 
-                $sNum = $semData['semester_number'];
+            <!-- All Configured Semesters Tables Loop (1st to <?= $totalSemesters ?>th + any extra overflow semesters) -->
+            <?php
+              $consolidatedRenderList = [];
+              for ($sn = 1; $sn <= $totalSemesters; $sn++) {
+                  $slot = $allSemesters[$sn] ?? null;
+                  $consolidatedRenderList[] = [
+                      'num' => $sn,
+                      'title' => $slot['semester_name'] ?? get_semester_ordinal_title($sn),
+                      'data' => $slot,
+                  ];
+              }
+              foreach ($groupedSemesters as $extraName => $extraData) {
+                  $exNum = (int)($extraData['semester_number'] ?? 99);
+                  if ($exNum < 1 || $exNum > $totalSemesters) {
+                      $consolidatedRenderList[] = [
+                          'num' => $exNum,
+                          'title' => $extraName,
+                          'data' => $extraData,
+                      ];
+                  }
+              }
+            ?>
+            <?php foreach ($consolidatedRenderList as $semEntry): ?>
+              <?php
+                $sNum = (int)$semEntry['num'];
+                $semKey = (string)$semEntry['title'];
+                $semData = $semEntry['data'];
+                $hasCourses = ($semData !== null && !empty($semData['courses']));
               ?>
-              <div style="margin-bottom: 2rem;">
-                <div style="background:#0f2c59; color:#ffffff; padding:0.55rem 1rem; border-radius:4px 4px 0 0; display:flex; justify-content:space-between; align-items:center; font-size:0.86rem; font-weight:700; flex-wrap:wrap; gap:0.5rem;">
-                  <span><i class="fas fa-bookmark" style="color:#f59e0b; margin-right:6px;"></i> Semester <?= $sNum ?>: <?= e($semKey) ?></span>
-                  <span style="font-size:0.82rem; letter-spacing:0.3px;">
-                    Semester SGPA: <strong style="color:#ffffff; font-size:0.92rem;"><?= number_format($semData['sgpa'], 2) ?></strong>
-                    &nbsp;&bull;&nbsp;
-                    Cumulative CGPA: <strong style="color:#86efac; font-size:0.95rem;"><?= number_format($semData['cumulative_cgpa'], 2) ?></strong>
-                  </span>
-                </div>
+              <div style="margin-bottom: 2rem;" id="sem-section-<?= $sNum ?>">
+                <?php if ($hasCourses): ?>
+                  <div style="background:#0f2c59; color:#ffffff; padding:0.55rem 1rem; border-radius:4px 4px 0 0; display:flex; justify-content:space-between; align-items:center; font-size:0.86rem; font-weight:700; flex-wrap:wrap; gap:0.5rem;">
+                    <span>
+                      <i class="fas fa-bookmark" style="color:#f59e0b; margin-right:6px;"></i> Semester <?= $sNum ?>: <?= e($semKey) ?>
+                      <?php if (!empty($semData['is_estimated'])): ?>
+                        <span style="background:#fef3c7; color:#92400e; font-size:0.68rem; font-weight:800; padding:1px 6px; border-radius:3px; margin-left:6px;">ESTIMATED / GENERATED</span>
+                      <?php elseif (isset($semData['all_published']) && !$semData['all_published']): ?>
+                        <span style="background:#f59e0b; color:#0f172a; font-size:0.68rem; font-weight:800; padding:1px 6px; border-radius:3px; margin-left:6px;">DRAFT / UNPUBLISHED</span>
+                      <?php endif; ?>
+                    </span>
+                    <span style="font-size:0.82rem; letter-spacing:0.3px;">
+                      Reg: <strong><?= number_format((float)$semData['registered_credits'], 1) ?> Cr</strong>
+                      &nbsp;&bull;&nbsp;
+                      Earned: <strong><?= number_format((float)$semData['earned_credits'], 1) ?> Cr</strong>
+                      &nbsp;&bull;&nbsp;
+                      Semester SGPA: <strong style="color:#ffffff; font-size:0.92rem;"><?= number_format((float)$semData['sgpa'], 2) ?></strong>
+                      &nbsp;&bull;&nbsp;
+                      Cumulative CGPA: <strong style="color:#86efac; font-size:0.95rem;"><?= number_format((float)$semData['cumulative_cgpa'], 2) ?></strong>
+                    </span>
+                  </div>
 
-                <table class="transcript-table" style="margin-bottom: 0; border-top: none;">
-                  <thead>
-                    <tr>
-                      <th style="width: 40px;" class="col-center">SL</th>
-                      <th style="width: 105px;">Subject Code</th>
-                      <th>Subject Name</th>
-                      <th style="width: 60px;" class="col-center">Credit</th>
-                      <th style="width: 75px;" class="col-center">Full Marks</th>
-                      <th style="width: 75px;" class="col-center">Obtained</th>
-                      <th style="width: 65px;" class="col-center">Grade</th>
-                      <th style="width: 80px;" class="col-center">Grade Point</th>
-                      <th style="width: 75px;" class="col-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <?php $sl = 1; ?>
-                    <?php foreach ($semData['courses'] as $c): ?>
+                  <table class="transcript-table" style="margin-bottom: 0; border-top: none;">
+                    <thead>
                       <tr>
-                        <td class="col-center"><?= $sl++ ?></td>
-                        <td style="font-family: monospace; font-weight: 700; color:#0f2c59;"><?= e($c['course_code']) ?></td>
-                        <td style="font-weight: 600; color:#1e293b;"><?= e($c['course_name']) ?></td>
-                        <td class="col-center" style="font-weight: 600;"><?= number_format($c['credit'], 1) ?></td>
-                        <td class="col-center" style="color:#64748b;"><?= (int)$c['full_marks'] ?></td>
-                        <td class="col-center" style="font-weight: 700; color:#0f2c59;"><?= ($c['marks'] !== null) ? number_format($c['marks'], 1) : '—' ?></td>
-                        <td class="col-center">
-                          <span class="grade-badge"><?= e($c['letter_grade']) ?></span>
-                        </td>
-                        <td class="col-center" style="font-weight: 600;"><?= number_format($c['grade_point'], 2) ?></td>
-                        <td class="col-center">
-                          <span style="font-size:0.75rem; font-weight:800; color:<?= ($c['status'] === 'Pass') ? '#15803d' : '#dc2626' ?>;">
-                            <?= strtoupper($c['status']) ?>
-                          </span>
+                        <th style="width: 40px;" class="col-center">SL</th>
+                        <th style="width: 105px;">Subject Code</th>
+                        <th>Subject Name</th>
+                        <th style="width: 60px;" class="col-center">Credit</th>
+                        <th style="width: 75px;" class="col-center">Full Marks</th>
+                        <th style="width: 75px;" class="col-center">Obtained</th>
+                        <th style="width: 65px;" class="col-center">Grade</th>
+                        <th style="width: 80px;" class="col-center">Grade Point</th>
+                        <th style="width: 75px;" class="col-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <?php $sl = 1; ?>
+                      <?php foreach ($semData['courses'] as $c): ?>
+                        <tr>
+                          <td class="col-center"><?= $sl++ ?></td>
+                          <td style="font-family: monospace; font-weight: 700; color:#0f2c59;"><?= e($c['course_code']) ?></td>
+                          <td style="font-weight: 600; color:#1e293b;"><?= e($c['course_name']) ?></td>
+                          <td class="col-center" style="font-weight: 600;"><?= number_format($c['credit'], 1) ?></td>
+                          <td class="col-center" style="color:#64748b;"><?= (int)$c['full_marks'] ?></td>
+                          <td class="col-center" style="font-weight: 700; color:#0f2c59;"><?= ($c['marks'] !== null) ? number_format($c['marks'], 1) : '—' ?></td>
+                          <td class="col-center">
+                            <span class="grade-badge"><?= e($c['letter_grade']) ?></span>
+                          </td>
+                          <td class="col-center" style="font-weight: 600;"><?= number_format($c['grade_point'], 2) ?></td>
+                          <td class="col-center">
+                            <span style="font-size:0.75rem; font-weight:800; color:<?= ($c['status'] === 'Pass') ? '#15803d' : '#dc2626' ?>;">
+                              <?= strtoupper($c['status']) ?>
+                            </span>
+                          </td>
+                        </tr>
+                      <?php endforeach; ?>
+                    </tbody>
+                    <tfoot>
+                      <tr style="background:#f8fafc; font-weight:700; font-size:0.82rem;">
+                        <td colspan="3" style="text-align:right; color:#475569;">Semester Summary (Semester <?= $sNum ?>):</td>
+                        <td class="col-center"><?= number_format((float)$semData['registered_credits'], 1) ?> Cr</td>
+                        <td colspan="2" class="col-center" style="color:#0f2c59;">Earned: <?= number_format((float)$semData['earned_credits'], 1) ?> Cr</td>
+                        <td style="text-align:right; color:#0f2c59;">SGPA: <strong><?= number_format((float)$semData['sgpa'], 2) ?></strong></td>
+                        <td colspan="2" class="col-center" style="color:#15803d; font-weight:800;">CGPA: <?= number_format((float)$semData['cumulative_cgpa'], 2) ?></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                <?php else: ?>
+                  <div style="background:#e2e8f0; color:#0f2c59; padding:0.5rem 1rem; border-radius:4px 4px 0 0; display:flex; justify-content:space-between; align-items:center; font-size:0.84rem; font-weight:700; flex-wrap:wrap; gap:0.5rem; border:1px solid #cbd5e1; border-bottom:none;">
+                    <span><i class="fas fa-clock" style="color:#64748b; margin-right:6px;"></i> Semester <?= $sNum ?>: <?= e($semKey) ?></span>
+                    <span style="font-size:0.76rem; color:#475569; background:#ffffff; padding:2px 8px; border-radius:4px; border:1px solid #cbd5e1;">
+                      Not Published Yet
+                    </span>
+                  </div>
+                  <table class="transcript-table" style="margin-bottom: 0;">
+                    <tbody>
+                      <tr>
+                        <td colspan="9" class="col-center" style="padding:1rem; color:#64748b; font-style:italic; background:#ffffff;">
+                          No published subject results recorded for this semester yet.
                         </td>
                       </tr>
-                    <?php endforeach; ?>
-                  </tbody>
-                  <tfoot>
-                    <tr style="background:#f8fafc; font-weight:700; font-size:0.82rem;">
-                      <td colspan="3" style="text-align:right; color:#475569;">Semester Summary (Semester <?= $sNum ?>):</td>
-                      <td class="col-center"><?= number_format($semData['registered_credits'], 1) ?> Cr</td>
-                      <td colspan="2" class="col-center" style="color:#0f2c59;">Earned: <?= number_format($semData['earned_credits'], 1) ?> Cr</td>
-                      <td style="text-align:right; color:#0f2c59;">SGPA: <strong><?= number_format($semData['sgpa'], 2) ?></strong></td>
-                      <td colspan="2" class="col-center" style="color:#15803d; font-weight:800;">CGPA: <?= number_format($semData['cumulative_cgpa'], 2) ?></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                    </tbody>
+                    <tfoot>
+                      <tr style="background:#f8fafc; font-weight:700; font-size:0.8rem; color:#64748b;">
+                        <td colspan="3" style="text-align:right;">Semester Summary (Semester <?= $sNum ?>):</td>
+                        <td class="col-center">0.0 Cr</td>
+                        <td colspan="2" class="col-center">Earned: 0.0 Cr</td>
+                        <td style="text-align:right;">SGPA: <strong>—</strong></td>
+                        <td colspan="2" class="col-center">Status: Pending</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                <?php endif; ?>
               </div>
             <?php endforeach; ?>
           <?php else: ?>
             <!-- Single Semester Table -->
-            <?php 
-              $semData = $groupedSemesters[$requestedSemester] ?? null;
-              $cList = $semData ? $semData['courses'] : [];
-              $sNum = $semData ? $semData['semester_number'] : 1;
+            <?php
+              $semData = $singleSemData;
+              $cList = $semData ? ($semData['courses'] ?? []) : [];
+              $sNum = $semData ? (int)$semData['semester_number'] : max(1, get_semester_number($requestedSemester));
             ?>
             <table class="transcript-table">
               <thead>
@@ -1029,7 +1315,7 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
                 <?php if (empty($cList)): ?>
                   <tr>
                     <td colspan="9" class="col-center" style="padding: 2.5rem; color:#64748b;">
-                      No published course results found for <strong><?= e($requestedSemester) ?></strong>.
+                      No published subject results recorded for <strong><?= e($requestedSemester) ?></strong> yet.
                     </td>
                   </tr>
                 <?php else: ?>
@@ -1060,7 +1346,7 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
                   <td colspan="3" style="text-align:right; color:#475569;">Semester Summary (<?= e($requestedSemester) ?>):</td>
                   <td class="col-center"><?= number_format((float)$displaySemCredits, 1) ?> Cr</td>
                   <td colspan="2" class="col-center" style="color:#0f2c59;">Earned: <?= number_format((float)$displayEarnedCredits, 1) ?> Cr</td>
-                  <td style="text-align:right; color:#0f2c59;">SGPA: <strong><?= number_format($displaySgpa, 2) ?></strong></td>
+                  <td style="text-align:right; color:#0f2c59;">SGPA: <strong><?= !empty($cList) ? number_format($displaySgpa, 2) : '—' ?></strong></td>
                   <td colspan="2" class="col-center" style="color:#15803d; font-weight:800; font-size:0.95rem;">CGPA: <?= number_format($displayCgpa, 2) ?></td>
                 </tr>
               </tfoot>
@@ -1090,8 +1376,8 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
               <div class="stat-item" style="grid-column: span 2; border-top: 1px dashed #bfdbfe; padding-top: 0.5rem; margin-top: 2px;">
                 <span class="stat-label">Total Completed Credits (Overall)</span>
                 <span style="font-size:0.92rem; font-weight:700; color:#0f2c59;">
-                  <?= (int)$totalEarnedCredits ?> Credits / <?= (int)$student['total_credits_required'] ?> Required Credits
-                  <span style="color:#16a34a; margin-left: 8px;">(<?= round(($totalEarnedCredits / max(1, (int)$student['total_credits_required'])) * 100) ?>% Completed)</span>
+                  <?= (int)$totalEarnedCredits ?> Credits / <?= $totalReqCredits ?> Required Credits
+                  <span style="color:#16a34a; margin-left: 8px;">(<?= round(($totalEarnedCredits / max(1, $totalReqCredits)) * 100) ?>% Completed)</span>
                 </span>
               </div>
             </div>
@@ -1112,7 +1398,7 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
                 <div>&lt;40% : <strong style="color:#dc2626;">F</strong> (0.00)</div>
               </div>
               <div style="font-size:0.68rem; color:#64748b; margin-top:6px; border-top:1px dashed #e2e8f0; padding-top:4px;">
-                SGPA = ∑(Subject Credit × Subject Grade Point) ÷ Total Registered Credits
+                CGPA = Sum of (Subject Credit × Subject Grade Point) ÷ Total Registered Credits
               </div>
             </div>
           </div>
@@ -1124,27 +1410,33 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
             </div>
             <div class="summary-grid-bottom">
               <div>
-                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Total Completed Credits</div>
+                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Total Registered Credits</div>
                 <div style="font-size:1.15rem; font-weight:800; color:#0f2c59; margin-top:2px;">
-                  <?= (int)$totalEarnedCredits ?> Credits
+                  <?= number_format((float)$totalRegCredits, 1) ?> Credits
                 </div>
               </div>
               <div>
-                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Total Required Credits</div>
+                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Total Earned Credits</div>
                 <div style="font-size:1.15rem; font-weight:800; color:#0f2c59; margin-top:2px;">
-                  <?= (int)$student['total_credits_required'] ?> Credits
+                  <?= number_format((float)$totalEarnedCredits, 1) ?> Credits
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Completed / Required</div>
+                <div style="font-size:1.15rem; font-weight:800; color:#0f2c59; margin-top:2px;">
+                  <?= (int)$totalEarnedCredits ?> / <?= $totalReqCredits ?> Cr
                 </div>
               </div>
               <div>
                 <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Overall Cumulative CGPA</div>
-                <div style="font-size:1.3rem; font-weight:900; color:#15803d; margin-top:2px;">
+                <div style="font-size:1.25rem; font-weight:900; color:#15803d; margin-top:2px;">
                   <?= number_format($finalCgpa, 2) ?> / 4.00
                 </div>
               </div>
               <div>
-                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Academic Status &bull; Date</div>
-                <div style="font-size:0.92rem; font-weight:800; color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0284c7' ?>; margin-top:2px;">
-                  <?= ($student['status'] === 'Graduated') ? 'GRADUATED' : 'ACTIVE' ?>
+                <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Final Academic Status</div>
+                <div style="font-size:0.88rem; font-weight:800; color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0284c7' ?>; margin-top:2px;">
+                  <?= e($overallStatus) ?>
                 </div>
                 <div style="font-size:0.75rem; color:#64748b; margin-top:2px;"><?= e($issueDate) ?></div>
               </div>
@@ -1206,5 +1498,6 @@ $autoprint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
     </script>
   <?php endif; ?>
 
+  <script src="<?= e(rmu_asset_url('assets/js/pwa.js')) ?>"></script>
 </body>
 </html>

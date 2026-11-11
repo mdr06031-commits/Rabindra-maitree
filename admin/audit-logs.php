@@ -84,8 +84,8 @@ include __DIR__ . '/includes/admin-header.php';
 
   <!-- Pagination -->
   <?php if ($totalPages > 1): ?>
-    <div style="padding: 1rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: center;">
-      <ul class="pagination" style="margin: 0;">
+    <div style="padding: 1rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: center; max-width: 100%; overflow: hidden;">
+      <ul class="pagination" style="margin: 0; padding: 0; flex-wrap: wrap; max-width: 100%;">
         <?php for ($i = 1; $i <= $totalPages; $i++): ?>
           <li class="page-item <?= ($page === $i) ? 'active' : '' ?>">
             <a href="<?= APP_URL ?>/admin/audit-logs.php?page=<?= $i ?>" class="page-link"><?= $i ?></a>

@@ -14,32 +14,79 @@ require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../includes/functions.php';
 
 require_login();
+if (!headers_sent()) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, private');
+    header('Pragma: no-cache');
+}
+ensure_student_password_schema();
 $adminPageTitle = 'Student Management & Result Console';
 $db = getDb();
 $adminId = (int)($_SESSION['user_id'] ?? 1);
 
-// Standard 8 Semesters Titles
-$standardSemesterTitles = [
-    1 => '1st Semester',
-    2 => '2nd Semester',
-    3 => '3rd Semester',
-    4 => '4th Semester',
-    5 => '5th Semester',
-    6 => '6th Semester',
-    7 => '7th Semester',
-    8 => '8th Semester'
-];
+// Standard Semesters Titles (Supports 1-12 Semesters for custom approved curricula)
+$standardSemesterTitles = [];
+for ($__stIdx = 1; $__stIdx <= 12; $__stIdx++) {
+    $standardSemesterTitles[$__stIdx] = get_semester_ordinal_title($__stIdx);
+}
 
-// Handle Unified Form Submission (Add, Edit, Delete, Save Draft, Publish)
+// Handle Unified Form Submission (Add, Edit, Account Controls, Result Visibility, Save Draft, Publish)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         flash_set('error', 'CSRF security token verification failed. Please try again.');
+    } elseif (!is_admin_manager_role()) {
+        log_audit('STUDENT_ACTION_DENIED', "Unauthorized role '" . current_admin_role() . "' attempted action '" . ($_POST['action'] ?? '') . "' on students console");
+        flash_set('error', 'Access denied: Only Administrator accounts may modify student records or academic results.');
+        header("Location: " . APP_URL . "/admin/students.php");
+        exit;
     } else {
         $action = $_POST['action'] ?? '';
         $submitAction = $_POST['submit_action'] ?? 'save_student_only';
 
-        if ($action === 'add' || $action === 'edit') {
+        if ($action === 'reset_student_password') {
+            $id = (int)($_POST['student_id_pk'] ?? ($_POST['id'] ?? 0));
+            $res = reset_student_login_password($id, $adminId, 'admin_reset');
+            if (!empty($res['success'])) {
+                flash_set('success', "New temporary login password generated and saved securely for {$res['student_id']} ({$res['full_name']}). Active Student Portal sessions were invalidated.");
+            } else {
+                flash_set('error', $res['error'] ?? 'Could not reset student password.');
+            }
+            header("Location: " . APP_URL . "/admin/students.php" . ($id > 0 ? "?edit=" . $id . "#studentLoginCredentialsSection" : ""));
+            exit;
+        } elseif ($action === 'clear_temp_credential') {
+            $id = (int)($_POST['student_id_pk'] ?? ($_POST['id'] ?? 0));
+            clear_admin_temp_student_password($id);
+            flash_set('info', 'Temporary password display cleared from your current administrator session.');
+            header("Location: " . APP_URL . "/admin/students.php" . ($id > 0 ? "?edit=" . $id . "#studentLoginCredentialsSection" : ""));
+            exit;
+        } elseif ($action === 'activate_account') {
+            $id = (int)($_POST['id'] ?? 0);
+            $res = activate_student_account($id, $adminId, trim($_POST['reason'] ?? ''));
+            flash_set($res['success'] ? 'success' : 'error', $res['success'] ? "Account {$res['student_id']} ({$res['full_name']}) activated successfully." : ($res['error'] ?? 'Activation failed.'));
+            header("Location: " . APP_URL . "/admin/students.php" . (!empty($_POST['redirect_to_edit']) ? "?edit=" . $id : ""));
+            exit;
+        } elseif ($action === 'deactivate_account') {
+            $id = (int)($_POST['id'] ?? 0);
+            $res = deactivate_student_account($id, $adminId, trim($_POST['reason'] ?? ''));
+            flash_set($res['success'] ? 'success' : 'error', $res['success'] ? "Account {$res['student_id']} ({$res['full_name']}) deactivated. Active sessions invalidated & academic records preserved." : ($res['error'] ?? 'Deactivation failed.'));
+            header("Location: " . APP_URL . "/admin/students.php" . (!empty($_POST['redirect_to_edit']) ? "?edit=" . $id : ""));
+            exit;
+        } elseif ($action === 'show_results') {
+            $id = (int)($_POST['id'] ?? 0);
+            $res = set_student_result_visibility($id, true, $adminId);
+            flash_set($res['success'] ? 'success' : 'error', $res['success'] ? "Results are now VISIBLE (Show Result) in Student Portal for {$res['full_name']}." : ($res['error'] ?? 'Action failed.'));
+            header("Location: " . APP_URL . "/admin/students.php" . (!empty($_POST['redirect_to_edit']) ? "?edit=" . $id : ""));
+            exit;
+        } elseif ($action === 'hide_results') {
+            $id = (int)($_POST['id'] ?? 0);
+            $res = set_student_result_visibility($id, false, $adminId, trim($_POST['reason'] ?? ''));
+            flash_set($res['success'] ? 'success' : 'error', $res['success'] ? "Results are now HIDDEN (Hide Result) from student view for {$res['full_name']}. Original academic data preserved." : ($res['error'] ?? 'Action failed.'));
+            header("Location: " . APP_URL . "/admin/students.php" . (!empty($_POST['redirect_to_edit']) ? "?edit=" . $id : ""));
+            exit;
+        } elseif ($action === 'add' || $action === 'edit') {
             $studentId = trim($_POST['student_id'] ?? '');
+            $rollNumber = trim($_POST['roll_number'] ?? '');
+            $applicationNumber = trim($_POST['application_number'] ?? '');
+            $username = trim($_POST['username'] ?? '');
             $fullName = trim($_POST['full_name'] ?? '');
             $email = trim($_POST['email'] ?? '');
             $phone = trim($_POST['phone'] ?? '');
@@ -51,18 +98,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $permanentAddress = trim($_POST['permanent_address'] ?? '');
             $programId = !empty($_POST['program_id']) ? (int)$_POST['program_id'] : null;
             $deptId = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
-            $batch = trim($_POST['batch'] ?? 'Batch 26 (2026–2030)');
+            $batch = trim($_POST['batch'] ?? '');
+            $progStructInput = get_program_academic_structure((int)($programId ?: 1));
+            $degreeTypeInput = trim($_POST['degree_type'] ?? '');
+            if (!in_array($degreeTypeInput, ['Bachelor / Honours', 'B.Ed', "Master's"], true)) {
+                $degreeTypeInput = $progStructInput['degree_type'];
+            }
+            $configuredSemsInput = isset($_POST['configured_semesters']) && (int)$_POST['configured_semesters'] > 0
+                ? max(1, min(12, (int)$_POST['configured_semesters']))
+                : (int)$progStructInput['total_semesters'];
+
+            if (isset($_POST['duration_years']) && $_POST['duration_years'] !== '' && is_numeric($_POST['duration_years'])) {
+                $durationYearsInput = max(0.5, min(6.0, round((float)$_POST['duration_years'], 1)));
+            } elseif ($configuredSemsInput === (int)$progStructInput['total_semesters']) {
+                $durationYearsInput = (float)$progStructInput['duration_years'];
+            } else {
+                $durationYearsInput = ($configuredSemsInput === 8 ? 4.0 : ($configuredSemsInput === 4 ? 2.0 : ($configuredSemsInput === 3 ? 1.5 : ($configuredSemsInput === 2 ? 1.0 : max(0.5, min(6.0, round($configuredSemsInput * 0.5, 1)))))));
+            }
+            $progDurationLabel = format_duration_years_label($durationYearsInput, $configuredSemsInput);
+
+            $reqCreditsInput = max(10, (int)($progStructInput['total_credits'] ?? ($configuredSemsInput * 15)));
+            $academicSessionInput = trim($_POST['academic_session'] ?? '');
+            if ($academicSessionInput === '') {
+                $academicSessionInput = $batch !== '' ? $batch : get_current_academic_session_name('Fall 2026');
+            }
+            if ($batch === '') {
+                $batch = $academicSessionInput;
+            }
+            // CRITICAL: Never automatically overwrite or derive passing_year from expected year
+            $hasPassingYearField = array_key_exists('passing_year', $_POST);
+            $passingYearInput = ($hasPassingYearField && trim((string)$_POST['passing_year']) !== '') ? trim((string)$_POST['passing_year']) : null;
+            $expCalcInput = calculate_expected_passing_year($academicSessionInput, $durationYearsInput);
+            $expectedPassingYearInput = $expCalcInput ? (int)$expCalcInput['expected_year'] : null;
+
+            $pubDateInput = trim($_POST['result_publication_date'] ?? '');
+            if ($pubDateInput !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $pubDateInput)) {
+                $pubDateInput = '';
+            }
             $currentYear = trim($_POST['current_year'] ?? '1st Year');
             $currentSemester = trim($_POST['current_semester'] ?? '1st Semester');
             $cgpa = (float)($_POST['cgpa'] ?? 0.00);
             $creditsCompleted = (int)($_POST['credits_completed'] ?? 0);
             $bloodGroup = trim($_POST['blood_group'] ?? '');
             $homeDistrict = trim($_POST['home_district'] ?? '');
-            $status = in_array($_POST['status'] ?? '', ['Active', 'Graduated', 'Suspended']) ? $_POST['status'] : 'Active';
-            $password = trim($_POST['password'] ?? 'student123');
+            $status = in_array($_POST['status'] ?? '', ['Active', 'Graduated', 'Suspended', 'Deactivated']) ? $_POST['status'] : 'Active';
+            $rawPassword = trim((string)($_POST['password'] ?? ''));
+            $password = ($rawPassword !== '') ? $rawPassword : generate_secure_student_password(12);
 
             if ($action === 'add' && empty($studentId)) {
                 $studentId = generate_next_student_id($db);
+            }
+            if ($username === '' && $studentId !== '') {
+                $username = $studentId;
             }
 
             if (empty($fullName) || empty($email) || empty($phone)) {
@@ -72,60 +159,179 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // 1. Process Student Profile
                 if ($action === 'add') {
-                    // Check duplicate email or student_id
-                    $check = $db->prepare("SELECT id FROM students WHERE student_id = ? OR email = ?");
-                    $check->execute([$studentId, $email]);
-                    if ($check->fetch()) {
-                        flash_set('error', 'A student with this Student ID or Email already exists.');
+                    // Check duplicate identifiers (Student ID, Roll No, Application ID, Email) across students & admissions
+                    $dupErr = validate_unique_student_identifiers($db, $studentId, $rollNumber, $applicationNumber, $email, 0);
+                    if ($dupErr !== null) {
+                        flash_set('error', $dupErr);
+                        header("Location: " . APP_URL . "/admin/students.php?action=enroll");
+                        exit;
                     } else {
+                        ensure_student_password_schema($db);
                         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-                        $stmt = $db->prepare("
-                            INSERT INTO students 
-                            (student_id, full_name, father_name, mother_name, email, phone, password_hash, program_id, department_id, batch, current_year, current_semester, cgpa, credits_completed, blood_group, home_district, dob, gender, present_address, permanent_address, total_credits_required, status)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 140, ?)
-                        ");
-                        $stmt->execute([
-                            $studentId, $fullName, $fatherName, $motherName, $email, $phone, $passwordHash,
-                            $programId, $deptId, $batch, $currentYear, $currentSemester,
-                            $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender, $presentAddress, $permanentAddress, $status
-                        ]);
-                        $targetDbId = (int)$db->lastInsertId();
+                        try {
+                            $stmt = $db->prepare("
+                                INSERT INTO students 
+                                (student_id, roll_number, application_number, username, full_name, father_name, mother_name, email, phone, password_hash, password_updated_at, password_updated_by, password_source, must_change_password, program_id, degree_type, department_id, batch, academic_session, passing_year, expected_passing_year, duration_years, program_duration, total_semesters, result_publication_date, current_year, current_semester, cgpa, credits_completed, blood_group, home_district, dob, gender, present_address, permanent_address, total_credits_required, status, results_visible, result_access_status, session_version)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'system_generated', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'Active', 1)
+                            ");
+                            $stmt->execute([
+                                $studentId, $rollNumber !== '' ? $rollNumber : null, $applicationNumber !== '' ? $applicationNumber : null, $username,
+                                $fullName, $fatherName, $motherName, $email, $phone, $passwordHash,
+                                $adminId,
+                                $programId, $degreeTypeInput, $deptId, $batch, $academicSessionInput, $passingYearInput, $expectedPassingYearInput, $durationYearsInput, $progDurationLabel, $configuredSemsInput, $pubDateInput !== '' ? $pubDateInput : null,
+                                $currentYear, $currentSemester,
+                                $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender, $presentAddress, $permanentAddress, $reqCreditsInput, $status
+                            ]);
+                            $targetDbId = (int)$db->lastInsertId();
+                            store_admin_temp_student_password($targetDbId, $password, $adminId, $passwordHash);
+                            sync_student_semester_results($targetDbId);
 
-                        // Send Welcome In-App Notification
-                        create_student_notification(
-                            $targetDbId,
-                            "Welcome to Rabindra Maitree University!",
-                            "Your official Student Portal account has been created. Student ID: {$studentId}.",
-                            'general'
-                        );
-                        log_audit('STUDENT_ADDED_ONE_PAGE', "Enrolled student: {$fullName} ({$studentId})");
+                            // Send Welcome In-App Notification
+                            create_student_notification(
+                                $targetDbId,
+                                "Welcome to Rabindra Maitree University!",
+                                "Your official Student Portal account has been created. Student ID: {$studentId}.",
+                                'general'
+                            );
+                            log_audit('STUDENT_ADDED_ONE_PAGE', "Enrolled student: {$fullName} ({$studentId})", $adminId);
+                        } catch (PDOException $e) {
+                            if (is_retryable_db_concurrency_exception($e)) {
+                                flash_set('error', 'Duplicate Student ID, Admission Roll Number, Application ID, or Email detected. Each student must have unique identifiers.');
+                            } else {
+                                flash_set('error', 'Could not create student record due to a database constraint error.');
+                            }
+                            header("Location: " . APP_URL . "/admin/students.php?action=enroll");
+                            exit;
+                        }
                     }
                 } elseif ($action === 'edit') {
                     $targetDbId = (int)($_POST['id'] ?? 0);
                     if ($targetDbId > 0) {
-                        $stmt = $db->prepare("
-                            UPDATE students 
-                            SET full_name = ?, father_name = ?, mother_name = ?, email = ?, phone = ?,
-                                program_id = ?, department_id = ?, batch = ?, current_year = ?, current_semester = ?,
-                                cgpa = ?, credits_completed = ?, blood_group = ?, home_district = ?, dob = ?, gender = ?,
-                                present_address = ?, permanent_address = ?, status = ?
-                            WHERE id = ?
-                        ");
-                        $stmt->execute([
-                            $fullName, $fatherName, $motherName, $email, $phone,
-                            $programId, $deptId, $batch, $currentYear, $currentSemester,
-                            $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender,
-                            $presentAddress, $permanentAddress, $status, $targetDbId
-                        ]);
+                        $currStStmt = $db->prepare("SELECT * FROM students WHERE id = ? LIMIT 1");
+                        $currStStmt->execute([$targetDbId]);
+                        $currSt = $currStStmt->fetch(PDO::FETCH_ASSOC);
+
+                        $dupErr = validate_unique_student_identifiers($db, null, $rollNumber, $applicationNumber, $email, $targetDbId);
+                        if ($dupErr !== null) {
+                            flash_set('error', $dupErr);
+                            header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                            exit;
+                        }
+
+                        $finalStatus = ($currSt && $currSt['status'] === 'Deleted') ? 'Deleted' : $status;
+                        $bumpSession = ($finalStatus !== 'Active' && $currSt && $currSt['status'] !== $finalStatus) ? ", session_version = session_version + 1" : "";
+                        $pubDateVal = ($pubDateInput !== '') ? $pubDateInput : ($currSt['result_publication_date'] ?? null);
+
+                        // Preserve existing academic structure / passing year if partial POST omitted those keys
+                        if ($currSt) {
+                            if (!$hasPassingYearField) {
+                                $passingYearInput = $currSt['passing_year'] !== null ? (string)$currSt['passing_year'] : null;
+                            }
+                            if (!array_key_exists('academic_session', $_POST)) {
+                                $academicSessionInput = !empty($currSt['academic_session']) ? (string)$currSt['academic_session'] : $academicSessionInput;
+                            }
+                            if (!isset($_POST['configured_semesters']) && (int)$programId === (int)($currSt['program_id'] ?? 0) && !empty($currSt['total_semesters'])) {
+                                $configuredSemsInput = max(1, min(12, (int)$currSt['total_semesters']));
+                            }
+                            if (!isset($_POST['duration_years']) && (int)$programId === (int)($currSt['program_id'] ?? 0) && !empty($currSt['duration_years'])) {
+                                $durationYearsInput = max(0.5, min(6.0, round((float)$currSt['duration_years'], 1)));
+                            }
+                            $progDurationLabel = format_duration_years_label($durationYearsInput, $configuredSemsInput);
+                            $expCalcEdit = calculate_expected_passing_year($academicSessionInput, $durationYearsInput);
+                            $expectedPassingYearInput = $expCalcEdit ? (int)$expCalcEdit['expected_year'] : null;
+                        }
+
+                        try {
+                            $stmt = $db->prepare("
+                                UPDATE students 
+                                SET full_name = ?, roll_number = ?, application_number = ?, username = ?,
+                                    father_name = ?, mother_name = ?, email = ?, phone = ?,
+                                    program_id = ?, degree_type = ?, department_id = ?, batch = ?, academic_session = ?, passing_year = ?, expected_passing_year = ?, duration_years = ?, program_duration = ?, total_semesters = ?, result_publication_date = ?, total_credits_required = ?,
+                                    current_year = ?, current_semester = ?,
+                                    cgpa = ?, credits_completed = ?, blood_group = ?, home_district = ?, dob = ?, gender = ?,
+                                    present_address = ?, permanent_address = ?, status = ? {$bumpSession}
+                                WHERE id = ?
+                            ");
+                            $stmt->execute([
+                                $fullName, $rollNumber !== '' ? $rollNumber : null, $applicationNumber !== '' ? $applicationNumber : null,
+                                $username !== '' ? $username : ($currSt['student_id'] ?? $studentId),
+                                $fatherName, $motherName, $email, $phone,
+                                $programId, $degreeTypeInput, $deptId, $batch, $academicSessionInput, $passingYearInput, $expectedPassingYearInput, $durationYearsInput, $progDurationLabel, $configuredSemsInput, $pubDateVal, $reqCreditsInput,
+                                $currentYear, $currentSemester,
+                                $cgpa, $creditsCompleted, $bloodGroup, $homeDistrict, $dob, $gender,
+                                $presentAddress, $permanentAddress, $finalStatus, $targetDbId
+                            ]);
+                        } catch (PDOException $e) {
+                            if (is_retryable_db_concurrency_exception($e)) {
+                                flash_set('error', 'Duplicate Admission Roll Number, Application ID, or Email detected. Each student must have unique identifiers.');
+                            } else {
+                                flash_set('error', 'Could not update student record due to a database constraint error.');
+                            }
+                            header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                            exit;
+                        }
+
+                        if ($currSt) {
+                            // Keep linked admission dossier aligned when edited by administrator
+                            if (!empty($currSt['student_id'])) {
+                                $db->prepare("
+                                    UPDATE admissions
+                                    SET academic_session = ?, passing_year = ?, expected_passing_year = ?, program_id = ?, department_id = ?, degree_type = ?
+                                    WHERE student_id = ?
+                                ")->execute([$academicSessionInput, $passingYearInput, $expectedPassingYearInput, $programId, $deptId, $degreeTypeInput, $currSt['student_id']]);
+                            }
+
+                            $acadReason = trim($_POST['academic_edit_reason'] ?? '') ?: 'Updated from Admin Student Management Console';
+                            $acadDiffPairs = [
+                                'academic_session'      => [$currSt['academic_session'] ?? null, $academicSessionInput],
+                                'passing_year'          => [$currSt['passing_year'] ?? null, $passingYearInput],
+                                'program_id'            => [(string)($currSt['program_id'] ?? ''), (string)$programId],
+                                'degree_type'           => [$currSt['degree_type'] ?? null, $degreeTypeInput],
+                                'duration_years'        => [isset($currSt['duration_years']) ? (string)(float)$currSt['duration_years'] : null, (string)$durationYearsInput],
+                                'total_semesters'       => [(string)($currSt['total_semesters'] ?? ''), (string)$configuredSemsInput],
+                                'expected_passing_year' => [$currSt['expected_passing_year'] !== null ? (string)$currSt['expected_passing_year'] : null, $expectedPassingYearInput !== null ? (string)$expectedPassingYearInput : null],
+                            ];
+                            foreach ($acadDiffPairs as $fKey => $pair) {
+                                if ((string)($pair[0] ?? '') !== (string)($pair[1] ?? '')) {
+                                    log_academic_edit_history('student', $targetDbId, $currSt['student_id'], $adminId, $fKey, $pair[0] !== null ? (string)$pair[0] : null, $pair[1] !== null ? (string)$pair[1] : null, $acadReason);
+                                }
+                            }
+                        }
+
+                        sync_student_semester_results($targetDbId);
 
                         // Password reset if provided
-                        if (!empty($_POST['new_password'])) {
-                            $newPass = trim($_POST['new_password']);
-                            $passStmt = $db->prepare("UPDATE students SET password_hash = ? WHERE id = ?");
-                            $passStmt->execute([password_hash($newPass, PASSWORD_DEFAULT), $targetDbId]);
-                            log_audit('STUDENT_PASSWORD_RESET', "Reset password for student ID #{$targetDbId}");
+                        if (!empty($_POST['new_password']) && $finalStatus !== 'Deleted') {
+                            ensure_student_password_schema($db);
+                            $newPass = trim((string)$_POST['new_password']);
+                            $newHash = password_hash($newPass, PASSWORD_DEFAULT);
+                            $passStmt = $db->prepare("UPDATE students SET password_hash = ?, password_updated_at = NOW(), password_updated_by = ?, password_source = 'admin_reset', must_change_password = 1, session_version = session_version + 1 WHERE id = ?");
+                            $passStmt->execute([$newHash, $adminId, $targetDbId]);
+                            if (!empty($currSt['student_id'])) {
+                                $db->prepare("UPDATE admissions SET portal_password = NULL WHERE student_id = ?")->execute([$currSt['student_id']]);
+                            }
+                            store_admin_temp_student_password($targetDbId, $newPass, $adminId, $newHash);
+                            create_student_notification(
+                                $targetDbId,
+                                'Student Portal Password Reset',
+                                'Your Student Portal login password was reset by university administration and active sessions were signed out.',
+                                'account_status'
+                            );
+                            log_audit('STUDENT_PASSWORD_RESET', "Reset password and invalidated sessions for student ID #{$targetDbId}", $adminId);
                         }
-                        log_audit('STUDENT_UPDATED_ONE_PAGE', "Updated student ID #{$targetDbId} ({$fullName})");
+                        log_audit('STUDENT_UPDATED_ONE_PAGE', "Updated student ID #{$targetDbId} ({$fullName})", $adminId);
+                    }
+                }
+
+                // Acceptance gate check for any academic result mutation
+                $isResultActionRequested = in_array($submitAction, ['update_cgpa_and_generate', 'auto_generate_estimated', 'update_cgpa_only', 'verify_all_as_official', 'save_draft', 'publish_results'], true)
+                    || strpos($submitAction, 'verify_semester_') === 0;
+                if ($targetDbId > 0 && $isResultActionRequested) {
+                    $resGate = can_manage_student_results($targetDbId);
+                    if (empty($resGate['allowed'])) {
+                        flash_set('error', $resGate['reason']);
+                        header("Location: " . APP_URL . "/admin/students.php?edit=" . $targetDbId);
+                        exit;
                     }
                 }
 
@@ -133,15 +339,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($targetDbId > 0 && in_array($submitAction, ['update_cgpa_and_generate', 'auto_generate_estimated', 'update_cgpa_only'])) {
                     $targetCgpa = (float)($_POST['target_cgpa_input'] ?? $_POST['cgpa'] ?? 3.50);
                     $targetCgpa = max(2.00, min(4.00, round($targetCgpa, 2)));
+                    $genSession = trim($_POST['gen_academic_session'] ?? $academicSessionInput);
+                    $genPubDate = trim($_POST['gen_publication_date'] ?? $pubDateInput);
+                    if ($genPubDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $genPubDate)) {
+                        $genPubDate = date('Y-m-d');
+                    }
 
                     if ($submitAction === 'update_cgpa_only') {
                         $db->prepare("UPDATE students SET cgpa = ? WHERE id = ?")->execute([$targetCgpa, $targetDbId]);
                         log_audit('STUDENT_CGPA_UPDATED', "Admin updated CGPA to {$targetCgpa} for student #{$targetDbId}");
                         flash_set('success', "Student CGPA updated to " . number_format($targetCgpa, 2) . ".");
                     } else {
-                        $genRes = generate_estimated_student_results($targetDbId, $targetCgpa, true, $adminId);
+                        $genRes = generate_estimated_student_results($targetDbId, $targetCgpa, true, $adminId, [
+                            'academic_session' => $genSession,
+                            'publication_date' => $genPubDate,
+                            'total_semesters'  => $configuredSemsInput,
+                        ]);
                         if (!empty($genRes['success'])) {
-                            flash_set('success', "One-Click CGPA Update Complete! Updated CGPA to " . number_format($targetCgpa, 2) . " and generated estimated results for {$genRes['total_semesters']} semesters ({$genRes['inserted_courses']} subjects). All records marked as: ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT.");
+                            flash_set('success', "One-Click CGPA Update Complete! Updated CGPA to " . number_format($targetCgpa, 2) . " across {$genRes['total_semesters']} semesters ({$genRes['inserted_courses']} subjects, Session: {$genRes['academic_session']}, Publication Date: {$genRes['publication_date']}). Labelled: ESTIMATED / GENERATED — ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT.");
                         } else {
                             flash_set('error', $genRes['error'] ?? 'Failed to generate estimated results.');
                         }
@@ -198,7 +413,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $submittedResults = $_POST['results'] ?? [];
 
                     // Fetch existing result IDs to detect updates vs inserts vs deletions
-                    $existingResultIds = $db->query("SELECT id FROM student_results WHERE student_id = {$targetDbId}")->fetchAll(PDO::FETCH_COLUMN);
+                    $existingResStmt = $db->prepare("SELECT id FROM student_results WHERE student_id = ?");
+                    $existingResStmt->execute([$targetDbId]);
+                    $existingResultIds = $existingResStmt->fetchAll(PDO::FETCH_COLUMN);
                     $keptResultIds = [];
 
                     $insRes = $db->prepare("
@@ -269,9 +486,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $resMetrics = recalculate_student_cgpa($targetDbId);
 
                     if ($submitAction === 'publish_results') {
-                        // Check if all semesters are completed
-                        $semCount = (int)$db->query("SELECT COUNT(DISTINCT semester) FROM student_results WHERE student_id = {$targetDbId} AND is_published = 1")->fetchColumn();
-                        if ($semCount >= 8 || ($semCount >= 4 && str_contains($batch, 'Master'))) {
+                        // Check if all configured semesters are completed
+                        $semCountStmt = $db->prepare("SELECT COUNT(DISTINCT semester) FROM student_results WHERE student_id = ? AND is_published = 1");
+                        $semCountStmt->execute([$targetDbId]);
+                        $semCount = (int)$semCountStmt->fetchColumn();
+                        $expectedSems = max(1, (int)$configuredSemsInput);
+                        if ($semCount >= $expectedSems) {
                             $db->prepare("UPDATE students SET status = 'Graduated', current_semester = 'Completed' WHERE id = ?")->execute([$targetDbId]);
                         }
 
@@ -296,17 +516,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit;
                 }
             }
-        } elseif ($action === 'delete') {
+        } elseif ($action === 'delete' || $action === 'delete_student_account') {
             $id = (int)($_POST['id'] ?? 0);
-            if ($id > 0) {
-                $st = $db->prepare("SELECT student_id, full_name FROM students WHERE id = ?");
-                $st->execute([$id]);
-                $sData = $st->fetch();
+            $confirmInput = trim($_POST['confirm_student_id'] ?? '');
+            $confirmCheck = !empty($_POST['confirm_permanent_delete']);
+            $reason = trim($_POST['reason'] ?? '');
 
-                $del = $db->prepare("DELETE FROM students WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('STUDENT_DELETED', "Deleted student: {$sData['full_name']} ({$sData['student_id']})");
-                flash_set('success', "Student record deleted successfully.");
+            if ($id > 0) {
+                $st = $db->prepare("SELECT student_id, full_name FROM students WHERE id = ? LIMIT 1");
+                $st->execute([$id]);
+                $sData = $st->fetch(PDO::FETCH_ASSOC);
+
+                if (!$sData) {
+                    flash_set('error', 'Student account not found.');
+                } elseif (!$confirmCheck || ($confirmInput !== $sData['student_id'] && strtoupper($confirmInput) !== 'DELETE')) {
+                    flash_set('error', "Permanent deletion cancelled: you must tick the confirmation checkbox and type '{$sData['student_id']}' or 'DELETE' to confirm.");
+                } else {
+                    $delRes = delete_student_account_safely($id, $adminId, $reason);
+                    if ($delRes['success']) {
+                        flash_set('success', "Student account {$sData['student_id']} ({$sData['full_name']}) permanently deleted. Login credentials revoked & {$delRes['results_retained']} academic record(s) archived under Retention Policy (Archive #{$delRes['archive_id']}).");
+                    } else {
+                        flash_set('error', $delRes['error'] ?? 'Could not delete student account.');
+                    }
+                }
             }
             header("Location: " . APP_URL . "/admin/students.php");
             exit;
@@ -317,6 +549,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Search & Filter for Directory
 $search = trim($_GET['search'] ?? '');
 $statusFilter = $_GET['status'] ?? 'All';
+$resultStatusFilter = $_GET['result_status'] ?? 'all';
 $programFilter = (int)($_GET['program_id'] ?? 0);
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = 15;
@@ -335,21 +568,30 @@ if ($programFilter > 0) {
     $params[] = $programFilter;
 }
 
+if ($resultStatusFilter === 'hidden') {
+    $where[] = "COALESCE(s.results_visible, 1) = 0";
+} elseif ($resultStatusFilter === 'published') {
+    $where[] = "COALESCE(s.results_visible, 1) = 1 AND EXISTS (SELECT 1 FROM student_results srp WHERE srp.student_id = s.id AND srp.is_published = 1)";
+} elseif ($resultStatusFilter === 'pending') {
+    $where[] = "COALESCE(s.results_visible, 1) = 1 AND NOT EXISTS (SELECT 1 FROM student_results srp WHERE srp.student_id = s.id AND srp.is_published = 1)";
+}
+
 if (!empty($search)) {
-    $where[] = "(s.student_id LIKE ? OR s.full_name LIKE ? OR s.email LIKE ? OR s.phone LIKE ? OR s.batch LIKE ?)";
+    $where[] = "(s.student_id LIKE ? OR s.roll_number LIKE ? OR s.application_number LIKE ? OR s.username LIKE ? OR s.full_name LIKE ? OR s.email LIKE ? OR s.phone LIKE ? OR s.batch LIKE ?)";
     $like = "%$search%";
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
+    for ($si = 0; $si < 8; $si++) {
+        $params[] = $like;
+    }
 }
 
 $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
 // Summary Statistics
-$totalStudents = (int)$db->query("SELECT COUNT(*) FROM students")->fetchColumn();
+$totalStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted'")->fetchColumn();
 $activeStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status = 'Active'")->fetchColumn();
+$deactivatedStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status IN ('Deactivated', 'Suspended')")->fetchColumn();
+$deletedStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status = 'Deleted'")->fetchColumn();
+$hiddenResultStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND COALESCE(results_visible, 1) = 0")->fetchColumn();
 $graduatedStudents = (int)$db->query("SELECT COUNT(*) FROM students WHERE status = 'Graduated'")->fetchColumn();
 $totalFeesCollected = (float)$db->query("SELECT COALESCE(SUM(amount), 0) FROM student_fees WHERE status = 'Paid'")->fetchColumn();
 
@@ -358,16 +600,25 @@ $countSql = "SELECT COUNT(*) FROM students s $whereSql";
 $countStmt = $db->prepare($countSql);
 $countStmt->execute($params);
 $totalRows = (int)$countStmt->fetchColumn();
-$totalPages = ceil($totalRows / $perPage);
+$totalPages = max(1, (int)ceil($totalRows / $perPage));
 
-// Fetch Students for Directory
+// Fetch Students for Directory along with result counts
 $sql = "
-    SELECT s.*, p.title_en AS program_title, p.degree_level, d.name_en AS dept_name
+    SELECT s.*, p.title_en AS program_title, p.degree_level, d.name_en AS dept_name,
+           COALESCE(rs.total_res, 0) AS total_results_cnt,
+           COALESCE(rs.pub_res, 0) AS published_results_cnt
     FROM students s
     LEFT JOIN programs p ON s.program_id = p.id
     LEFT JOIN departments d ON s.department_id = d.id
+    LEFT JOIN (
+        SELECT student_id,
+               COUNT(*) AS total_res,
+               SUM(CASE WHEN is_published = 1 THEN 1 ELSE 0 END) AS pub_res
+        FROM student_results
+        GROUP BY student_id
+    ) rs ON rs.student_id = s.id
     $whereSql
-    ORDER BY s.id DESC
+    ORDER BY (s.status = 'Deleted') ASC, s.id DESC
     LIMIT ? OFFSET ?
 ";
 $stmt = $db->prepare($sql);
@@ -379,22 +630,31 @@ $stmt->bindValue(count($params) + 2, $offset, PDO::PARAM_INT);
 $stmt->execute();
 $students = $stmt->fetchAll();
 
-// Programs with Degree Level & Departments for Dropdowns
-$programs = $db->query("SELECT id, title_en, degree_level, duration, total_credits FROM programs ORDER BY sort_order, title_en")->fetchAll(PDO::FETCH_ASSOC);
+// Programs with Degree Level, Degree Type & Semesters for Dropdowns
+$programs = $db->query("SELECT id, title_en, degree_level, degree_type, duration, duration_years, total_semesters, total_credits FROM programs ORDER BY sort_order, title_en")->fetchAll(PDO::FETCH_ASSOC);
 $departments = $db->query("SELECT id, name_en FROM departments ORDER BY name_en")->fetchAll(PDO::FETCH_ASSOC);
+$allSessionsList = get_academic_sessions(false, 'DESC');
+$allPassingYearsList = get_passing_years(false, 'DESC');
+$defaultActiveSession = get_current_academic_session_name('Fall 2026');
 
 // Check if One-Page Console is active (Edit student or Enroll New Student)
 $isConsoleView = isset($_GET['edit']) || (isset($_GET['action']) && $_GET['action'] === 'enroll');
 $editStudent = null;
+$editStudentBadges = null;
+$editProgStruct = null;
+$editResultGate = ['allowed' => true, 'reason' => ''];
 $existingResultsBySem = [];
 
 if (isset($_GET['edit'])) {
     $editId = (int)$_GET['edit'];
-    $st = $db->prepare("SELECT s.*, p.title_en AS program_title, p.degree_level FROM students s LEFT JOIN programs p ON s.program_id = p.id WHERE s.id = ?");
+    $st = $db->prepare("SELECT s.*, p.title_en AS program_title, p.degree_level, p.degree_type AS prog_degree_type, p.duration AS prog_duration, p.duration_years AS prog_duration_years, p.total_semesters AS prog_total_semesters FROM students s LEFT JOIN programs p ON s.program_id = p.id WHERE s.id = ?");
     $st->execute([$editId]);
     $editStudent = $st->fetch(PDO::FETCH_ASSOC);
 
     if ($editStudent) {
+        $editStudentBadges = get_student_status_badges($editStudent);
+        $editProgStruct = get_student_program_structure($editStudent);
+        $editResultGate = can_manage_student_results($editId);
         $resStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY id ASC");
         $resStmt->execute([$editId]);
         $allRes = $resStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -402,7 +662,7 @@ if (isset($_GET['edit'])) {
         $hasAnyEstimatedInStudent = false;
         foreach ($allRes as $r) {
             $sNum = get_semester_number($r['semester']);
-            if ($sNum >= 1 && $sNum <= 8) {
+            if ($sNum >= 1 && $sNum <= 12) {
                 $existingResultsBySem[$sNum][] = $r;
             }
             if (!empty($r['is_estimated'])) {
@@ -415,6 +675,15 @@ if (isset($_GET['edit'])) {
 include __DIR__ . '/includes/admin-header.php';
 ?>
 
+<style>
+  .stu-cgpa-span { grid-column: span 2; }
+  @media (max-width: 768px) {
+    .stu-cgpa-span { grid-column: span 1 !important; }
+    .stu-dir-actions { white-space: normal !important; display: flex; flex-wrap: wrap; gap: 0.3rem; justify-content: flex-end; }
+    #onePageStudentConsole { padding: 1.15rem !important; }
+  }
+</style>
+
 <!-- Top Banner & View Switcher -->
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.75rem; flex-wrap: wrap; gap: 1rem;">
   <div>
@@ -422,13 +691,13 @@ include __DIR__ . '/includes/admin-header.php';
       <i class="fas fa-id-card-alt" style="color: var(--rmu-primary);"></i> Student Management &bull; One-Page Result Console
     </h2>
     <span style="color: #64748b; font-size: 0.88rem;">
-      Rabindra Maitree University &bull; Complete Student Management &bull; Unified Single-Page Student Enrollment, 8-Semester Results &amp; Transcript Publishing
+      Rabindra Maitree University &bull; Complete Student Management, Account Control, Result Visibility &amp; Transcript Publishing
     </span>
   </div>
 
   <div style="display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap;">
     <a href="<?= APP_URL ?>/admin/students.php" class="btn-primary" style="background: <?= !$isConsoleView ? 'var(--rmu-primary)' : '#64748b' ?>; padding: 0.55rem 1.15rem; font-size: 0.88rem; text-decoration: none;">
-      <i class="fas fa-list"></i> Enrolled Students Directory (<?= $totalStudents ?>)
+      <i class="fas fa-list"></i> Enrolled Students Directory (<span id="dirTopTotalBadge"><?= $totalStudents ?></span>)
     </a>
     <a href="<?= APP_URL ?>/admin/students.php?action=enroll" class="btn-primary" style="background: <?= ($isConsoleView && !$editStudent) ? '#059669' : '#0284c7' ?>; padding: 0.55rem 1.25rem; font-size: 0.88rem; text-decoration: none;">
       <i class="fas fa-user-plus"></i> Enroll Student &amp; Manage Results
@@ -442,15 +711,17 @@ include __DIR__ . '/includes/admin-header.php';
   <!-- VIEW 1: ENROLLED STUDENTS DIRECTORY (STATISTICS & TABLE)                  -->
   <!-- ========================================================================= -->
 
+  <div id="studentsDirAjaxAlert" style="display: none; margin-bottom: 1.5rem;"></div>
+
   <!-- Stat Cards Strip -->
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1.25rem; margin-bottom: 2rem;">
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 195px), 1fr)); gap: 1rem; margin-bottom: 2rem;">
     <div class="stat-card">
       <div class="stat-icon" style="background: #e0e7ff; color: #4338ca;">
         <i class="fas fa-user-graduate"></i>
       </div>
       <div>
-        <div style="font-size: 1.6rem; font-weight: 800; color: #0f172a;"><?= $totalStudents ?></div>
-        <div style="font-size: 0.85rem; color: #64748b;">Total Registered Students</div>
+        <div id="dirStatTotalStudents" style="font-size: 1.55rem; font-weight: 800; color: #0f172a;"><?= $totalStudents ?></div>
+        <div style="font-size: 0.82rem; color: #64748b;">Registered Students</div>
       </div>
     </div>
 
@@ -459,18 +730,28 @@ include __DIR__ . '/includes/admin-header.php';
         <i class="fas fa-user-check"></i>
       </div>
       <div>
-        <div style="font-size: 1.6rem; font-weight: 800; color: #0f172a;"><?= $activeStudents ?></div>
-        <div style="font-size: 0.85rem; color: #64748b;">Active Enrolled</div>
+        <div id="dirStatActiveStudents" style="font-size: 1.55rem; font-weight: 800; color: #0f172a;"><?= $activeStudents ?></div>
+        <div style="font-size: 0.82rem; color: #64748b;">Active Enrolled</div>
       </div>
     </div>
 
     <div class="stat-card">
       <div class="stat-icon" style="background: #fef3c7; color: #b45309;">
-        <i class="fas fa-graduation-cap"></i>
+        <i class="fas fa-user-slash"></i>
       </div>
       <div>
-        <div style="font-size: 1.6rem; font-weight: 800; color: #0f172a;"><?= $graduatedStudents ?></div>
-        <div style="font-size: 0.85rem; color: #64748b;">Alumni / Graduated</div>
+        <div id="dirStatDeactivatedStudents" style="font-size: 1.55rem; font-weight: 800; color: #0f172a;"><?= $deactivatedStudents ?></div>
+        <div style="font-size: 0.82rem; color: #64748b;">Deactivated / Suspended</div>
+      </div>
+    </div>
+
+    <div class="stat-card">
+      <div class="stat-icon" style="background: #fee2e2; color: #b91c1c;">
+        <i class="fas fa-eye-slash"></i>
+      </div>
+      <div>
+        <div id="dirStatHiddenResultStudents" style="font-size: 1.55rem; font-weight: 800; color: #0f172a;"><?= $hiddenResultStudents ?></div>
+        <div id="dirStatHiddenSubLabel" style="font-size: 0.82rem; color: #64748b;">Results Hidden <?= $deletedStudents > 0 ? "&bull; {$deletedStudents} Deleted" : '' ?></div>
       </div>
     </div>
 
@@ -479,21 +760,21 @@ include __DIR__ . '/includes/admin-header.php';
         <i class="fas fa-money-check-alt"></i>
       </div>
       <div>
-        <div style="font-size: 1.4rem; font-weight: 800; color: #0f172a;">৳<?= number_format($totalFeesCollected) ?></div>
-        <div style="font-size: 0.85rem; color: #64748b;">Total Fees Collected</div>
+        <div style="font-size: 1.35rem; font-weight: 800; color: #0f172a;">৳<?= number_format($totalFeesCollected) ?></div>
+        <div style="font-size: 0.82rem; color: #64748b;">Total Fees Collected</div>
       </div>
     </div>
   </div>
 
   <!-- Search & Filter Console -->
   <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
-    <form action="<?= APP_URL ?>/admin/students.php" method="GET" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
-      <div style="flex: 2; min-width: 250px;">
-        <input type="text" name="search" value="<?= e($search) ?>" placeholder="Search by Student ID, Name, Phone, Email, Batch..." class="form-control" style="padding: 0.65rem 1rem;">
+    <form action="<?= APP_URL ?>/admin/students.php" method="GET" style="display: flex; gap: 0.85rem; flex-wrap: wrap; align-items: center;">
+      <div style="flex: 2.2; min-width: min(100%, 240px);">
+        <input type="text" name="search" value="<?= e($search) ?>" placeholder="Search by Student ID, Application ID (RMU-2026-0001), Admission Roll (2026-0001), Name, Phone..." class="form-control" style="padding: 0.65rem 1rem;">
       </div>
 
-      <div style="flex: 1; min-width: 180px;">
-        <select name="program_id" class="form-select" style="padding: 0.65rem 1rem;">
+      <div style="flex: 1.2; min-width: min(100%, 170px);">
+        <select name="program_id" class="form-select" style="padding: 0.65rem 0.9rem;">
           <option value="0">All Degree Programs</option>
           <?php foreach ($programs as $pr): ?>
             <option value="<?= $pr['id'] ?>" <?= ($programFilter === (int)$pr['id']) ? 'selected' : '' ?>>
@@ -503,19 +784,30 @@ include __DIR__ . '/includes/admin-header.php';
         </select>
       </div>
 
-      <div style="min-width: 140px;">
-        <select name="status" class="form-select" style="padding: 0.65rem 1rem;">
-          <option value="All" <?= ($statusFilter === 'All') ? 'selected' : '' ?>>All Statuses</option>
+      <div style="min-width: min(100%, 145px);">
+        <select name="status" class="form-select" style="padding: 0.65rem 0.9rem;">
+          <option value="All" <?= ($statusFilter === 'All') ? 'selected' : '' ?>>Account: All</option>
           <option value="Active" <?= ($statusFilter === 'Active') ? 'selected' : '' ?>>Active</option>
-          <option value="Graduated" <?= ($statusFilter === 'Graduated') ? 'selected' : '' ?>>Graduated</option>
+          <option value="Deactivated" <?= ($statusFilter === 'Deactivated') ? 'selected' : '' ?>>Deactivated</option>
           <option value="Suspended" <?= ($statusFilter === 'Suspended') ? 'selected' : '' ?>>Suspended</option>
+          <option value="Graduated" <?= ($statusFilter === 'Graduated') ? 'selected' : '' ?>>Graduated</option>
+          <option value="Deleted" <?= ($statusFilter === 'Deleted') ? 'selected' : '' ?>>Deleted</option>
         </select>
       </div>
 
-      <button type="submit" class="btn-primary" style="padding: 0.65rem 1.4rem;">
+      <div style="min-width: min(100%, 155px);">
+        <select name="result_status" class="form-select" style="padding: 0.65rem 0.9rem;">
+          <option value="all" <?= ($resultStatusFilter === 'all') ? 'selected' : '' ?>>Results: All</option>
+          <option value="published" <?= ($resultStatusFilter === 'published') ? 'selected' : '' ?>>Result Published</option>
+          <option value="hidden" <?= ($resultStatusFilter === 'hidden') ? 'selected' : '' ?>>Result Hidden</option>
+          <option value="pending" <?= ($resultStatusFilter === 'pending') ? 'selected' : '' ?>>Pending</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn-primary" style="padding: 0.65rem 1.35rem;">
         <i class="fas fa-search"></i> Search
       </button>
-      <?php if (!empty($search) || $statusFilter !== 'All' || $programFilter > 0): ?>
+      <?php if (!empty($search) || $statusFilter !== 'All' || $programFilter > 0 || $resultStatusFilter !== 'all'): ?>
         <a href="<?= APP_URL ?>/admin/students.php" style="color: #ef4444; font-size: 0.88rem; font-weight: 600;">Clear Filters</a>
       <?php endif; ?>
     </form>
@@ -527,70 +819,140 @@ include __DIR__ . '/includes/admin-header.php';
       <h3 style="font-size: 1.15rem; font-weight: 800; color: #0f172a; margin: 0;">
         <i class="fas fa-list-ul" style="color:var(--rmu-primary);"></i> Enrolled Students Directory
       </h3>
-      <span style="font-size: 0.85rem; color: #64748b;">Showing <?= count($students) ?> of <?= $totalRows ?> registered students</span>
+      <span id="dirShowingCountText" data-total-filtered="<?= (int)$totalRows ?>" style="font-size: 0.85rem; color: #64748b;">Showing <?= count($students) ?> of <?= $totalRows ?> student accounts</span>
     </div>
 
     <div class="table-responsive">
       <table class="rmu-table" style="box-shadow: none; margin: 0;">
         <thead>
           <tr>
-            <th>Student ID &bull; Name</th>
+            <th>Student ID &bull; App ID &bull; Roll No &bull; Name</th>
             <th>Program &bull; Batch</th>
             <th>Year &bull; Semester</th>
             <th style="text-align:center;">CGPA &bull; Credits</th>
-            <th style="text-align:center;">Status</th>
-            <th style="text-align: right; width:220px;">One-Page Action</th>
+            <th style="text-align:center;">Account &amp; Result Status</th>
+            <th style="text-align: right;">Account &amp; Result Actions</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="studentsDirTbody">
           <?php if (!empty($students)): ?>
             <?php foreach ($students as $stu): ?>
-              <tr>
+              <?php
+                $badges = get_student_status_badges($stu, (int)$stu['total_results_cnt'], (int)$stu['published_results_cnt']);
+                $accB = $badges['account'];
+                $resB = $badges['result'];
+                $isDeleted = ($stu['status'] === 'Deleted');
+                $isActive = ($stu['status'] === 'Active');
+                $isVisible = !empty($badges['results_visible']);
+              ?>
+              <tr data-student-row-id="<?= (int)$stu['id'] ?>" style="<?= $isDeleted ? 'background:#fef2f2; opacity:0.85;' : '' ?>">
                 <td>
-                  <strong style="color: var(--rmu-primary); font-family: monospace; font-size: 0.95rem;">
+                  <strong style="color: var(--rmu-primary); font-family: monospace; font-size: 0.94rem;">
                     <?= e($stu['student_id']) ?>
                   </strong>
+                  <?php if (!empty($stu['roll_number'])): ?>
+                    <span style="font-family:monospace; font-size:0.74rem; background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; padding:1px 6px; border-radius:4px; margin-left:4px; font-weight:700;">Roll: <?= e($stu['roll_number']) ?></span>
+                  <?php endif; ?>
                   <div style="font-weight: 700; color: #0f172a; font-size: 0.92rem;"><?= e($stu['full_name']) ?></div>
-                  <div style="font-size: 0.78rem; color: #64748b;">
-                    <i class="fas fa-envelope"></i> <?= e($stu['email']) ?> &bull; <i class="fas fa-phone-alt"></i> <?= e($stu['phone']) ?>
+                  <div style="font-size: 0.76rem; color: #64748b;">
+                    <?php if (!empty($stu['application_number'])): ?>
+                      <span><i class="fas fa-hashtag"></i> App ID: <strong style="font-family:monospace; color:#334155;"><?= e($stu['application_number']) ?></strong></span> &bull;
+                    <?php endif; ?>
+                    <i class="fas fa-phone-alt"></i> <?= e($stu['phone']) ?>
                   </div>
                 </td>
-                <td style="font-size: 0.85rem;">
+                <td style="font-size: 0.84rem;">
+                  <?php
+                    $rowSess = !empty($stu['academic_session']) ? (string)$stu['academic_session'] : (string)($stu['batch'] ?? '');
+                    $rowDurY = !empty($stu['duration_years']) && (float)$stu['duration_years'] > 0 ? (float)$stu['duration_years'] : 4.0;
+                    $rowEval = evaluate_passing_year_difference($rowSess, $stu['passing_year'] ?? null, $rowDurY, !empty($stu['historical_record_approved']));
+                  ?>
                   <strong style="color: #334155; display: block;"><?= e($stu['program_title'] ?? 'General') ?></strong>
-                  <span style="font-size: 0.78rem; color: #64748b;"><?= e($stu['batch']) ?></span>
+                  <span style="font-size: 0.76rem; color: #64748b;"><?= e($rowSess !== '' ? $rowSess : $stu['batch']) ?></span>
+                  <?php if (!empty($stu['passing_year']) || !empty($rowEval['expected_year'])): ?>
+                    <div style="font-size:0.72rem; margin-top:2px; color:#475569;">
+                      <?php if (!empty($stu['passing_year'])): ?>
+                        Pass: <strong><?= e($stu['passing_year']) ?></strong>
+                      <?php endif; ?>
+                      <?php if (!empty($rowEval['expected_year'])): ?>
+                        <span style="color:#64748b;">(Exp: <?= (int)$rowEval['expected_year'] ?>)</span>
+                      <?php endif; ?>
+                      <?php if (!empty($rowEval['needs_review'])): ?>
+                        <span style="background:#fef3c7; color:#b45309; padding:0 4px; border-radius:3px; font-weight:700;"><?= e($rowEval['status_label']) ?></span>
+                      <?php elseif (!empty($rowEval['historical_approved'])): ?>
+                        <span style="background:#ede9fe; color:#6d28d9; padding:0 4px; border-radius:3px; font-weight:700;">Hist. Approved</span>
+                      <?php endif; ?>
+                    </div>
+                  <?php endif; ?>
                 </td>
                 <td style="font-size: 0.82rem; color: #475569;">
                   <div><?= e($stu['current_year']) ?></div>
                   <small style="color: #64748b;"><?= e($stu['current_semester']) ?></small>
                 </td>
                 <td style="font-size: 0.85rem; text-align:center;">
-                  <strong style="color: #047857; font-size: 1rem; display: block;"><?= number_format($stu['cgpa'], 2) ?></strong>
-                  <small style="color: #64748b;"><?= (int)$stu['credits_completed'] ?> Credits</small>
+                  <strong style="color: #047857; font-size: 1rem; display: block;"><?= number_format((float)$stu['cgpa'], 2) ?></strong>
+                  <small style="color: #64748b;"><?= (int)$stu['credits_completed'] ?> Cr (<?= (int)$badges['published_results'] ?>/<?= (int)$badges['total_results'] ?> Pub)</small>
                 </td>
                 <td style="text-align:center;">
-                  <?php
-                    $stColor = ($stu['status'] === 'Active') ? 'background:#dcfce7; color:#15803d;' : (($stu['status'] === 'Graduated') ? 'background:#e0f2fe; color:#0369a1;' : 'background:#fee2e2; color:#b91c1c;');
-                  ?>
-                  <span style="display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; <?= $stColor ?>">
-                    <?= e($stu['status']) ?>
-                  </span>
+                  <div style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                    <span style="display: inline-flex; align-items:center; gap:4px; padding: 0.2rem 0.6rem; border-radius: 99px; font-size: 0.73rem; font-weight: 800; background:<?= e($accB['bg']) ?>; color:<?= e($accB['color']) ?>; border:1px solid <?= e($accB['border']) ?>;">
+                      <i class="fas <?= e($accB['icon']) ?>"></i> <?= e($accB['label']) ?>
+                    </span>
+                    <span style="display: inline-flex; align-items:center; gap:4px; padding: 0.18rem 0.55rem; border-radius: 99px; font-size: 0.71rem; font-weight: 700; background:<?= e($resB['bg']) ?>; color:<?= e($resB['color']) ?>; border:1px solid <?= e($resB['border']) ?>;">
+                      <i class="fas <?= e($resB['icon']) ?>"></i> <?= e($resB['label']) ?>
+                    </span>
+                  </div>
                 </td>
-                <td style="text-align: right; white-space: nowrap;">
+                <td class="stu-dir-actions" style="text-align: right; white-space: nowrap;">
                   <!-- Direct One-Page Management Trigger -->
-                  <a href="<?= APP_URL ?>/admin/students.php?edit=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.4rem 0.75rem; font-size: 0.8rem; background: #059669; display: inline-flex; align-items:center; gap:4px; text-decoration:none;" title="Open Unified One-Page Student & Results Form">
-                    <i class="fas fa-edit"></i> Edit &amp; Results
-                  </a>
-                  <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.4rem 0.65rem; font-size: 0.8rem; background: #0284c7; display: inline-flex; align-items:center; gap:4px; text-decoration:none;" title="View Dossier">
+                  <?php if (!$isDeleted): ?>
+                    <a href="<?= APP_URL ?>/admin/students.php?edit=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.36rem 0.65rem; font-size: 0.78rem; background: #059669; display: inline-flex; align-items:center; gap:4px; text-decoration:none;" title="Open Unified One-Page Student & Results Form">
+                      <i class="fas fa-edit"></i> Edit &amp; Results
+                    </a>
+                  <?php endif; ?>
+                  <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= $stu['id'] ?>" class="btn-primary" style="padding: 0.36rem 0.65rem; font-size: 0.78rem; background: #0284c7; display: inline-flex; align-items:center; gap:4px; text-decoration:none;" title="Open Individual Student Profile & Action Panel">
                     <i class="fas fa-eye"></i> Details
                   </a>
-                  <form action="<?= APP_URL ?>/admin/students.php" method="POST" style="display: inline-block;" onsubmit="return confirm('Delete student <?= e($stu['full_name']) ?> (<?= e($stu['student_id']) ?>)? All associated academic results will also be deleted!');">
-                    <?= csrf_field() ?>
-                    <input type="hidden" name="action" value="delete">
-                    <input type="hidden" name="id" value="<?= $stu['id'] ?>">
-                    <button type="submit" style="background: #fee2e2; border: none; color: #ef4444; font-size: 0.82rem; cursor: pointer; padding: 0.4rem 0.6rem; border-radius:4px; font-weight: 600;" title="Delete Student">
+
+                  <?php if (!$isDeleted): ?>
+                    <!-- Show / Hide Result Quick Toggle -->
+                    <form action="<?= APP_URL ?>/admin/students.php" method="POST" style="display:inline-block; margin:0;" onsubmit="return confirm('<?= $isVisible ? 'Hide published results from student view without deleting academic records?' : 'Show results in the Student Portal again?' ?>');">
+                      <?= csrf_field() ?>
+                      <input type="hidden" name="action" value="<?= $isVisible ? 'hide_results' : 'show_results' ?>">
+                      <input type="hidden" name="id" value="<?= $stu['id'] ?>">
+                      <button type="submit" style="background: <?= $isVisible ? '#fef3c7' : '#dcfce7' ?>; border: 1px solid <?= $isVisible ? '#fde68a' : '#86efac' ?>; color: <?= $isVisible ? '#92400e' : '#166534' ?>; font-size: 0.76rem; cursor: pointer; padding: 0.36rem 0.55rem; border-radius:4px; font-weight: 700;" title="<?= $isVisible ? 'Hide Result from Student Portal' : 'Show Result in Student Portal' ?>">
+                        <i class="fas <?= $isVisible ? 'fa-eye-slash' : 'fa-eye' ?>"></i>
+                      </button>
+                    </form>
+
+                    <!-- Activate / Deactivate Account -->
+                    <?php if ($isActive): ?>
+                      <button type="button" onclick="openDirDeactivateModal(<?= (int)$stu['id'] ?>, <?= htmlspecialchars(json_encode($stu['student_id']), ENT_QUOTES, 'UTF-8') ?>, <?= htmlspecialchars(json_encode($stu['full_name']), ENT_QUOTES, 'UTF-8') ?>)" style="background: #fff7ed; border: 1px solid #fed7aa; color: #c2410c; font-size: 0.76rem; cursor: pointer; padding: 0.36rem 0.55rem; border-radius:4px; font-weight: 700;" title="Deactivate Account & Invalidate Sessions">
+                        <i class="fas fa-user-slash"></i>
+                      </button>
+                    <?php else: ?>
+                      <form action="<?= APP_URL ?>/admin/students.php" method="POST" style="display:inline-block; margin:0;" onsubmit="return confirm('Reactivate account <?= e($stu['student_id']) ?> so the student can log in again?');">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="action" value="activate_account">
+                        <input type="hidden" name="id" value="<?= $stu['id'] ?>">
+                        <button type="submit" style="background: #dcfce7; border: 1px solid #86efac; color: #15803d; font-size: 0.76rem; cursor: pointer; padding: 0.36rem 0.55rem; border-radius:4px; font-weight: 700;" title="Activate / Reactivate Account">
+                          <i class="fas fa-user-check"></i>
+                        </button>
+                      </form>
+                    <?php endif; ?>
+                  <?php endif; ?>
+
+                  <?php if (is_admin_manager_role()): ?>
+                    <!-- Permanent Delete Student Record -->
+                    <button type="button"
+                            class="dir-delete-student-btn"
+                            data-student-id="<?= (int)$stu['id'] ?>"
+                            onclick="deleteDirectoryStudent(<?= (int)$stu['id'] ?>, this)"
+                            style="background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c; font-size: 0.76rem; cursor: pointer; padding: 0.36rem 0.55rem; border-radius:4px; font-weight: 700;"
+                            title="Delete Student">
                       <i class="fas fa-trash-alt"></i>
                     </button>
-                  </form>
+                  <?php endif; ?>
                 </td>
               </tr>
             <?php endforeach; ?>
@@ -611,13 +973,216 @@ include __DIR__ . '/includes/admin-header.php';
         <ul class="pagination" style="margin: 0;">
           <?php for ($i = 1; $i <= $totalPages; $i++): ?>
             <li class="page-item <?= ($page === $i) ? 'active' : '' ?>">
-              <a href="<?= APP_URL ?>/admin/students.php?search=<?= urlencode($search) ?>&program_id=<?= $programFilter ?>&status=<?= urlencode($statusFilter) ?>&page=<?= $i ?>" class="page-link"><?= $i ?></a>
+              <a href="<?= APP_URL ?>/admin/students.php?search=<?= urlencode($search) ?>&program_id=<?= $programFilter ?>&status=<?= urlencode($statusFilter) ?>&result_status=<?= urlencode($resultStatusFilter) ?>&page=<?= $i ?>" class="page-link"><?= $i ?></a>
             </li>
           <?php endfor; ?>
         </ul>
       </div>
     <?php endif; ?>
   </div>
+
+  <!-- DIRECTORY MODAL: DEACTIVATE ACCOUNT -->
+  <div id="dirDeactivateModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:9999; justify-content:center; align-items:center; padding:1rem; overflow-y:auto;">
+    <div style="background:#ffffff; border-radius:12px; max-width:480px; width:100%; padding:1.75rem; box-shadow:0 20px 45px rgba(0,0,0,0.28);">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #e2e8f0; padding-bottom:0.75rem; margin-bottom:1rem;">
+        <h3 style="margin:0; font-size:1.15rem; color:#b45309; font-weight:800;"><i class="fas fa-user-slash"></i> Confirm Account Deactivation</h3>
+        <button type="button" onclick="closeDirModal('dirDeactivateModal')" style="border:none; background:none; font-size:1.35rem; color:#64748b; cursor:pointer;">&times;</button>
+      </div>
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:0.85rem; margin-bottom:1rem; font-size:0.84rem; color:#92400e;">
+        Deactivating <strong id="dirDeactLabel"></strong> will immediately block Student Portal logins and terminate active sessions. All academic records will remain preserved and can be reactivated anytime.
+      </div>
+      <form action="<?= APP_URL ?>/admin/students.php" method="POST">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="deactivate_account">
+        <input type="hidden" name="id" id="dirDeactId" value="">
+        <div class="form-group">
+          <label class="form-label" style="font-weight:700;">Deactivation Reason / Note</label>
+          <input type="text" name="reason" class="form-control" placeholder="e.g. Temporary administrative hold" value="Administrative hold">
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:0.65rem; margin-top:1.25rem;">
+          <button type="button" onclick="closeDirModal('dirDeactivateModal')" style="background:#e2e8f0; color:#334155; border:none; padding:0.55rem 1.1rem; border-radius:6px; font-weight:700; cursor:pointer;">Cancel</button>
+          <button type="submit" style="background:#d97706; color:#ffffff; border:none; padding:0.55rem 1.2rem; border-radius:6px; font-weight:800; cursor:pointer;">Deactivate Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- DIRECTORY MODAL: PERMANENT DELETE CONFIRMATION -->
+  <div id="dirDeleteModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.72); z-index:9999; justify-content:center; align-items:center; padding:1rem; overflow-y:auto;">
+    <div style="background:#ffffff; border-radius:12px; max-width:520px; width:100%; padding:1.75rem; border:2px solid #fca5a5; box-shadow:0 24px 55px rgba(0,0,0,0.35);">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #fecaca; padding-bottom:0.75rem; margin-bottom:1rem;">
+        <h3 style="margin:0; font-size:1.15rem; color:#b91c1c; font-weight:800;"><i class="fas fa-exclamation-triangle"></i> Permanent Account Deletion</h3>
+        <button type="button" onclick="closeDirModal('dirDeleteModal')" style="border:none; background:none; font-size:1.35rem; color:#64748b; cursor:pointer;">&times;</button>
+      </div>
+      <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:0.9rem; margin-bottom:1rem; font-size:0.84rem; color:#7f1d1d; line-height:1.5;">
+        <strong>Extra Confirmation Required:</strong><br>
+        You are permanently deleting <strong id="dirDelLabel"></strong>. Login credentials &amp; active portal sessions will be permanently revoked. Necessary audit &amp; academic history will be safely archived under RMU data-retention policy without affecting any other student.
+      </div>
+      <form action="<?= APP_URL ?>/admin/students.php" method="POST">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="delete_student_account">
+        <input type="hidden" name="id" id="dirDelId" value="">
+        <div class="form-group">
+          <label class="form-label" style="font-weight:700; color:#991b1b;">Type Student ID (<code id="dirDelCodeHint"></code>) or <code>DELETE</code> to confirm *</label>
+          <input type="text" name="confirm_student_id" class="form-control" required placeholder="Type Student ID or DELETE" style="border:1.5px solid #fca5a5; font-family:monospace; font-weight:700;">
+        </div>
+        <div class="form-group">
+          <label class="form-label" style="font-weight:700;">Deletion Reason *</label>
+          <input type="text" name="reason" class="form-control" required value="Permanent account closure authorized by administration">
+        </div>
+        <label style="display:flex; align-items:flex-start; gap:0.5rem; font-size:0.83rem; font-weight:700; color:#7f1d1d; background:#fff1f2; padding:0.65rem; border-radius:6px; border:1px solid #fecdd3; margin-bottom:1rem; cursor:pointer;">
+          <input type="checkbox" name="confirm_permanent_delete" value="1" required style="margin-top:3px;">
+          <span>I confirm this account should be permanently deleted and credentials revoked.</span>
+        </label>
+        <div style="display:flex; justify-content:flex-end; gap:0.65rem;">
+          <button type="button" onclick="closeDirModal('dirDeleteModal')" style="background:#e2e8f0; color:#334155; border:none; padding:0.55rem 1.1rem; border-radius:6px; font-weight:700; cursor:pointer;">Cancel</button>
+          <button type="submit" style="background:#b91c1c; color:#ffffff; border:none; padding:0.55rem 1.25rem; border-radius:6px; font-weight:800; cursor:pointer;">Permanently Delete Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    <?php if (is_admin_manager_role()): ?>
+    var dirCsrfToken = <?= json_encode(csrf_token(), JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    var dirDeleteStudentApiUrl = <?= json_encode(APP_URL . '/actions/admin-delete-student.php', JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+
+    function showDirAjaxAlert(type, message) {
+      var box = document.getElementById('studentsDirAjaxAlert');
+      if (!box) return;
+      box.innerHTML = '';
+      var alertDiv = document.createElement('div');
+      alertDiv.className = 'alert ' + (type === 'success' ? 'alert-success' : 'alert-error');
+      var icon = document.createElement('i');
+      icon.className = 'fas ' + (type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle');
+      var msgDiv = document.createElement('div');
+      msgDiv.textContent = message;
+      alertDiv.appendChild(icon);
+      alertDiv.appendChild(msgDiv);
+      box.appendChild(alertDiv);
+      box.style.display = 'block';
+      box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function deleteDirectoryStudent(studentId, btnEl) {
+      var targetId = parseInt(studentId, 10);
+      if (!targetId || targetId <= 0) {
+        showDirAjaxAlert('error', 'Invalid student database ID.');
+        return;
+      }
+      if (!window.confirm('Are you sure you want to delete this student?')) {
+        return;
+      }
+
+      var originalHtml = btnEl ? btnEl.innerHTML : '';
+      if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      }
+
+      fetch(dirDeleteStudentApiUrl, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: new URLSearchParams({
+          csrf_token: dirCsrfToken,
+          id: String(targetId)
+        }).toString()
+      })
+      .then(function(res) {
+        return res.json().catch(function() {
+          return { success: false, message: 'Unexpected server response (HTTP ' + res.status + ').' };
+        }).then(function(data) {
+          return { ok: res.ok, status: res.status, data: data };
+        });
+      })
+      .then(function(result) {
+        var data = result.data || {};
+        if (!result.ok || !data.success) {
+          if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.innerHTML = originalHtml;
+          }
+          showDirAjaxAlert('error', data.message || 'Failed to delete student record.');
+          return;
+        }
+
+        var tbody = document.getElementById('studentsDirTbody');
+        var rowEl = tbody ? tbody.querySelector('tr[data-student-row-id="' + targetId + '"]') : null;
+        if (rowEl && rowEl.parentNode) {
+          rowEl.parentNode.removeChild(rowEl);
+        }
+
+        if (tbody && tbody.querySelectorAll('tr[data-student-row-id]').length === 0) {
+          var emptyTr = document.createElement('tr');
+          emptyTr.innerHTML = '<td colspan="6" style="text-align: center; padding: 3rem; color: #64748b;">No students match your query.</td>';
+          tbody.appendChild(emptyTr);
+        }
+
+        if (data.stats) {
+          var s = data.stats;
+          var eTotal = document.getElementById('dirStatTotalStudents');
+          var eBadge = document.getElementById('dirTopTotalBadge');
+          var eAct   = document.getElementById('dirStatActiveStudents');
+          var eDeact = document.getElementById('dirStatDeactivatedStudents');
+          var eHid   = document.getElementById('dirStatHiddenResultStudents');
+          var eSub   = document.getElementById('dirStatHiddenSubLabel');
+          if (eTotal && typeof s.total_students !== 'undefined') eTotal.textContent = String(s.total_students);
+          if (eBadge && typeof s.total_students !== 'undefined') eBadge.textContent = String(s.total_students);
+          if (eAct && typeof s.active_students !== 'undefined') eAct.textContent = String(s.active_students);
+          if (eDeact && typeof s.deactivated_students !== 'undefined') eDeact.textContent = String(s.deactivated_students);
+          if (eHid && typeof s.hidden_result_students !== 'undefined') eHid.textContent = String(s.hidden_result_students);
+          if (eSub && typeof s.deleted_students !== 'undefined') {
+            eSub.innerHTML = 'Results Hidden' + (s.deleted_students > 0 ? ' &bull; ' + s.deleted_students + ' Deleted' : '');
+          }
+        }
+
+        var showTxt = document.getElementById('dirShowingCountText');
+        if (showTxt && tbody) {
+          var remRows = tbody.querySelectorAll('tr[data-student-row-id]').length;
+          var prevTotal = parseInt(showTxt.getAttribute('data-total-filtered') || String(remRows), 10);
+          var nextTotal = Math.max(remRows, prevTotal - 1);
+          showTxt.setAttribute('data-total-filtered', String(nextTotal));
+          showTxt.textContent = 'Showing ' + remRows + ' of ' + nextTotal + ' student accounts';
+        }
+
+        showDirAjaxAlert('success', data.message || 'Student deleted successfully.');
+      })
+      .catch(function() {
+        if (btnEl) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = originalHtml;
+        }
+        showDirAjaxAlert('error', 'Network error while attempting to delete student record.');
+      });
+    }
+    <?php endif; ?>
+
+    function openDirDeactivateModal(id, code, name) {
+      document.getElementById('dirDeactId').value = id;
+      document.getElementById('dirDeactLabel').textContent = name + ' (' + code + ')';
+      document.getElementById('dirDeactivateModal').style.display = 'flex';
+    }
+    function openDirDeleteModal(id, code, name) {
+      document.getElementById('dirDelId').value = id;
+      document.getElementById('dirDelLabel').textContent = name + ' (' + code + ')';
+      document.getElementById('dirDelCodeHint').textContent = code;
+      document.getElementById('dirDeleteModal').style.display = 'flex';
+    }
+    function closeDirModal(id) {
+      var m = document.getElementById(id);
+      if (m) m.style.display = 'none';
+    }
+    window.addEventListener('click', function(e) {
+      var d1 = document.getElementById('dirDeactivateModal');
+      var d2 = document.getElementById('dirDeleteModal');
+      if (e.target === d1) d1.style.display = 'none';
+      if (e.target === d2) d2.style.display = 'none';
+    });
+  </script>
 
 <?php else: ?>
 
@@ -638,8 +1203,19 @@ include __DIR__ . '/includes/admin-header.php';
         </p>
       </div>
 
-      <div style="display:flex; gap:0.6rem; align-items:center;">
+      <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap;">
         <?php if ($editStudent): ?>
+          <?php if (!empty($editStudentBadges)): ?>
+            <span style="background:<?= e($editStudentBadges['account']['bg']) ?>; color:<?= e($editStudentBadges['account']['color']) ?>; border:1px solid <?= e($editStudentBadges['account']['border']) ?>; padding:4px 10px; border-radius:99px; font-size:0.76rem; font-weight:800;">
+              <i class="fas <?= e($editStudentBadges['account']['icon']) ?>"></i> <?= e($editStudentBadges['account']['label']) ?>
+            </span>
+            <span style="background:<?= e($editStudentBadges['result']['bg']) ?>; color:<?= e($editStudentBadges['result']['color']) ?>; border:1px solid <?= e($editStudentBadges['result']['border']) ?>; padding:4px 10px; border-radius:99px; font-size:0.76rem; font-weight:800;">
+              <i class="fas <?= e($editStudentBadges['result']['icon']) ?>"></i> <?= e($editStudentBadges['result']['label']) ?>
+            </span>
+          <?php endif; ?>
+          <a href="<?= APP_URL ?>/admin/student-detail.php?id=<?= (int)$editStudent['id'] ?>" class="btn-primary" style="background:#0f2c59; padding:0.5rem 1rem; font-size:0.84rem; text-decoration:none;">
+            <i class="fas fa-user-shield"></i> Account &amp; Result Control Panel
+          </a>
           <a href="<?= APP_URL ?>/student/semester-transcript.php?student_id=<?= (int)$editStudent['id'] ?>&semester=all" target="_blank" class="btn-primary" style="background:#15803d; padding:0.5rem 1rem; font-size:0.84rem; text-decoration:none;">
             <i class="fas fa-file-pdf"></i> Official PDF Transcript
           </a>
@@ -649,6 +1225,16 @@ include __DIR__ . '/includes/admin-header.php';
         </a>
       </div>
     </div>
+
+    <?php if ($editStudent && ($editStudent['status'] ?? '') === 'Deleted'): ?>
+      <div style="background:#fef2f2; border:1.5px solid #fca5a5; color:#991b1b; padding:0.9rem 1.15rem; border-radius:8px; margin-bottom:1.5rem; font-size:0.88rem;">
+        <strong><i class="fas fa-trash-alt"></i> Deleted Student Account:</strong> Credentials for this account were permanently revoked. Retained academic and audit records remain preserved under University Data-Retention Policy.
+      </div>
+    <?php endif; ?>
+
+    <?php if ($editStudent): ?>
+      <?php render_student_login_credentials_section($editStudent, is_admin_manager_role(), APP_URL . '/admin/students.php?edit=' . (int)$editStudent['id']); ?>
+    <?php endif; ?>
 
     <form action="<?= APP_URL ?>/admin/students.php" method="POST" id="unifiedStudentForm">
       <?= csrf_field() ?>
@@ -665,12 +1251,30 @@ include __DIR__ . '/includes/admin-header.php';
           <i class="fas fa-user-circle" style="color:var(--rmu-primary);"></i> 1. Student Personal &amp; Academic Information (All 21 Fields)
         </h4>
 
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:1.25rem;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap:1.25rem;">
           
           <!-- 1. Student ID -->
           <div class="form-group">
             <label class="form-label" style="font-weight:700;">Student ID Number</label>
             <input type="text" name="student_id" id="formStudentId" value="<?= e($editStudent['student_id'] ?? '') ?>" placeholder="e.g. RMU2601005 (or blank to auto-generate)" class="form-control" <?= $editStudent ? 'readonly style="background:#f1f5f9; font-weight:700;"' : '' ?>>
+          </div>
+
+          <!-- Roll Number -->
+          <div class="form-group">
+            <label class="form-label">Admission / Examination Roll Number</label>
+            <input type="text" name="roll_number" value="<?= e($editStudent['roll_number'] ?? '') ?>" placeholder="e.g. 2026-0001" class="form-control">
+          </div>
+
+          <!-- Application Number -->
+          <div class="form-group">
+            <label class="form-label">Application ID</label>
+            <input type="text" name="application_number" value="<?= e($editStudent['application_number'] ?? '') ?>" placeholder="e.g. RMU-2026-0001" class="form-control">
+          </div>
+
+          <!-- Username -->
+          <div class="form-group">
+            <label class="form-label">Portal Username</label>
+            <input type="text" name="username" value="<?= e($editStudent['username'] ?? '') ?>" placeholder="Defaults to Student ID if blank" class="form-control">
           </div>
 
           <!-- 2. Full Name -->
@@ -731,19 +1335,52 @@ include __DIR__ . '/includes/admin-header.php';
             <input type="text" name="permanent_address" value="<?= e($editStudent['permanent_address'] ?? '') ?>" placeholder="Permanent address" class="form-control">
           </div>
 
-          <!-- 11. Degree Program (Triggers 8 vs 4 Semesters) -->
+          <!-- 11. Degree Program (Triggers configured semesters & course duration) -->
           <div class="form-group">
             <label class="form-label" style="font-weight:700; color:#1e40af;">
-              Degree Program (Bachelor's / Master's) *
+              Degree Program (Bachelor's / B.Ed / Master's) *
             </label>
             <select name="program_id" id="programSelect" class="form-select" onchange="handleProgramChange(this.value)">
               <option value="">Select Degree Program</option>
               <?php foreach ($programs as $pr): ?>
-                <option value="<?= $pr['id'] ?>" data-level="<?= e($pr['degree_level']) ?>" data-duration="<?= e($pr['duration']) ?>" <?= (($editStudent['program_id'] ?? 1) == $pr['id']) ? 'selected' : '' ?>>
-                  <?= e($pr['title_en']) ?> — <?= e($pr['degree_level']) ?> (<?= e($pr['duration']) ?>)
+                <option value="<?= $pr['id'] ?>" data-level="<?= e($pr['degree_level']) ?>" data-type="<?= e($pr['degree_type'] ?? 'Bachelor / Honours') ?>" data-semesters="<?= (int)($pr['total_semesters'] ?? 8) ?>" data-duration="<?= e($pr['duration']) ?>" data-duration-years="<?= htmlspecialchars((string)($pr['duration_years'] ?? 4.0)) ?>" <?= (($editStudent['program_id'] ?? 1) == $pr['id']) ? 'selected' : '' ?>>
+                  <?= e($pr['title_en']) ?> — <?= e($pr['degree_type'] ?? $pr['degree_level']) ?> (<?= e($pr['duration']) ?>)
                 </option>
               <?php endforeach; ?>
             </select>
+          </div>
+
+          <!-- Degree Type, Configured Semesters & Duration (Years) -->
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700;">Degree Type</label>
+            <select name="degree_type" id="degreeTypeSelect" class="form-select" onchange="handleDegreeTypeSelect(this.value)">
+              <?php $curDegType = $editStudent ? ($editProgStruct['degree_type'] ?? 'Bachelor / Honours') : 'Bachelor / Honours'; ?>
+              <option value="Bachelor / Honours" <?= ($curDegType === 'Bachelor / Honours') ? 'selected' : '' ?>>Bachelor / Honours (4 Years / 8 Semesters)</option>
+              <option value="B.Ed" <?= ($curDegType === 'B.Ed') ? 'selected' : '' ?>>B.Ed (1–1.5 Years / 2–3 Semesters)</option>
+              <option value="Master's" <?= ($curDegType === "Master's") ? 'selected' : '' ?>>Master's (1–2 Years / 2–4 Semesters)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700;">Configured Semesters</label>
+            <?php
+              $curSems = $editStudent ? (int)($editProgStruct['total_semesters'] ?? 8) : 8;
+              $curDurYears = $editStudent ? (float)($editProgStruct['duration_years'] ?? 4.0) : 4.0;
+            ?>
+            <select name="configured_semesters" id="configuredSemestersSelect" class="form-select" onchange="handleSemesterCountChange(this.value)">
+              <?php for ($sOpt = 1; $sOpt <= 12; $sOpt++): ?>
+                <?php
+                  $optY = $sOpt * 0.5;
+                  $optYStr = (abs($optY - round($optY)) < 0.05) ? ((int)round($optY) . ((int)round($optY) === 1 ? ' Year' : ' Years')) : (number_format($optY, 1) . ' Years');
+                ?>
+                <option value="<?= $sOpt ?>" <?= ($curSems === $sOpt) ? 'selected' : '' ?>><?= $sOpt ?> <?= $sOpt === 1 ? 'Semester' : 'Semesters' ?> (<?= $optYStr ?>)</option>
+              <?php endfor; ?>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700;">Course Duration (Years)</label>
+            <input type="number" step="0.5" min="0.5" max="6" name="duration_years" id="formDurationYears" value="<?= htmlspecialchars((string)$curDurYears) ?>" class="form-control" oninput="syncExpectedPassingYearPreview()">
           </div>
 
           <!-- 12. Academic Department -->
@@ -759,10 +1396,59 @@ include __DIR__ . '/includes/admin-header.php';
             </select>
           </div>
 
-          <!-- 13. Academic Session / Batch -->
+          <!-- 13. Academic Session / Batch & Passing Year -->
+          <?php
+            $formSessVal = $editStudent ? (!empty($editStudent['academic_session']) ? (string)$editStudent['academic_session'] : (string)($editStudent['batch'] ?? $defaultActiveSession)) : $defaultActiveSession;
+            $formBatchVal = $editStudent ? (string)($editStudent['batch'] ?? $defaultActiveSession) : $defaultActiveSession;
+            $formExpCalc = calculate_expected_passing_year($formSessVal, $curDurYears);
+          ?>
           <div class="form-group">
             <label class="form-label">Academic Session / Batch</label>
-            <input type="text" name="batch" id="formBatch" value="<?= e($editStudent['batch'] ?? 'Batch 26 (2026–2030)') ?>" class="form-control">
+            <input type="text" name="batch" id="formBatch" value="<?= e($formBatchVal) ?>" class="form-control">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700;">Academic Session Label</label>
+            <input type="text" name="academic_session" id="formAcademicSession" list="rmuSessionsDatalist" value="<?= e($formSessVal) ?>" placeholder="e.g. Spring 2011 or <?= e($defaultActiveSession) ?>" class="form-control" oninput="syncExpectedPassingYearPreview()">
+            <datalist id="rmuSessionsDatalist">
+              <?php foreach ($allSessionsList as $asItem): ?>
+                <option value="<?= e($asItem['session_name']) ?>"><?= empty($asItem['is_enabled']) ? '(Disabled)' : (!empty($asItem['is_current']) ? '(Current)' : '') ?></option>
+              <?php endforeach; ?>
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700;">Passing Year (Student Selection — Never Auto-Overwritten)</label>
+            <input type="text" name="passing_year" id="formPassingYear" list="rmuPassingYearsDatalist" value="<?= e($editStudent['passing_year'] ?? '') ?>" placeholder="e.g. 2011 – <?= (int)date('Y') + 4 ?>" class="form-control">
+            <datalist id="rmuPassingYearsDatalist">
+              <?php foreach ($allPassingYearsList as $pyItem): ?>
+                <option value="<?= (int)$pyItem['year_value'] ?>"><?= empty($pyItem['is_enabled']) ? '(Disabled)' : '' ?></option>
+              <?php endforeach; ?>
+            </datalist>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" style="font-weight:700; color:#1e40af;">Expected Passing Year (Advisory Only)</label>
+            <div id="advisoryExpectedYearBox" style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:0.55rem 0.75rem; font-size:0.84rem; color:#1e3a8a; font-weight:700;">
+              <?php if ($formExpCalc): ?>
+                <?= (int)$formExpCalc['expected_year'] ?> <span style="font-weight:500; font-size:0.78rem; color:#475569;">(<?= e($formExpCalc['formula']) ?>)</span>
+              <?php else: ?>
+                Select session year to preview (Advisory Only)
+              <?php endif; ?>
+            </div>
+            <small style="color:#64748b; font-size:0.73rem;">Formula: Session Year + Course Duration. Never alters Passing Year.</small>
+          </div>
+
+          <?php if ($editStudent): ?>
+          <div class="form-group">
+            <label class="form-label">Academic Change Reason (Audit Trail)</label>
+            <input type="text" name="academic_edit_reason" placeholder="Optional reason when updating session / passing year / structure" class="form-control">
+          </div>
+          <?php endif; ?>
+
+          <div class="form-group">
+            <label class="form-label">Result Publication Date</label>
+            <input type="date" name="result_publication_date" id="formPubDate" value="<?= e($editStudent['result_publication_date'] ?? date('Y-m-d')) ?>" class="form-control">
           </div>
 
           <!-- 14. Current Year -->
@@ -787,13 +1473,17 @@ include __DIR__ . '/includes/admin-header.php';
             <label class="form-label">Enrollment Status</label>
             <select name="status" class="form-select">
               <option value="Active" <?= (($editStudent['status'] ?? '') === 'Active') ? 'selected' : '' ?>>Active</option>
+              <option value="Deactivated" <?= (($editStudent['status'] ?? '') === 'Deactivated') ? 'selected' : '' ?>>Deactivated</option>
               <option value="Graduated" <?= (($editStudent['status'] ?? '') === 'Graduated') ? 'selected' : '' ?>>Graduated</option>
               <option value="Suspended" <?= (($editStudent['status'] ?? '') === 'Suspended') ? 'selected' : '' ?>>Suspended</option>
+              <?php if (($editStudent['status'] ?? '') === 'Deleted'): ?>
+                <option value="Deleted" selected>Deleted</option>
+              <?php endif; ?>
             </select>
           </div>
 
           <!-- 17. Cumulative CGPA (One-Click Update & Generator) -->
-          <div class="form-group" style="grid-column: span 2;">
+          <div class="form-group stu-cgpa-span">
             <label class="form-label" style="display:flex; justify-content:space-between; align-items:center;">
               <span>Cumulative CGPA (UGC 4.00 Scale)</span>
               <span style="font-size:0.75rem; color:#b45309; font-weight:700;"><i class="fas fa-magic"></i> Auto-Generate Available</span>
@@ -832,9 +1522,23 @@ include __DIR__ . '/includes/admin-header.php';
 
           <!-- 21. Initial Portal Password / Reset Password -->
           <div class="form-group">
-            <label class="form-label"><?= $editStudent ? 'Reset Password (optional)' : 'Initial Portal Password' ?></label>
-            <input type="text" name="<?= $editStudent ? 'new_password' : 'password' ?>" value="<?= $editStudent ? '' : 'student123' ?>" placeholder="<?= $editStudent ? 'Leave blank to retain password' : 'Default: student123' ?>" class="form-control">
-            <small style="color: #64748b;">Student will authenticate with this password in the Student Portal.</small>
+            <label class="form-label"><?= $editStudent ? 'Set Manual Password Override (optional)' : 'Initial Portal Password (Auto-Generated)' ?></label>
+            <?php if ($editStudent): ?>
+              <input type="password" name="new_password" value="" autocomplete="new-password" placeholder="Leave blank to keep existing password (or use Reset Password above)" class="form-control">
+              <small style="color: #64748b;">Optional override; stored securely using one-way hashing.</small>
+            <?php else: ?>
+              <?php $autoEnrollPass = generate_secure_student_password(12); ?>
+              <div style="display:flex; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+                <input type="password" name="password" id="enrollInitialPassword" value="<?= e($autoEnrollPass) ?>" autocomplete="new-password" placeholder="Auto-generated if left blank" class="form-control" style="flex:1; min-width:150px; font-family:monospace; font-weight:700;">
+                <button type="button" id="toggleEnrollPwdBtn" onclick="rmuToggleEnrollPassword()" style="background:#0284c7; color:#ffffff; border:none; border-radius:6px; padding:0.48rem 0.72rem; font-size:0.78rem; font-weight:700; cursor:pointer; white-space:nowrap;">
+                  <i class="fas fa-eye"></i> Show
+                </button>
+                <button type="button" onclick="rmuRegenEnrollPassword()" style="background:#0f2c59; color:#ffffff; border:none; border-radius:6px; padding:0.48rem 0.72rem; font-size:0.78rem; font-weight:700; cursor:pointer; white-space:nowrap;" title="Generate new random password">
+                  <i class="fas fa-dice"></i> Regenerate
+                </button>
+              </div>
+              <small style="color: #64748b;">Automatically generated secure random password; hashed with <code style="background:#f1f5f9; padding:0 4px;">password_hash()</code> on enrollment.</small>
+            <?php endif; ?>
           </div>
 
         </div>
@@ -866,36 +1570,57 @@ include __DIR__ . '/includes/admin-header.php';
         </div>
 
         <div style="padding:1.5rem;">
+          <?php if ($editStudent && empty($editResultGate['allowed'])): ?>
+            <div style="background:#fff1f2; border:2px solid #fb7185; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1.5rem; color:#881337; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+              <div>
+                <div style="font-weight:800; font-size:0.95rem;"><i class="fas fa-lock"></i> Result Management Locked — Pending Application Acceptance</div>
+                <div style="font-size:0.84rem; margin-top:2px;"><?= e($editResultGate['reason']) ?> Only applications accepted by Admin can proceed to Result Management.</div>
+              </div>
+              <a href="<?= APP_URL ?>/admin/admissions.php?status=Pending" class="btn-primary" style="background:#be123c; padding:0.45rem 0.9rem; font-size:0.82rem; text-decoration:none;">
+                Review Pending Applications
+              </a>
+            </div>
+          <?php endif; ?>
           
           <!-- One-Click CGPA Update & Auto-Estimated Result Generator Card -->
           <div style="background: linear-gradient(135deg, #0f2c59 0%, #1e40af 100%); border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.75rem; color: #ffffff; box-shadow: 0 4px 12px rgba(15,44,89,0.15);">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;">
-              <div style="flex:1; min-width:280px;">
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.35rem;">
+              <div style="flex:1; min-width:min(100%, 280px);">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.35rem; flex-wrap:wrap;">
                   <span style="background:#f59e0b; color:#0f172a; font-size:0.75rem; font-weight:900; padding:2px 8px; border-radius:4px; text-transform:uppercase;">
-                    <i class="fas fa-magic"></i> Generator
+                    <i class="fas fa-magic"></i> ESTIMATED / GENERATED
                   </span>
                   <h4 style="margin:0; font-size:1.15rem; font-weight:800; color:#ffffff;">
                     One-Click CGPA Update &amp; Automatic Estimated Results
                   </h4>
                 </div>
                 <p style="margin:0; font-size:0.85rem; color:#cbd5e1; line-height:1.45;">
-                  Enter target CGPA below. The system automatically identifies degree level (<strong><?= ($editStudent && strtolower($editStudent['degree_level'] ?? '') === 'postgraduate') ? 'Postgraduate (4 Semesters)' : 'Undergraduate (8 Semesters)' ?></strong>), loads official curriculum subjects, and generates plausible marks &amp; grades mathematically matching your target CGPA.
+                  Enter Final CGPA, Academic Session, and Result Publication Date below. The system identifies the configured structure (<strong><?= e($editStudent ? ($editProgStruct['degree_type'] . ' — ' . ($editProgStruct['total_semesters'] ?? 8) . ' Semesters') : 'Bachelor / Honours — 8 Semesters') ?></strong>), loads curriculum subjects, and distributes semester GPAs matching your target CGPA.
                 </p>
                 <div style="margin-top:0.45rem; font-size:0.78rem; color:#fde68a;">
                   <i class="fas fa-exclamation-triangle"></i> Results are clearly flagged: <em>"ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT"</em>
                 </div>
               </div>
 
-              <!-- One-Click Target Input and Buttons -->
+              <!-- One-Click Target Input, Session, Date and Buttons -->
               <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap;">
                 <div style="background:#ffffff; border-radius:6px; padding:4px 10px; display:flex; align-items:center; border:2px solid #f59e0b;">
                   <span style="font-weight:800; color:#0f2c59; font-size:0.85rem; margin-right:6px;">Target CGPA:</span>
                   <input type="number" step="0.01" min="2.00" max="4.00" name="target_cgpa_input" id="targetCgpaInput" value="<?= number_format((float)($editStudent['cgpa'] ?? 3.50), 2) ?>" style="width:80px; font-weight:900; font-size:1.1rem; color:#1e40af; border:none; outline:none; text-align:center;">
                 </div>
 
+                <div style="background:#ffffff; border-radius:6px; padding:4px 8px; display:flex; align-items:center; border:1px solid #cbd5e1;">
+                  <span style="font-weight:700; color:#0f2c59; font-size:0.78rem; margin-right:5px;">Session:</span>
+                  <input type="text" name="gen_academic_session" id="genAcademicSession" list="rmuSessionsDatalist" value="<?= e($editStudent['academic_session'] ?? ($editStudent['batch'] ?? $defaultActiveSession)) ?>" style="width:125px; font-weight:700; font-size:0.82rem; color:#0f172a; border:none; outline:none;">
+                </div>
+
+                <div style="background:#ffffff; border-radius:6px; padding:4px 8px; display:flex; align-items:center; border:1px solid #cbd5e1;">
+                  <span style="font-weight:700; color:#0f2c59; font-size:0.78rem; margin-right:5px;">Pub Date:</span>
+                  <input type="date" name="gen_publication_date" id="genPubDate" value="<?= e($editStudent['result_publication_date'] ?? date('Y-m-d')) ?>" style="font-weight:700; font-size:0.8rem; color:#0f172a; border:none; outline:none;">
+                </div>
+
                 <!-- Update CGPA & Auto-Generate Button -->
-                <button type="submit" name="submit_action" value="auto_generate_estimated" class="btn-primary" style="background:#f59e0b; color:#0f172a; font-weight:800; border:none; padding:0.65rem 1.25rem; font-size:0.88rem; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+                <button type="submit" name="submit_action" value="auto_generate_estimated" class="btn-primary" style="background:#f59e0b; color:#0f172a; font-weight:800; border:none; padding:0.65rem 1.25rem; font-size:0.88rem; cursor:pointer; display:inline-flex; align-items:center; gap:6px;" <?= ($editStudent && empty($editResultGate['allowed'])) ? 'disabled' : '' ?>>
                   <i class="fas fa-bolt"></i> Update CGPA &amp; Generate Results
                 </button>
 
@@ -909,9 +1634,9 @@ include __DIR__ . '/includes/admin-header.php';
             </div>
           </div>
 
-          <!-- 8 Semesters Containers (Semesters 5-8 automatically hide for Postgraduate) -->
+          <!-- Semesters Containers (1-12; Semesters beyond active program total hide automatically) -->
           <div id="semestersContainer">
-            <?php for ($s = 1; $s <= 8; $s++): ?>
+            <?php for ($s = 1; $s <= 12; $s++): ?>
               <?php
                 $existingSemCourses = $existingResultsBySem[$s] ?? [];
                 $hasCourses = !empty($existingSemCourses);
@@ -1146,7 +1871,7 @@ include __DIR__ . '/includes/admin-header.php';
     </div>
 
     <!-- Student Details Grid -->
-    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1.5rem; display:grid; grid-template-columns:1fr 1fr; gap:0.6rem 2rem; font-size:0.86rem;">
+    <div class="admin-form-2col" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1.5rem; display:grid; grid-template-columns:1fr 1fr; gap:0.6rem 2rem; font-size:0.86rem;">
       <div><span style="color:#64748b;">Student Name:</span> <strong id="modalStName"></strong></div>
       <div><span style="color:#64748b;">Student ID:</span> <strong id="modalStId" style="font-family:monospace; color:#0284c7;"></strong></div>
       <div><span style="color:#64748b;">Degree Program:</span> <strong id="modalStProgram"></strong></div>
@@ -1186,7 +1911,8 @@ include __DIR__ . '/includes/admin-header.php';
 <!-- ========================================================================= -->
 <script>
 var programsData = <?= json_encode($programs, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
-var activeSemestersCount = 8;
+var activeSemestersCount = <?= $editStudent ? (int)($editProgStruct['total_semesters'] ?? 8) : 8 ?>;
+var isEditStudentMode = <?= $editStudent ? 'true' : 'false' ?>;
 
 // Standard Sylabuses for Quick Pre-fill
 var standardSyllabus = {
@@ -1303,10 +2029,14 @@ function recalculateSemester(semNum) {
 
   var sgpa = regCredits > 0 ? (totalPoints / regCredits).toFixed(2) : '0.00';
 
-  document.getElementById('sem-reg-cr-' + semNum).textContent = regCredits.toFixed(1);
-  document.getElementById('sem-earned-cr-' + semNum).textContent = earnedCredits.toFixed(1);
-  document.getElementById('sem-sgpa-' + semNum).textContent = sgpa;
-  document.getElementById('sem-sgpa-text-' + semNum).textContent = sgpa;
+  var semRegCrEl = document.getElementById('sem-reg-cr-' + semNum);
+  if (semRegCrEl) semRegCrEl.textContent = regCredits.toFixed(1);
+  var semEarnCrEl = document.getElementById('sem-earned-cr-' + semNum);
+  if (semEarnCrEl) semEarnCrEl.textContent = earnedCredits.toFixed(1);
+  var semSgpaEl = document.getElementById('sem-sgpa-' + semNum);
+  if (semSgpaEl) semSgpaEl.textContent = sgpa;
+  var semSgpaTxtEl = document.getElementById('sem-sgpa-text-' + semNum);
+  if (semSgpaTxtEl) semSgpaTxtEl.textContent = sgpa;
 
   var badge = document.getElementById('sem-pub-badge-' + semNum);
   if (badge) {
@@ -1353,10 +2083,14 @@ function recalculateCumulativeCGPA() {
 
   var finalCgpa = totalReg > 0 ? (totalPoints / totalReg).toFixed(2) : '0.00';
 
-  document.getElementById('liveTotalRegCredits').textContent = totalReg.toFixed(1) + ' Cr';
-  document.getElementById('liveTotalEarnedCredits').textContent = totalEarned.toFixed(1) + ' Cr';
-  document.getElementById('liveCompletedSemesters').textContent = completedCount + ' / ' + activeSemestersCount;
-  document.getElementById('liveCumulativeCgpa').textContent = finalCgpa;
+  var liveTotalRegEl = document.getElementById('liveTotalRegCredits');
+  if (liveTotalRegEl) liveTotalRegEl.textContent = totalReg.toFixed(1) + ' Cr';
+  var liveTotalEarnEl = document.getElementById('liveTotalEarnedCredits');
+  if (liveTotalEarnEl) liveTotalEarnEl.textContent = totalEarned.toFixed(1) + ' Cr';
+  var liveCompSemsEl = document.getElementById('liveCompletedSemesters');
+  if (liveCompSemsEl) liveCompSemsEl.textContent = completedCount + ' / ' + activeSemestersCount;
+  var liveCgpaEl = document.getElementById('liveCumulativeCgpa');
+  if (liveCgpaEl) liveCgpaEl.textContent = finalCgpa;
 
   // Auto-sync form fields in Section 1
   var formCgpa = document.getElementById('formCgpa');
@@ -1377,6 +2111,15 @@ function recalculateCumulativeCGPA() {
   }
 }
 
+function escHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Add a new subject row to a semester
 function addSubjectRow(semNum, data) {
   var tbody = document.getElementById('sem-tbody-' + semNum);
@@ -1393,11 +2136,11 @@ function addSubjectRow(semNum, data) {
 
   tr.innerHTML = 
     '<td>' +
-      '<input type="hidden" name="results[' + semNum + '][' + rowIndex + '][id]" value="' + (data.id || '') + '">' +
-      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][course_code]" class="form-control sub-code" value="' + (data.code || '') + '" placeholder="e.g. CSE 101" required style="text-transform:uppercase; font-weight:700; font-family:monospace; font-size:0.85rem;">' +
+      '<input type="hidden" name="results[' + semNum + '][' + rowIndex + '][id]" value="' + escHtml(data.id || '') + '">' +
+      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][course_code]" class="form-control sub-code" value="' + escHtml(data.code || '') + '" placeholder="e.g. CSE 101" required style="text-transform:uppercase; font-weight:700; font-family:monospace; font-size:0.85rem;">' +
     '</td>' +
     '<td>' +
-      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][course_name]" class="form-control sub-name" value="' + (data.name || '') + '" placeholder="Subject Title" required style="font-size:0.85rem;">' +
+      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][course_name]" class="form-control sub-name" value="' + escHtml(data.name || '') + '" placeholder="Subject Title" required style="font-size:0.85rem;">' +
     '</td>' +
     '<td>' +
       '<input type="number" step="0.5" min="0.5" max="6.0" name="results[' + semNum + '][' + rowIndex + '][credit]" class="form-control sub-credit" value="' + parseFloat(data.credit).toFixed(1) + '" required style="text-align:center; font-size:0.85rem;" oninput="recalculateRow(this)">' +
@@ -1409,13 +2152,13 @@ function addSubjectRow(semNum, data) {
       '<input type="number" step="0.5" min="0" max="100" name="results[' + semNum + '][' + rowIndex + '][marks]" class="form-control sub-marks" value="' + (data.marks !== '' ? parseFloat(data.marks).toFixed(1) : '') + '" placeholder="0-100" required style="text-align:center; font-weight:700; color:#0f2c59; font-size:0.9rem;" oninput="recalculateRow(this)">' +
     '</td>' +
     '<td>' +
-      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][letter_grade]" class="form-control sub-grade" value="' + gr.grade + '" readonly style="text-align:center; font-weight:800; color:#1e40af; background:#f8fafc; font-size:0.85rem;">' +
+      '<input type="text" name="results[' + semNum + '][' + rowIndex + '][letter_grade]" class="form-control sub-grade" value="' + escHtml(gr.grade) + '" readonly style="text-align:center; font-weight:800; color:#1e40af; background:#f8fafc; font-size:0.85rem;">' +
     '</td>' +
     '<td>' +
       '<input type="text" name="results[' + semNum + '][' + rowIndex + '][grade_point]" class="form-control sub-point" value="' + (gr.grade ? gr.point.toFixed(2) : '') + '" readonly style="text-align:center; font-weight:700; color:#047857; background:#f8fafc; font-size:0.85rem;">' +
     '</td>' +
     '<td style="text-align:center;">' +
-      '<span class="sub-status-badge" style="font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; ' + (gr.status === 'Pass' ? 'background:#dcfce7; color:#15803d;' : (gr.status === 'Fail' ? 'background:#fee2e2; color:#dc2626;' : 'background:#f1f5f9; color:#64748b;')) + '">' + gr.status + '</span>' +
+      '<span class="sub-status-badge" style="font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; ' + (gr.status === 'Pass' ? 'background:#dcfce7; color:#15803d;' : (gr.status === 'Fail' ? 'background:#fee2e2; color:#dc2626;' : 'background:#f1f5f9; color:#64748b;')) + '">' + escHtml(gr.status) + '</span>' +
     '</td>' +
     '<td style="text-align:center;">' +
       '<button type="button" onclick="removeSubjectRow(this)" style="background:#fee2e2; color:#ef4444; border:none; border-radius:4px; padding:4px 7px; cursor:pointer;" title="Delete Subject">' +
@@ -1485,7 +2228,7 @@ function expandAllSemesters() {
 }
 
 function collapseAllSemesters() {
-  for (var s = 1; s <= 8; s++) {
+  for (var s = 1; s <= 12; s++) {
     var b = document.getElementById('sem-body-' + s);
     var i = document.getElementById('sem-icon-' + s);
     if (b) b.style.display = 'none';
@@ -1493,36 +2236,117 @@ function collapseAllSemesters() {
   }
 }
 
-// Handle dynamic switching: 8 Semesters for UG, 4 Semesters for Master's
-function handleProgramChange(progId) {
-  progId = parseInt(progId) || 0;
+// Apply visible semester wrapper state and disable hidden required inputs safely
+function applySemesterVisibility(semCount, labelTitle, durationYearsOverride) {
+  semCount = parseInt(semCount, 10) || 8;
+  activeSemestersCount = Math.max(1, Math.min(12, semCount));
+
+  var badge = document.getElementById('curriculumBadge');
+  if (badge) {
+    badge.innerHTML = '<strong>' + escHtml(labelTitle || 'Academic Program Curriculum') + '</strong> &bull; ' + activeSemestersCount + ' Semesters Active';
+  }
+  var semSel = document.getElementById('configuredSemestersSelect');
+  if (semSel) {
+    semSel.value = String(activeSemestersCount);
+  }
+  var durInp = document.getElementById('formDurationYears');
+  if (durInp && durationYearsOverride !== undefined && durationYearsOverride !== null && !isNaN(parseFloat(durationYearsOverride))) {
+    durInp.value = String(durationYearsOverride);
+  }
+
+  for (var s = 1; s <= 12; s++) {
+    var w = document.getElementById('sem-wrapper-' + s);
+    if (!w) continue;
+    var isVisible = (s <= activeSemestersCount);
+    w.style.display = isVisible ? 'block' : 'none';
+    w.querySelectorAll('input, select, textarea').forEach(function(inp) {
+      inp.disabled = !isVisible;
+    });
+  }
+  recalculateCumulativeCGPA();
+  syncExpectedPassingYearPreview();
+}
+
+function syncExpectedPassingYearPreview() {
+  var box = document.getElementById('advisoryExpectedYearBox');
+  var sessInp = document.getElementById('formAcademicSession');
+  var durInp = document.getElementById('formDurationYears');
+  if (!box || !sessInp || !durInp) return;
+
+  var sessStr = String(sessInp.value || '');
+  var m = sessStr.match(/\b(19\d{2}|20\d{2})\b/);
+  var dur = parseFloat(durInp.value);
+  if (!m || !isFinite(dur) || dur <= 0) {
+    box.innerHTML = 'Select session year to preview (Advisory Only)';
+    return;
+  }
+  var sessYr = parseInt(m[1], 10);
+  var cleanDur = Math.max(0.5, Math.min(6.0, Math.round(dur * 10) / 10));
+  var expYr = sessYr + Math.round(cleanDur);
+  var durTxt = (Math.abs(cleanDur - Math.round(cleanDur)) < 0.05) ? String(Math.round(cleanDur)) : cleanDur.toFixed(1);
+  box.innerHTML = expYr + ' <span style="font-weight:500; font-size:0.78rem; color:#475569;">(' + sessYr + ' + ' + durTxt + ' = ' + expYr + ')</span>';
+}
+
+function handleSemesterCountChange(semCount) {
+  var degSel = document.getElementById('degreeTypeSelect');
+  var degLabel = degSel ? degSel.value : "Academic Program";
+  var sNum = parseInt(semCount, 10) || 8;
+  var estDur = (sNum === 8) ? 4 : (sNum === 4 ? 2 : (sNum === 3 ? 1.5 : (sNum === 2 ? 1 : (Math.round(sNum * 5) / 10))));
+  applySemesterVisibility(sNum, degLabel + ' Curriculum', estDur);
+}
+
+function handleDegreeTypeSelect(degType) {
+  var count = 8;
+  var dur = 4;
+  if (degType === 'B.Ed') { count = 2; dur = 1; }
+  else if (degType === "Master's") { count = 4; dur = 2; }
+  applySemesterVisibility(count, degType + ' Curriculum', dur);
+}
+
+// Handle dynamic switching across Bachelor / Honours (8), B.Ed (2/3), Master's (2/3/4) and custom programs (1-12)
+function handleProgramChange(progId, preserveStudentSemCount) {
+  progId = parseInt(progId, 10) || 0;
   var selProg = null;
   for (var i = 0; i < programsData.length; i++) {
-    if (parseInt(programsData[i].id) === progId) {
+    if (parseInt(programsData[i].id, 10) === progId) {
       selProg = programsData[i];
       break;
     }
   }
 
-  var isMaster = selProg && (selProg.degree_level === 'Postgraduate' || selProg.title_en.indexOf('Master') !== -1 || selProg.title_en.indexOf('MA in') !== -1 || selProg.title_en.indexOf('MBA') !== -1);
+  var semCount = 8;
+  var durYears = 4;
+  var degType = 'Bachelor / Honours';
+  var titleLabel = "Bachelor's Degree Curriculum";
 
-  if (isMaster) {
-    activeSemestersCount = 4;
-    document.getElementById('curriculumBadge').innerHTML = "<strong>Master's Degree Curriculum</strong> &bull; 4 Semesters Active";
-    for (var s = 1; s <= 8; s++) {
-      var w = document.getElementById('sem-wrapper-' + s);
-      if (w) w.style.display = (s <= 4) ? 'block' : 'none';
+  if (selProg) {
+    degType = selProg.degree_type || ((selProg.degree_level === 'Postgraduate') ? "Master's" : 'Bachelor / Honours');
+    semCount = parseInt(selProg.total_semesters, 10) || (degType === 'B.Ed' ? 2 : (degType === "Master's" ? 4 : 8));
+    durYears = parseFloat(selProg.duration_years) || (semCount === 8 ? 4 : (semCount === 4 ? 2 : (semCount === 3 ? 1.5 : 1)));
+    if (selProg.title_en && selProg.title_en.indexOf('B.Ed') !== -1) {
+      degType = 'B.Ed';
+      if (!selProg.total_semesters) { semCount = 2; durYears = 1; }
+    } else if (selProg.degree_level === 'Postgraduate' && !selProg.total_semesters) {
+      degType = "Master's";
+      semCount = 4;
+      durYears = 2;
     }
-  } else {
-    activeSemestersCount = 8;
-    document.getElementById('curriculumBadge').innerHTML = "<strong>Bachelor's Degree Curriculum</strong> &bull; 8 Semesters Active";
-    for (var s = 1; s <= 8; s++) {
-      var w = document.getElementById('sem-wrapper-' + s);
-      if (w) w.style.display = 'block';
-    }
+    titleLabel = degType + ' Curriculum';
   }
 
-  recalculateCumulativeCGPA();
+  var degSel = document.getElementById('degreeTypeSelect');
+  if (degSel && !preserveStudentSemCount) {
+    degSel.value = degType;
+  }
+
+  var durOverride = durYears;
+  if (preserveStudentSemCount && activeSemestersCount > 0) {
+    semCount = activeSemestersCount;
+    titleLabel = (degSel ? degSel.value : degType) + ' Curriculum';
+    durOverride = null; // Preserve existing duration_years loaded from DB for this student
+  }
+
+  applySemesterVisibility(semCount, titleLabel, durOverride);
 }
 
 // Modal Preview of the Entire Academic Transcript
@@ -1594,11 +2418,11 @@ function openTranscriptPreview() {
 
         var tr = document.createElement('tr');
         tr.innerHTML = 
-          '<td style="font-family:monospace; font-weight:700; color:#1e40af; width:100px;">' + code + '</td>' +
-          '<td><strong>' + cname + '</strong></td>' +
+          '<td style="font-family:monospace; font-weight:700; color:#1e40af; width:100px;">' + escHtml(code) + '</td>' +
+          '<td><strong>' + escHtml(cname) + '</strong></td>' +
           '<td style="text-align:center; width:70px;">' + cr.toFixed(1) + ' Cr</td>' +
           '<td style="text-align:center; width:80px; font-weight:700;">' + (marks !== '' ? parseFloat(marks).toFixed(1) : '—') + '</td>' +
-          '<td style="text-align:center; width:70px; font-weight:800; color:#1e40af;">' + gr + '</td>' +
+          '<td style="text-align:center; width:70px; font-weight:800; color:#1e40af;">' + escHtml(gr) + '</td>' +
           '<td style="text-align:center; width:70px; font-weight:700; color:#047857;">' + gp.toFixed(2) + '</td>';
         semTbody.appendChild(tr);
       }
@@ -1632,18 +2456,69 @@ function closeTranscriptPreview() {
   document.getElementById('transcriptPreviewModal').style.display = 'none';
 }
 
+function rmuToggleEnrollPassword() {
+  var inp = document.getElementById('enrollInitialPassword');
+  var btn = document.getElementById('toggleEnrollPwdBtn');
+  if (!inp || !btn) return;
+  var showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  btn.innerHTML = showing ? '<i class="fas fa-eye"></i> Show' : '<i class="fas fa-eye-slash"></i> Hide';
+}
+
+function rmuRegenEnrollPassword() {
+  var inp = document.getElementById('enrollInitialPassword');
+  if (!inp) return;
+  var upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  var lower = 'abcdefghjkmnpqrstuvwxyz';
+  var digits = '23456789';
+  var special = '@#!*-';
+  var all = upper + lower + digits + special;
+  var pick = function(s) {
+    if (window.crypto && window.crypto.getRandomValues) {
+      var arr = new Uint32Array(1);
+      window.crypto.getRandomValues(arr);
+      return s.charAt(arr[0] % s.length);
+    }
+    return s.charAt(Math.floor(Math.random() * s.length));
+  };
+  var out = [pick(upper), pick(upper), pick(lower), pick(lower), pick(digits), pick(digits), pick(special)];
+  while (out.length < 12) out.push(pick(all));
+  for (var i = out.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  inp.value = out.join('');
+}
+
 // Initialize on page load
 window.addEventListener('DOMContentLoaded', function() {
   var progSelect = document.getElementById('programSelect');
   if (progSelect) {
-    handleProgramChange(progSelect.value);
+    handleProgramChange(progSelect.value, isEditStudentMode);
   }
 
-  // Recalculate any existing data on load
-  for (var s = 1; s <= 8; s++) {
-    recalculateSemester(s);
+  // Sync Session & PubDate between Section 1 & Section 2
+  var fSess = document.getElementById('formAcademicSession');
+  var gSess = document.getElementById('genAcademicSession');
+  if (fSess && gSess) {
+    fSess.addEventListener('input', function() { gSess.value = this.value; syncExpectedPassingYearPreview(); });
+    gSess.addEventListener('input', function() { fSess.value = this.value; syncExpectedPassingYearPreview(); });
   }
-  recalculateCumulativeCGPA();
+  var fDate = document.getElementById('formPubDate');
+  var gDate = document.getElementById('genPubDate');
+  if (fDate && gDate) {
+    fDate.addEventListener('input', function() { gDate.value = this.value; });
+    gDate.addEventListener('input', function() { fDate.value = this.value; });
+  }
+
+  // Recalculate any existing data on load (only when editor form is rendered)
+  if (document.getElementById('unifiedStudentForm')) {
+    for (var s = 1; s <= 12; s++) {
+      recalculateSemester(s);
+    }
+    recalculateCumulativeCGPA();
+    syncExpectedPassingYearPreview();
+  }
 
   // Close modal on outside click
   window.addEventListener('click', function(e) {

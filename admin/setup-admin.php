@@ -8,6 +8,17 @@ require_once __DIR__ . '/../includes/functions.php';
 $db = getDb();
 $adminCount = (int)$db->query("SELECT COUNT(*) FROM users WHERE role = 'superadmin'")->fetchColumn();
 
+if ($adminCount > 0 && (!is_logged_in() || current_admin_role() !== 'superadmin')) {
+    if (!is_logged_in()) {
+        flash_set('error', 'Administrator setup is locked. Please sign in with a superadmin account.');
+        header("Location: " . APP_URL . "/admin/login.php");
+    } else {
+        flash_set('error', 'Access denied. Only an authenticated Super Administrator may access administrator setup.');
+        header("Location: " . APP_URL . "/admin/dashboard.php");
+    }
+    exit;
+}
+
 $message = '';
 $error = '';
 
@@ -89,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div class="alert alert-info" style="margin-bottom: 1.5rem;">
         <i class="fas fa-info-circle"></i>
         <div>
-          An active superadministrator account already exists in the system (Default: <code>admin</code> / <code>Admin@RMU2026!</code>). You may create an additional administrator below or sign in directly.
+          An active superadministrator account already exists in the system. As an authenticated Super Administrator, you may provision an additional administrator account below.
         </div>
       </div>
     <?php endif; ?>

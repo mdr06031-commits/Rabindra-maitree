@@ -31,6 +31,9 @@ $quickDownloads = $downloadsStmt->fetchAll();
 include __DIR__ . '/includes/header.php';
 ?>
 
+<?php
+$activeAdmissionTerm = get_setting('admission_active_term', 'Fall 2026');
+?>
 <!-- Announcement Notice Ticker -->
 <?php if (!empty($latestNotices)): ?>
 <div class="ticker-bar">
@@ -60,7 +63,7 @@ include __DIR__ . '/includes/header.php';
             Approved by the UGC and Ministry of Education, RMU offers contemporary undergraduate and graduate education grounded in ethical leadership, humanism, and practical technology.
           </p>
           <div class="slide-btns">
-            <a href="<?= APP_URL ?>/admission-form.php" class="btn-primary"><i class="fas fa-edit"></i> Apply for Fall 2026</a>
+            <a href="<?= APP_URL ?>/admission-form.php" class="btn-primary"><i class="fas fa-edit"></i> Apply for <?= e($activeAdmissionTerm) ?></a>
             <a href="<?= APP_URL ?>/about.php" class="btn-outline-white"><i class="fas fa-info-circle"></i> Learn About RMU</a>
           </div>
         </div>
@@ -72,7 +75,7 @@ include __DIR__ . '/includes/header.php';
       <div class="slide-overlay" style="background: linear-gradient(90deg, rgba(8, 28, 55, 0.88) 0%, rgba(12, 48, 88, 0.60) 50%, rgba(0, 0, 0, 0.25) 100%);"></div>
       <div class="container">
         <div class="slide-content">
-          <span class="slide-badge" style="background:rgba(207,46,46,0.85);"><i class="fas fa-graduation-cap"></i> Admission Open Fall 2026</span>
+          <span class="slide-badge" style="background:rgba(207,46,46,0.85);"><i class="fas fa-graduation-cap"></i> Admission Open <?= e($activeAdmissionTerm) ?></span>
           <h2 class="slide-title">Merit Scholarships &amp; Tuition Fee Waivers Up to 100%</h2>
           <p class="slide-desc">
             Explore advanced degree programs in Computer Science &amp; Engineering, Electrical Engineering, Business Administration, English, and Agricultural Sciences.

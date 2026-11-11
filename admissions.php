@@ -5,8 +5,14 @@
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
 
+$activeAdmissionTerm = get_setting('admission_active_term', 'Fall 2026');
+$admissionDeadline = get_setting('admission_deadline', '2026-11-30');
+$admissionDeadlineDisplay = $admissionDeadline !== '' ? date('F j, Y', strtotime($admissionDeadline)) : 'TBA';
+$admissionPhone = get_setting('contact_phone', '+8801302991188');
+$admissionEmail = get_setting('contact_email', 'admission@rmu.ac.bd');
+
 $pageTitle = 'Admission Overview';
-$breadcrumbTitle = 'Admissions — Fall 2026';
+$breadcrumbTitle = 'Admissions — ' . $activeAdmissionTerm;
 $breadcrumbs = [['title' => 'Admission', 'url' => APP_URL . '/admissions.php'], ['title' => 'Overview']];
 
 $db = getDb();
@@ -20,12 +26,12 @@ include __DIR__ . '/includes/breadcrumbs.php';
   <div class="container">
     <div class="grid-2" style="align-items: center; gap: 3rem; margin-bottom: 3.5rem;">
       <div>
-        <span class="section-subtitle">Admission Open &bull; Fall 2026</span>
+        <span class="section-subtitle">Admission Open &bull; <?= e($activeAdmissionTerm) ?></span>
         <h2 class="section-title" style="text-align: left; margin-bottom: 1.25rem;">Start Your Academic Journey at Rabindra Maitree University</h2>
         <div style="width: 50px; height: 3px; background: var(--rmu-primary); margin-bottom: 1.5rem;"></div>
 
         <p style="color: var(--rmu-muted); line-height: 1.8; font-size: 1.02rem; margin-bottom: 1.2rem;">
-          Rabindra Maitree University invites applications from ambitious students for admission to undergraduate and postgraduate degree programs for the Fall 2026 semester.
+          Rabindra Maitree University invites applications from ambitious students for admission to undergraduate and postgraduate degree programs for the <?= e($activeAdmissionTerm) ?> semester.
         </p>
 
         <p style="color: var(--rmu-muted); line-height: 1.8; font-size: 1.02rem; margin-bottom: 1.5rem;">
@@ -47,16 +53,16 @@ include __DIR__ . '/includes/breadcrumbs.php';
         <div style="background: var(--rmu-bg-light); border: 2px dashed var(--rmu-primary); border-radius: var(--rmu-radius-lg); padding: 2.2rem;">
           <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
             <span style="background: var(--rmu-accent); color: #fff; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase;">Notice</span>
-            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--rmu-dark); margin: 0;">Admission Fair Fall 2026</h3>
+            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--rmu-dark); margin: 0;">Admission Fair <?= e($activeAdmissionTerm) ?></h3>
           </div>
           <p style="color: var(--rmu-muted); font-size: 0.95rem; line-height: 1.6; margin-bottom: 1.25rem;">
             Special discount on admission fee and up to 100% tuition waiver based on SSC &amp; HSC GPA. Candidates can apply online or directly visit the Kushtia Campus Admission Office.
           </p>
 
           <div style="background: #ffffff; padding: 1rem; border-radius: var(--rmu-radius-sm); border: 1px solid var(--rmu-border); font-size: 0.88rem; margin-bottom: 1.2rem;">
-            <div><i class="fas fa-calendar-check" style="color: var(--rmu-primary);"></i> <strong>Application Deadline:</strong> November 30, 2026</div>
-            <div style="margin-top: 4px;"><i class="fas fa-phone-alt" style="color: var(--rmu-primary);"></i> <strong>Admission Hotline:</strong> +8801302991188</div>
-            <div style="margin-top: 4px;"><i class="fas fa-envelope" style="color: var(--rmu-primary);"></i> <strong>Email:</strong> admission@rmu.ac.bd</div>
+            <div><i class="fas fa-calendar-check" style="color: var(--rmu-primary);"></i> <strong>Application Deadline:</strong> <?= e($admissionDeadlineDisplay) ?></div>
+            <div style="margin-top: 4px;"><i class="fas fa-phone-alt" style="color: var(--rmu-primary);"></i> <strong>Admission Hotline:</strong> <?= e($admissionPhone) ?></div>
+            <div style="margin-top: 4px;"><i class="fas fa-envelope" style="color: var(--rmu-primary);"></i> <strong>Email:</strong> <?= e($admissionEmail) ?></div>
           </div>
 
           <a href="<?= APP_URL ?>/tuition-fees.php" style="font-weight: 600; font-size: 0.9rem; color: var(--rmu-primary); display: inline-flex; align-items: center; gap: 0.4rem;">

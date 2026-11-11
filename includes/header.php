@@ -17,7 +17,7 @@ $currentTerm = get_setting('admission_active_term', 'Fall 2026');
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title><?= e($pageTitle) ?></title>
   <meta name="description" content="Rabindra Maitree University (RMU), Kushtia - A center of excellence in higher education, arts, engineering, and cultural enlightenment.">
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
@@ -30,9 +30,9 @@ $currentTerm = get_setting('admission_active_term', 'Fall 2026');
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
-  <!-- Core Stylesheets (Cache-busted on every deploy) -->
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css?v=<?= time() ?>">
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/responsive.css?v=<?= time() ?>">
+  <!-- Core Stylesheets (Versioned by asset filemtime) -->
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/style.css')) ?>">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/responsive.css')) ?>">
 </head>
 <body>
 
@@ -100,6 +100,12 @@ $currentTerm = get_setting('admission_active_term', 'Fall 2026');
       <div class="alert alert-info" role="alert">
         <i class="fas fa-info-circle" style="font-size: 1.2rem;"></i>
         <div><?= e($infoMsg) ?></div>
+      </div>
+    <?php endif; ?>
+    <?php if ($warningMsg = flash_get('warning')): ?>
+      <div class="alert alert-warning" role="alert" style="background-color:#fffbeb; border:1px solid #fde68a; color:#92400e;">
+        <i class="fas fa-exclamation-triangle" style="font-size: 1.2rem;"></i>
+        <div><?= e($warningMsg) ?></div>
       </div>
     <?php endif; ?>
   </div>

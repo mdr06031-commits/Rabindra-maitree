@@ -44,7 +44,7 @@ $csrfToken = $m[1] ?? '';
 $loginPost = make_request($baseUrl . '/admin/login.php', [
     'csrf_token' => $csrfToken,
     'username'   => 'admin',
-    'password'   => '123456'
+    'password'   => 'Admin@RMU2026!'
 ]);
 
 echo "1. Admin Authentication Check:\n";

@@ -22,10 +22,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT name_en FROM faculties WHERE id = ?");
                 $st->execute([$id]);
                 $fData = $st->fetch();
-                $del = $db->prepare("DELETE FROM faculties WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('FACULTY_DELETED', "Deleted faculty: {$fData['name_en']}");
-                flash_set('success', "Faculty deleted successfully.");
+                if (!$fData) {
+                    flash_set('error', 'Selected faculty could not be found.');
+                } else {
+                    try {
+                        $del = $db->prepare("DELETE FROM faculties WHERE id = ?");
+                        $del->execute([$id]);
+                        log_audit('FACULTY_DELETED', "Deleted faculty: {$fData['name_en']}");
+                        flash_set('success', "Faculty deleted successfully.");
+                    } catch (PDOException $e) {
+                        flash_set('error', "Cannot delete faculty '{$fData['name_en']}' because academic departments belong to it. Remove or reassign those departments first.");
+                    }
+                }
             }
         } else {
             $nameEn = trim($_POST['name_en'] ?? '');
@@ -38,18 +46,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($nameEn)) {
                 flash_set('error', 'Faculty name in English is required.');
             } else {
-                if ($action === 'add') {
-                    $slug = slugify($nameEn);
-                    $stmt = $db->prepare("INSERT INTO faculties (slug, name_en, name_bn, dean_name, overview, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
-                    $stmt->execute([$slug, $nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder]);
-                    log_audit('FACULTY_ADDED', "Added new faculty: {$nameEn}");
-                    flash_set('success', "Faculty '{$nameEn}' added successfully.");
-                } elseif ($action === 'edit') {
-                    $id = (int)($_POST['id'] ?? 0);
-                    $stmt = $db->prepare("UPDATE faculties SET name_en = ?, name_bn = ?, dean_name = ?, overview = ?, icon = ?, sort_order = ? WHERE id = ?");
-                    $stmt->execute([$nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder, $id]);
-                    log_audit('FACULTY_EDITED', "Updated faculty ID {$id}: {$nameEn}");
-                    flash_set('success', "Faculty '{$nameEn}' updated successfully.");
+                try {
+                    if ($action === 'add') {
+                        $slug = generate_unique_slug($db, 'faculties', $nameEn);
+                        $stmt = $db->prepare("INSERT INTO faculties (slug, name_en, name_bn, dean_name, overview, icon, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                        $stmt->execute([$slug, $nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder]);
+                        log_audit('FACULTY_ADDED', "Added new faculty: {$nameEn}");
+                        flash_set('success', "Faculty '{$nameEn}' added successfully.");
+                    } elseif ($action === 'edit') {
+                        $id = (int)($_POST['id'] ?? 0);
+                        $stmt = $db->prepare("UPDATE faculties SET name_en = ?, name_bn = ?, dean_name = ?, overview = ?, icon = ?, sort_order = ? WHERE id = ?");
+                        $stmt->execute([$nameEn, $nameBn, $deanName, $overview, $icon, $sortOrder, $id]);
+                        log_audit('FACULTY_EDITED', "Updated faculty ID {$id}: {$nameEn}");
+                        flash_set('success', "Faculty '{$nameEn}' updated successfully.");
+                    }
+                } catch (PDOException $e) {
+                    flash_set('error', "Could not save faculty '{$nameEn}' (duplicate identifier or database constraint).");
                 }
             }
         }
@@ -86,7 +98,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; align-items: start;">
   <!-- Add / Edit Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -170,7 +182,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/faculties.php?edit=<?= (int)$f['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/faculties.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete faculty <?= addslashes(e($f['name_en'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/faculties.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete faculty ' . $f['name_en'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">

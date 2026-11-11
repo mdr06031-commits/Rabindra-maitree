@@ -1,6 +1,6 @@
 <?php
 /**
- * Admission Application Status Tracking & Printable Slip
+ * Admission Application Status Tracking & Official Application Card
  */
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -14,33 +14,80 @@ $application = null;
 
 if (!empty($searchQuery)) {
     $db = getDb();
-    // Search by either application reference or mobile number
-    $stmt = $db->prepare("
-        SELECT * FROM admissions 
-        WHERE application_ref = ? OR mobile = ? 
-        ORDER BY id DESC LIMIT 1
-    ");
-    $stmt->execute([$searchQuery, $searchQuery]);
-    $application = $stmt->fetch();
+    $application = fetch_admission_full_record(0, $searchQuery, $db, true);
+    if ($application) {
+        authorize_applicant_session_ref(
+            (string)$application['application_ref'],
+            $application['application_id'] ?? null,
+            $application['roll_number'] ?? null
+        );
+    }
 }
+
+$docStyles = get_admission_document_styles();
 
 include __DIR__ . '/includes/header.php';
 include __DIR__ . '/includes/breadcrumbs.php';
 ?>
 
+<style>
+<?= $docStyles ?>
+.rmu-status-actions {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rmu-status-btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rmu-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+@media print {
+  .rmu-topbar, .rmu-navbar, .rmu-footer, .breadcrumb-section, .no-print, form {
+    display: none !important;
+  }
+  body, html, .section {
+    background: #ffffff !important;
+    padding: 0 !important;
+  }
+  .rmu-doc-card {
+    box-shadow: none !important;
+  }
+}
+</style>
+
 <section class="section section-bg-white">
-  <div class="container" style="max-width: 850px;">
+  <div class="container" style="max-width: 920px;">
     <!-- Lookup Search Card -->
-    <div style="background: var(--rmu-bg-light); border: 1px solid var(--rmu-border); border-radius: var(--rmu-radius-lg); padding: 2rem; margin-bottom: 2.5rem;">
+    <div class="no-print" style="background: var(--rmu-bg-light); border: 1px solid var(--rmu-border); border-radius: var(--rmu-radius-lg); padding: 1.75rem; margin-bottom: 2rem;">
       <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--rmu-dark); margin-bottom: 0.5rem;">
         <i class="fas fa-search-location" style="color: var(--rmu-primary);"></i> Check Application Status
       </h3>
-      <p style="color: var(--rmu-muted); font-size: 0.9rem; margin-bottom: 1.2rem;">
-        Enter your Application Reference Number (e.g., <code>RMU-2026-1001</code>) or your registered 11-digit mobile number.
+      <p style="color: var(--rmu-muted); font-size: 0.9rem; margin-bottom: 1.15rem;">
+        Enter your Application ID (e.g., <code>RMU-2026-0001</code>), Admission Roll Number (e.g., <code>2026-0001</code>), or registered 11-digit mobile number.
       </p>
 
       <form action="<?= APP_URL ?>/admission-status.php" method="GET" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-        <input type="text" name="ref" value="<?= e($searchQuery) ?>" placeholder="Enter Application Ref (e.g., RMU-2026-XXXX) or Mobile" class="form-control" style="flex: 1; min-width: 250px;" required>
+        <input type="text" name="ref" value="<?= e($searchQuery) ?>" placeholder="Enter Application ID (RMU-2026-0001), Roll (2026-0001), or Mobile" class="form-control" style="flex: 1; min-width: min(100%, 240px);" required>
         <button type="submit" class="btn-primary" style="padding: 0.75rem 1.8rem;">
           <i class="fas fa-search"></i> Check Status
         </button>
@@ -48,425 +95,262 @@ include __DIR__ . '/includes/breadcrumbs.php';
     </div>
 
     <?php if (!empty($searchQuery) && !$application): ?>
-      <div class="alert alert-error">
+      <div class="alert alert-error no-print">
         <i class="fas fa-exclamation-triangle" style="font-size: 1.2rem;"></i>
         <div>
-          No application was found matching <strong><?= e($searchQuery) ?></strong>. Please double-check your reference code or mobile number.
+          No application was found matching <strong><?= e($searchQuery) ?></strong>. Please double-check your Application ID, Roll Number, or mobile number.
         </div>
       </div>
     <?php endif; ?>
 
     <?php if ($application): ?>
-      <?php 
+      <?php
         $isPaid = (($application['payment_status'] ?? '') === 'Paid');
+        $admLoginUrl = APP_URL . '/student/login.php?student_id=' . urlencode((string)($application['student_id'] ?? ''));
+        $appCardUrlBase = APP_URL . '/admission-document.php?id=' . (int)$application['id'] . '&doc=application';
+        $receiptUrlBase = APP_URL . '/admission-document.php?id=' . (int)$application['id'] . '&doc=receipt';
+
+        ensure_admission_payment_gateway_schema($db);
+        $latestTxStmt = $db->prepare("
+            SELECT gateway_session_id, gateway_provider, gateway_mode, transaction_id, gateway_status, validated_once_at, verified_at, failure_reason, created_at
+            FROM admission_payment_transactions
+            WHERE admission_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $latestTxStmt->execute([(int)$application['id']]);
+        $latestPayTx = $latestTxStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $statusSummary = enrich_admission_document_data($application, $db);
       ?>
 
-      <!-- Application Fee Payment Notice / Callout -->
+      <!-- Payment Notice OR Portal Decision Banner -->
       <?php if (!$isPaid): ?>
-        <div style="background:#fff1f2; border:2px solid #fecdd3; border-radius:12px; padding:1.5rem 1.8rem; margin-bottom:2rem; box-shadow:0 4px 6px -1px rgba(0,0,0,0.05); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;">
-          <div style="flex:1; min-width:280px;">
+        <?php
+          $rawPaySt = (string)($application['payment_status'] ?? 'Pending');
+          $isFailedState = ($rawPaySt === 'Failed');
+          $isUnderVerif = ($rawPaySt === 'Under Verification');
+          $unpaidBadgeTxt = $isFailedState ? 'Payment Failed' : ($isUnderVerif ? 'Under Verification' : 'Payment Pending');
+          $unpaidStatusTxt = $isFailedState ? 'Failed' : ($isUnderVerif ? 'Under Verification' : 'Unpaid');
+          $failDetail = trim((string)($latestPayTx['failure_reason'] ?? ''));
+        ?>
+        <div class="no-print" style="background:<?= $isFailedState ? '#fef2f2' : '#fff1f2' ?>; border:2px solid #fecdd3; border-radius:12px; padding:1.4rem 1.7rem; margin-bottom:1.75rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.15rem;">
+          <div style="flex:1; min-width:min(100%, 260px);">
             <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.4rem;">
-              <span style="background:#be123c; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem; text-transform:uppercase;">Payment Pending</span>
-              <h3 style="font-size:1.2rem; font-weight:800; color:#9f1239; margin:0;">Application Fee: ৳150 BDT</h3>
+              <span style="background:#be123c; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem; text-transform:uppercase;"><?= e($unpaidBadgeTxt) ?></span>
+              <h3 style="font-size:1.15rem; font-weight:800; color:#9f1239; margin:0;">Application Fee: ৳150 BDT</h3>
             </div>
-            <p style="color:#881337; font-size:0.92rem; margin:0;">
-              আবেদন ফি <strong>৳১৫০ টাকা</strong> পরিশোধ করলেই আপনার রঙিন ছবিযুক্ত অফিসিয়াল <strong>অ্যাপ্লিকেশন কার্ড (Application Card)</strong> চলে আসবে এবং <strong>স্টুডেন্ট পোর্টালের আইডি ও পাসওয়ার্ড</strong> পেয়ে যাবেন।
+            <p style="color:#881337; font-size:0.9rem; margin:0;">
+              <?php if ($isFailedState && $failDetail !== ''): ?>
+                <strong>Previous payment verification failed:</strong> <?= e($failDetail) ?>. Complete verified checkout via the Sandbox Payment Gateway to generate your Official Application Card.
+              <?php elseif ($isUnderVerif): ?>
+                Your checkout session is pending gateway authorization. Complete payment verification in the Sandbox Gateway to unlock your Official Application Card &amp; PDF.
+              <?php else: ?>
+                Complete your <strong>৳150 application fee</strong> payment via our verified Sandbox Payment Gateway to generate your Official Application Card and Payment Receipt.
+              <?php endif; ?>
             </p>
           </div>
           <div>
-            <a href="<?= APP_URL ?>/admission-payment.php?ref=<?= urlencode($application['application_ref']) ?>" class="btn-primary" style="background:#e11d48; padding:0.85rem 1.8rem; font-size:1rem; font-weight:700; text-decoration:none; box-shadow:0 2px 4px rgba(225,29,72,0.3);">
-              <i class="fas fa-credit-card"></i> Pay ৳150 with bKash/Nagad &rarr;
+            <a href="<?= APP_URL ?>/admission-payment.php?ref=<?= urlencode($application['application_ref']) ?>" class="btn-primary" style="background:#e11d48; padding:0.85rem 1.6rem; font-size:0.95rem; font-weight:700; text-decoration:none;">
+              <i class="fas fa-credit-card"></i> <?= $isFailedState ? 'Retry ৳150 Payment &amp; Generate Card' : 'Pay ৳150 Fee Now &rarr;' ?>
             </a>
           </div>
         </div>
-      <?php else: ?>
-        <!-- ============================================================== -->
-        <!-- ⭐ STATUS & CREDENTIALS DISPLAY                                 -->
-        <!-- ============================================================== -->
-        <?php if ($application['status'] === 'Accepted' && !empty($application['student_id'])): ?>
-          <div style="background:linear-gradient(135deg, #1e3a8a 0%, #1e73be 100%); color:#ffffff; border-radius:12px; padding:1.8rem 2rem; margin-bottom:2rem; box-shadow:0 8px 16px -2px rgba(30,115,190,0.25); border:1px solid #60a5fa;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.2rem; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:1rem;">
-              <div>
-                <span style="background:rgba(255,255,255,0.2); color:#ffffff; padding:3px 10px; border-radius:20px; font-size:0.78rem; font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">
-                  <i class="fas fa-check-circle" style="color:#4ade80;"></i> Admission Accepted &amp; Enrolled
-                </span>
-                <h3 style="font-size:1.35rem; font-weight:800; margin:0.4rem 0 0.2rem; color:#ffffff;">
-                  <i class="fas fa-user-graduate"></i> Student Academic Portal Credentials
-                </h3>
-                <p style="margin:0; font-size:0.88rem; color:#dbeafe;">
-                  আপনার ভর্তি আবেদন অনুমোদিত হয়েছে। নিচে আপনার স্টুডেন্ট পোর্টালের <strong>আইডি ও পাসওয়ার্ড</strong> দেওয়া হলো:
-                </p>
-              </div>
-              <div>
-                <a href="<?= APP_URL ?>/student/login.php?student_id=<?= urlencode($application['student_id'] ?? '') ?>&pwd=<?= urlencode($application['portal_password'] ?? '') ?>" style="background:#22c55e; color:#ffffff !important; font-weight:800; padding:0.85rem 1.6rem; text-decoration:none; border-radius:8px; display:inline-flex; align-items:center; gap:0.5rem; box-shadow:0 4px 8px rgba(0,0,0,0.2); font-size:1rem; transition:transform 0.2s ease;">
-                  <i class="fas fa-sign-in-alt"></i> Login to Student Portal Now &rarr;
-                </a>
-              </div>
-            </div>
-
-            <!-- Credentials Box -->
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
-              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
-                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Your Student ID</small>
-                <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#ffffff; letter-spacing:1px; margin-top:2px;">
-                  <?= e($application['student_id'] ?? '') ?>
-                </div>
-              </div>
-
-              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem; position:relative;">
-                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Portal Password</small>
-                <div style="font-family:monospace; font-size:1.45rem; font-weight:800; color:#fde047; letter-spacing:1px; margin-top:2px;">
-                  <?= e($application['portal_password'] ?? '') ?>
-                </div>
-              </div>
-
-              <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.9rem 1.2rem;">
-                <small style="color:#bfdbfe; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Admitted Program</small>
-                <div style="font-size:0.95rem; font-weight:700; color:#ffffff; margin-top:4px;">
-                  <?= e($application['interested_subject']) ?>
-                </div>
-              </div>
-            </div>
-          </div>
-        <?php elseif ($application['status'] === 'Rejected'): ?>
-          <div style="background:#fef2f2; border:2px solid #fecaca; border-radius:12px; padding:1.5rem 1.8rem; margin-bottom:2rem;">
-            <div style="display:flex; align-items:center; gap:0.6rem; color:#b91c1c; font-weight:800; font-size:1.15rem; margin-bottom:0.4rem;">
-              <i class="fas fa-times-circle" style="font-size:1.4rem;"></i> Admission Application Rejected
-            </div>
-            <p style="color:#7f1d1d; margin:0 0 0.5rem; font-size:0.92rem;">
-              The Admissions Committee has reviewed your application and was unable to approve admission at this time.
-            </p>
-            <?php if (!empty($application['admin_notes'])): ?>
-              <div style="background:#ffffff; border-left:4px solid #b91c1c; padding:8px 12px; border-radius:0 6px 6px 0; font-size:0.88rem; color:#450a0a;">
-                <strong>Committee Note:</strong> <?= e($application['admin_notes']) ?>
-              </div>
-            <?php endif; ?>
-          </div>
-        <?php else: ?>
-          <div style="background:#eff6ff; border:2px solid #bfdbfe; border-radius:12px; padding:1.5rem 1.8rem; margin-bottom:2rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+      <?php elseif (($application['status'] ?? '') === 'Accepted' && !empty($application['student_id'])): ?>
+        <div class="no-print" style="background:linear-gradient(135deg, #0f2c59 0%, #1e40af 100%); color:#ffffff; border-radius:12px; padding:1.6rem 1.8rem; margin-bottom:1.75rem; border:1.5px solid #c9a227;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem; margin-bottom:1.1rem; border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:0.9rem;">
             <div>
-              <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.3rem;">
-                <span style="background:#15803d; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">৳150 Fee Paid &amp; Verified</span>
-                <span style="background:#1e40af; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">Status: Under Review</span>
-              </div>
-              <h4 style="margin:0 0 0.25rem; font-size:1.15rem; font-weight:800; color:#1e3a8a;">
-                Application Under Academic Review
-              </h4>
-              <p style="margin:0; font-size:0.88rem; color:#3b82f6;">
-                Your ৳150 application fee (TrxID: <strong><?= e($application['transaction_id'] ?? 'N/A') ?></strong>) is verified. Your documents and academic qualifications are currently being reviewed by the Admissions Committee. You will be able to access your Student Portal ID here upon approval.
-              </p>
-            </div>
-            <div>
-              <button type="button" onclick="window.print()" class="btn-primary" style="background:#1e73be; padding:0.65rem 1.25rem; font-size:0.88rem;">
-                <i class="fas fa-print"></i> Print Slip
-              </button>
-            </div>
-          </div>
-        <?php endif; ?>
-
-        <!-- ============================================================== -->
-        <!-- ⭐ OFFICIAL APPLICATION CARD (অ্যাপ্লিকেশন কার্ড উইথ ছবি)          -->
-        <!-- ============================================================== -->
-        <?php
-          $applicantPhotoUrl = get_admission_photo_url($application['photo'] ?? null);
-          if (!empty($application['student_id'])) {
-            $stPhoto = $db->query("SELECT avatar FROM students WHERE student_id = '{$application['student_id']}' LIMIT 1")->fetchColumn();
-            if (!empty($stPhoto)) {
-              $applicantPhotoUrl = get_student_avatar_url(['avatar' => $stPhoto]);
-            }
-          }
-        ?>
-        <div id="admitCardPrint" style="background:#ffffff; border:2.5px solid #1e73be; border-radius:12px; padding:2rem; margin-bottom:2rem; box-shadow:0 4px 6px -1px rgba(0,0,0,0.06); position:relative;">
-          
-          <!-- Application Card Header -->
-          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #1e73be; padding-bottom:1rem; margin-bottom:1.5rem; flex-wrap:wrap; gap:1rem;">
-            <div style="display:flex; align-items:center; gap:1rem;">
-              <img src="<?= APP_URL ?>/assets/images/logo.jpg" alt="RMU Logo" style="width:65px; height:65px; object-fit:contain;" onerror="this.src='<?= APP_URL ?>/assets/images/logo.svg'">
-              <div>
-                <h3 style="font-size:1.35rem; font-weight:800; color:#1e73be; margin:0 0 2px;"><?= APP_NAME ?></h3>
-                <div style="font-size:0.85rem; color:#475569; font-weight:600;">Office of Admissions &amp; Academic Records</div>
-                <small style="color:#64748b;">Permanent Campus: Kushtia, Bangladesh &bull; Web: rmu.ac.bd</small>
-              </div>
-            </div>
-            <div style="text-align:right;">
-              <span style="background:#eff6ff; color:#1e73be; border:2px solid #1e73be; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.92rem; text-transform:uppercase; letter-spacing:0.5px;">
-                APPLICATION CARD
+              <span style="background:rgba(255,255,255,0.2); color:#ffffff; padding:3px 10px; border-radius:20px; font-size:0.76rem; font-weight:700; text-transform:uppercase;">
+                <i class="fas fa-check-circle" style="color:#4ade80;"></i> Admission Approved &amp; Enrolled
               </span>
-              <div style="font-size:0.8rem; color:#64748b; margin-top:4px;">Session: <strong>Fall 2026</strong></div>
-              <div style="font-size:0.75rem; color:#15803d; font-weight:700; margin-top:2px;">
-                <i class="fas fa-check-circle"></i> APPLICATION FEE: ৳150 (<?= e($application['payment_method'] ?? 'bKash') ?>)
-              </div>
+              <h3 style="font-size:1.3rem; font-weight:800; margin:0.4rem 0 0.2rem; color:#ffffff;">
+                <i class="fas fa-user-graduate"></i> Student Academic Portal Credentials
+              </h3>
             </div>
-          </div>
-
-          <!-- Examinee & Application Particulars Grid -->
-          <div style="display:grid; grid-template-columns:1fr 180px; gap:1.5rem; margin-bottom:1.5rem;">
             <div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Applicant Legal Name:</span>
-                <strong style="color:#0f172a; font-size:1.05rem;"><?= e($application['full_name']) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Application Ref No:</span>
-                <strong style="font-family:monospace; font-size:1.1rem; color:#1e73be;"><?= e($application['application_ref']) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Applicant Roll No:</span>
-                <strong style="font-family:monospace; font-size:1.15rem; color:#b91c1c;"><?= e($application['exam_roll'] ?? ('APP-' . substr($application['application_ref'], -4))) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Applied Program:</span>
-                <strong style="color:#0f172a;"><?= e($application['interested_subject']) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Contact Mobile:</span>
-                <strong style="color:#0f172a;"><?= e($application['mobile']) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Issued Student ID:</span>
-                <strong style="font-family:monospace; color:#15803d; font-size:1.05rem;"><?= e($application['student_id'] ?? 'RMU2601004') ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Submission Date:</span>
-                <strong style="color:#475569;"><?= format_date($application['created_at']) ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Fee Paid Via &amp; Trx:</span>
-                <strong style="color:#b91c1c; font-family:monospace;"><?= e($application['payment_method'] ?? 'bKash') ?> &bull; <?= e($application['transaction_id'] ?? 'N/A') ?></strong>
-              </div>
-              <div style="display:grid; grid-template-columns:150px 1fr; gap:8px; font-size:0.9rem; margin-bottom:7px;">
-                <span style="font-weight:600; color:#64748b;">Sender &amp; Gateway:</span>
-                <span style="color:#0f172a; font-size:0.86rem;">From: <strong><?= e($application['sender_number'] ?? $application['mobile']) ?></strong> &rarr; To: <strong>01336367336</strong></span>
-              </div>
-            </div>
-
-            <!-- Candidate Photo with Live Picture & Upload Option -->
-            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; border:1px solid #cbd5e1; border-radius:8px; padding:10px; background:#f8fafc;">
-              <div style="width:115px; height:135px; border:2px solid #94a3b8; background:#ffffff; border-radius:6px; display:flex; align-items:center; justify-content:center; overflow:hidden; margin-bottom:8px; box-shadow:0 2px 4px rgba(0,0,0,0.08);">
-                <img src="<?= e($applicantPhotoUrl) ?>" alt="<?= e($application['full_name']) ?>" style="width:100%; height:100%; object-fit:cover;">
-              </div>
-              <div style="font-family:monospace; font-size:0.75rem; letter-spacing:1.5px; font-weight:700; color:#334155;">
-                *<?= e($application['application_ref']) ?>*
-              </div>
-              <small style="color:#15803d; font-size:0.72rem; font-weight:700;"><i class="fas fa-check-circle"></i> Photo Verified</small>
-
-              <!-- Upload / Change Photo button -->
-              <form action="<?= APP_URL ?>/actions/upload-applicant-photo.php" method="POST" enctype="multipart/form-data" style="margin-top:6px; width:100%; text-align:center;">
-                <?= csrf_field() ?>
-                <input type="hidden" name="ref" value="<?= e($application['application_ref']) ?>">
-                <label for="changePhotoQuick" style="font-size:0.72rem; color:var(--rmu-primary); font-weight:700; cursor:pointer; text-decoration:underline;">
-                  <i class="fas fa-camera"></i> Change Photo
-                </label>
-                <input type="file" id="changePhotoQuick" name="photo" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="this.form.submit();">
-              </form>
+              <a href="<?= e($admLoginUrl) ?>" style="background:#22c55e; color:#ffffff !important; font-weight:800; padding:0.8rem 1.5rem; text-decoration:none; border-radius:8px; display:inline-flex; align-items:center; gap:0.5rem; font-size:0.95rem;">
+                <i class="fas fa-sign-in-alt"></i> Login to Student Portal Now &rarr;
+              </a>
             </div>
           </div>
 
-          <!-- Payment Verification Summary Strip -->
-          <div style="background:#f0fdf4; border:1.5px solid #86efac; border-radius:8px; padding:10px 16px; margin-bottom:1.2rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <i class="fas fa-check-circle" style="color:#16a34a; font-size:1.2rem;"></i>
-              <div>
-                <span style="font-size:0.86rem; color:#14532d; font-weight:700; display:block;">
-                  ফি পরিশোধ নিশ্চিত: ৳১৫০ (প্রাপক নম্বর: 01336367336 &bull; মেথড: <?= e($application['payment_method'] ?? 'bKash') ?>)
-                </span>
-                <span style="font-size:0.78rem; color:#166534;">
-                  প্রেরক নম্বর: <strong><?= e($application['sender_number'] ?? $application['mobile']) ?></strong> &bull; TrxID: <strong style="font-family:monospace;"><?= e($application['transaction_id'] ?? 'N/A') ?></strong>
-                </span>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap:0.9rem;">
+            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.85rem 1.1rem;">
+              <small style="color:#bfdbfe; font-size:0.72rem; text-transform:uppercase;">Student ID</small>
+              <div style="font-family:monospace; font-size:1.35rem; font-weight:800; color:#ffffff; margin-top:2px;">
+                <?= e($application['student_id']) ?>
               </div>
             </div>
-            <?php 
-              $slipUrl = get_payment_screenshot_url($application['payment_screenshot'] ?? null);
-              if ($slipUrl):
-            ?>
-              <div>
-                <a href="<?= e($slipUrl) ?>" target="_blank" style="background:#15803d; color:#ffffff !important; padding:5px 12px; border-radius:6px; font-size:0.78rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
-                  <i class="fas fa-receipt"></i> পেমেন্ট স্লিপ / স্ক্রিনশট দেখুন &rarr;
-                </a>
+            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.85rem 1.1rem;">
+              <small style="color:#bfdbfe; font-size:0.72rem; text-transform:uppercase;">Application ID &amp; Roll</small>
+              <div style="font-family:monospace; font-size:0.95rem; font-weight:800; color:#ffffff; margin-top:2px;">
+                <?= e(!empty($application['application_id']) ? $application['application_id'] : $application['application_ref']) ?>
               </div>
-            <?php endif; ?>
-          </div>
-
-          <!-- Instructions to Applicant -->
-          <div style="background:#f8fafc; border-top:1px solid #e2e8f0; padding-top:1rem; font-size:0.8rem; color:#475569; line-height:1.5;">
-            <strong>Important Notes for the Applicant:</strong>
-            <ol style="margin:4px 0 0 1.2rem; padding:0;">
-              <li>Keep this <strong>Application Card</strong> saved or printed for admission confirmation and document verification.</li>
-              <li>Your Student Portal Account is now active. Use the <strong>Student ID</strong> and <strong>Password</strong> shown above to log into the Student Portal.</li>
-              <li>Report to the RMU Admissions Office with your original academic certificates and mark sheets during office hours.</li>
-            </ol>
-          </div>
-
-          <!-- Signatures -->
-          <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:2rem; padding-top:1.5rem; border-top:1px dashed #cbd5e1; font-size:0.82rem;">
-            <div style="text-align:center;">
-              <div>_______________________________</div>
-              <div style="color:#64748b; margin-top:3px;">Applicant's Signature</div>
+              <div style="font-family:monospace; font-size:0.88rem; font-weight:700; color:#fde68a; margin-top:2px;">
+                Roll: <?= e(!empty($application['roll_number']) ? $application['roll_number'] : ($application['exam_roll'] ?? 'Assigned')) ?>
+              </div>
             </div>
-            <div style="text-align:center;">
-              <div style="font-weight:700; color:#1e73be; font-family:'Brush Script MT', cursive; font-size:1.25rem;">Md. Rafiqul Islam</div>
-              <div style="color:#64748b; margin-top:3px; font-weight:600;">Registrar &amp; Director of Admissions, RMU</div>
+            <div style="background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:0.85rem 1.1rem;">
+              <small style="color:#bfdbfe; font-size:0.72rem; text-transform:uppercase;">Portal Password</small>
+              <?php if (!empty($application['portal_password'])): ?>
+                <div style="font-family:monospace; font-size:1.35rem; font-weight:800; color:#fde047; margin-top:2px;">
+                  <?= e($application['portal_password']) ?>
+                </div>
+              <?php else: ?>
+                <div style="font-size:0.86rem; font-weight:700; color:#e2e8f0; margin-top:4px;">
+                  Updated / Protected (Use your portal password)
+                </div>
+              <?php endif; ?>
             </div>
           </div>
         </div>
       <?php endif; ?>
 
-      <!-- Printable Application Summary Voucher -->
-      <div id="printableVoucher" class="form-container" style="position: relative; border-top: 5px solid var(--rmu-primary);">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--rmu-border); padding-bottom: 1.25rem; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
-          <div>
-            <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--rmu-primary); margin: 0 0 0.2rem;"><?= APP_NAME ?></h2>
-            <div style="font-family: 'Hind Siliguri', sans-serif; font-size: 1.1rem; color: var(--rmu-dark);"><?= APP_NAME_BN ?></div>
-            <small style="color: var(--rmu-muted);">Kushtia Campus &bull; Online Admission Intake System</small>
+      <?php if (($application['status'] ?? '') === 'Rejected'): ?>
+        <div class="no-print" style="background:#fef2f2; border:2px solid #fecaca; border-radius:12px; padding:1.4rem 1.6rem; margin-bottom:1.75rem;">
+          <div style="display:flex; align-items:center; gap:0.6rem; color:#b91c1c; font-weight:800; font-size:1.1rem; margin-bottom:0.35rem;">
+            <i class="fas fa-times-circle"></i> Admission Application Rejected
           </div>
-          <div style="text-align: right;">
-            <div style="font-size: 0.8rem; color: var(--rmu-muted); text-transform: uppercase; font-weight: 600;">Application Reference</div>
-            <div style="font-size: 1.35rem; font-weight: 800; color: var(--rmu-accent);"><?= e($application['application_ref']) ?></div>
-            <small style="color: var(--rmu-muted);">Date: <?= format_date($application['created_at']) ?></small>
-          </div>
+          <?php if (!empty($application['admin_notes'])): ?>
+            <div style="background:#ffffff; border-left:4px solid #b91c1c; padding:8px 12px; border-radius:0 6px 6px 0; font-size:0.88rem; color:#450a0a; margin-top:6px;">
+              <strong>Admissions Committee Note:</strong> <?= e($application['admin_notes']) ?>
+            </div>
+          <?php endif; ?>
         </div>
+      <?php endif; ?>
 
-        <!-- Status Indicator Pill -->
-        <div style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; background: var(--rmu-bg-light); padding: 1rem 1.25rem; border-radius: var(--rmu-radius-sm);">
-          <span style="font-weight: 600; color: var(--rmu-dark);">Application Status:</span>
-          <?php
-            $status = $application['status'];
-            $badgeBg = '#fee2e2'; $badgeColor = '#991b1b';
-            if ($status === 'Accepted') { $badgeBg = '#d1fae5'; $badgeColor = '#065f46'; }
-            elseif ($status === 'Under Review') { $badgeBg = '#fef3c7'; $badgeColor = '#92400e'; }
-            elseif ($status === 'Submitted') { $badgeBg = '#e0e7ff'; $badgeColor = '#3730a3'; }
-          ?>
-          <span style="background: <?= $badgeBg ?>; color: <?= $badgeColor ?>; padding: 0.35rem 1rem; border-radius: 20px; font-weight: 700; font-size: 0.95rem; text-transform: uppercase;">
-            <?= e($status) ?>
-          </span>
-        </div>
-
-        <?php if (!empty($application['admin_notes'])): ?>
-          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: var(--rmu-radius-sm); padding: 1rem 1.25rem; margin-bottom: 1.5rem; font-size: 0.92rem; color: #92400e;">
-            <strong>Admissions Office Feedback:</strong> <?= e($application['admin_notes']) ?>
+      <?php if ($isPaid): ?>
+        <?php if (!empty($_GET['paid'])): ?>
+          <div id="paymentVerifiedCardBanner" class="no-print" style="background:linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border:2px solid #22c55e; border-radius:12px; padding:1.25rem 1.6rem; margin-bottom:1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+            <div>
+              <div style="display:flex; align-items:center; gap:0.5rem; color:#15803d; font-weight:800; font-size:1.08rem;">
+                <i class="fas fa-check-circle" style="font-size:1.25rem;"></i>
+                Payment Verified &amp; Official Application Card Generated!
+              </div>
+              <div style="font-size:0.86rem; color:#166534; margin-top:4px;">
+                Transaction ID: <strong style="font-family:monospace; color:#0f2c59;"><?= e($application['transaction_id'] ?? 'Verified') ?></strong>
+                &bull; Channel: <strong><?= e($application['payment_method'] ?? 'Sandbox') ?></strong>
+                <?php if (!empty($latestPayTx['gateway_session_id'])): ?>
+                  &bull; Gateway Ref: <code style="font-size:0.8rem;"><?= e($latestPayTx['gateway_session_id']) ?></code>
+                <?php endif; ?>
+                <?php if (!empty($application['pdf_path']) && is_file(BASE_PATH . '/' . $application['pdf_path'])): ?>
+                  &bull; <span style="color:#15803d; font-weight:700;">PDF Card Ready</span>
+                <?php endif; ?>
+              </div>
+            </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <a href="<?= e($appCardUrlBase) ?>&amp;action=download" class="rmu-status-btn" style="background:#0f2c59; color:#ffffff;">
+                <i class="fas fa-file-download"></i> Download Card PDF
+              </a>
+              <a href="<?= e($receiptUrlBase) ?>&amp;action=view" class="rmu-status-btn" style="background:#15803d; color:#ffffff;">
+                <i class="fas fa-receipt"></i> View Payment Receipt
+              </a>
+            </div>
           </div>
         <?php endif; ?>
 
-        <!-- Application Data Table -->
-        <h4 style="font-size: 1.1rem; color: var(--rmu-dark); margin-bottom: 0.8rem; font-weight: 700;">Applicant Academic Particulars</h4>
-        <div class="table-responsive" style="margin-bottom: 1.5rem;">
-          <table class="rmu-table">
-            <tbody>
-              <tr>
-                <td style="width: 35%; font-weight: 600;">Applicant Full Name:</td>
-                <td><?= e($application['full_name']) ?></td>
-              </tr>
-              <tr>
-                <td style="font-weight: 600;">Mobile Number:</td>
-                <td><?= e($application['mobile']) ?></td>
-              </tr>
-              <?php if (!empty($application['email'])): ?>
-              <tr>
-                <td style="font-weight: 600;">Email Address:</td>
-                <td><?= e($application['email']) ?></td>
-              </tr>
-              <?php endif; ?>
-              <tr>
-                <td style="font-weight: 600;">Previous College:</td>
-                <td><?= e($application['last_college']) ?> (<?= e($application['home_district']) ?>)</td>
-              </tr>
-              <tr>
-                <td style="font-weight: 600;">SSC / Equivalent:</td>
-                <td>
-                  <strong><?= e($application['ssc_exam'] ?? 'S.S.C') ?></strong> &bull;
-                  Board: <?= e($application['ssc_board'] ?? 'N/A') ?> &bull;
-                  Group: <?= e($application['ssc_group'] ?? 'Science') ?> &bull;
-                  Passing Year: <?= e($application['ssc_year'] ?? 'N/A') ?>
-                  <br>
-                  <span style="color: var(--rmu-primary); font-weight: 600;">
-                    Roll No: <?= e($application['ssc_roll'] ?? 'N/A') ?> | GPA: <?= number_format($application['ssc_gpa'], 2) ?>
-                  </span>
-                </td>
-              </tr>
-              <tr>
-                <td style="font-weight: 600;">HSC / Diploma:</td>
-                <td>
-                  <strong><?= e($application['hsc_exam'] ?? 'H.S.C') ?></strong> &bull;
-                  Board: <?= e($application['hsc_board'] ?? 'N/A') ?> &bull;
-                  Stream: <?= e($application['hsc_group']) ?> &bull;
-                  Passing Year: <?= e($application['hsc_year'] ?? 'N/A') ?>
-                  <br>
-                  <span style="color: var(--rmu-primary); font-weight: 600;">
-                    Roll No: <?= e($application['hsc_roll'] ?? 'N/A') ?> | GPA: <?= number_format($application['hsc_gpa'], 2) ?>
-                  </span>
-                </td>
-              </tr>
-              <?php if (!empty($application['grad_applicable'])): ?>
-              <tr>
-                <td style="font-weight: 600;">Graduation Level:</td>
-                <td>
-                  <strong><?= e($application['grad_exam'] ?? 'B.Sc Engineering') ?></strong> in <?= e($application['grad_subject'] ?? '') ?>
-                  <br>
-                  <span style="color: #64748b;">
-                    Inst: <?= e($application['grad_university'] ?? '') ?> &bull; Duration: <?= e($application['grad_duration'] ?? '') ?> &bull; Year: <?= e($application['grad_year'] ?? '') ?>
-                  </span>
-                  <br>
-                  <strong style="color: var(--rmu-accent);">Result: <?= e($application['grad_result_type'] ?? 'CGPA') ?> <?= e($application['grad_result'] ?? '') ?></strong>
-                </td>
-              </tr>
-              <?php endif; ?>
-              <tr>
-                <td style="font-weight: 600;">Intended Program:</td>
-                <td><strong style="color: var(--rmu-primary); font-size: 1.05rem;"><?= e($application['interested_subject']) ?></strong></td>
-              </tr>
-              <tr>
-                <td style="font-weight: 600;">Special Quota Declared:</td>
-                <td><?= e($application['quota']) ?></td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Document Action Toolbar (Real PDF / Print / Separate Payment Receipt) -->
+        <div class="rmu-status-actions no-print">
+          <div style="font-size:0.9rem; font-weight:700; color:#0f2c59;">
+            <i class="fas fa-id-card" style="color:#c9a227;"></i>
+            Official Admission Application Card
+          </div>
+          <div class="rmu-status-btn-group">
+            <a href="<?= e($appCardUrlBase) ?>&amp;action=pdf" target="_blank" class="rmu-status-btn" style="background:#0f2c59; color:#ffffff;">
+              <i class="fas fa-file-pdf"></i> View PDF
+            </a>
+            <a href="<?= e($appCardUrlBase) ?>&amp;action=download" class="rmu-status-btn" style="background:#b91c1c; color:#ffffff;">
+              <i class="fas fa-download"></i> Download PDF
+            </a>
+            <button type="button" onclick="window.print()" class="rmu-status-btn" style="background:#1e40af; color:#ffffff;">
+              <i class="fas fa-print"></i> Print Application
+            </button>
+            <a href="<?= e($receiptUrlBase) ?>&amp;action=view" class="rmu-status-btn" style="background:#15803d; color:#ffffff;">
+              <i class="fas fa-receipt"></i> Payment Receipt
+            </a>
+            <a href="<?= e($receiptUrlBase) ?>&amp;action=download" class="rmu-status-btn" style="background:#ffffff; color:#15803d; border-color:#15803d;">
+              <i class="fas fa-file-download"></i> Receipt PDF
+            </a>
+          </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--rmu-border); padding-top: 1.25rem; flex-wrap: wrap; gap: 1rem;">
-          <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-            <?php if ($isPaid): ?>
-              <button onclick="window.print();" class="btn-primary" style="background:#1e73be; font-weight:700;">
-                <i class="fas fa-print"></i> Print Application Card &amp; Slip
-              </button>
-              <a href="<?= APP_URL ?>/student/login.php?student_id=<?= urlencode($application['student_id'] ?? '') ?>&pwd=<?= urlencode($application['portal_password'] ?? '') ?>" class="btn-primary" style="background:#15803d; text-decoration:none; font-weight:700;">
-                <i class="fas fa-sign-in-alt"></i> Login to Student Portal
-              </a>
-            <?php else: ?>
-              <a href="<?= APP_URL ?>/admission-payment.php?ref=<?= urlencode($application['application_ref']) ?>" class="btn-primary" style="background:#e11d48; text-decoration:none; font-weight:700;">
-                <i class="fas fa-credit-card"></i> Pay ৳150 Fee Now &rarr;
-              </a>
-              <button onclick="window.print();" class="btn-primary" style="background:var(--rmu-secondary);">
-                <i class="fas fa-print"></i> Print Application Draft
-              </button>
-            <?php endif; ?>
+        <!-- OFFICIAL PREMIUM APPLICATION CARD (Generated Strictly After Verified Payment) -->
+        <?= render_premium_application_card_html($application, ['db' => $db]) ?>
+      <?php else: ?>
+        <!-- Payment Pending Application Summary (Official Paid Application Card locked until verification) -->
+        <div id="pendingApplicationSummary" style="background:#ffffff; border:2px solid #cbd5e1; border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(15,44,89,0.06);">
+          <div style="background:#0f2c59; color:#ffffff; padding:1rem 1.5rem; border-bottom:3px solid #c9a227; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+            <div>
+              <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.8px; color:#fde68a; font-weight:700;">Application Summary &bull; Awaiting Payment Verification</div>
+              <h3 style="margin:2px 0 0; font-size:1.15rem; font-weight:800; color:#ffffff;">
+                <?= e($statusSummary['application_id']) ?>
+                <?php if ($statusSummary['roll_number'] !== ''): ?>
+                  <span style="font-family:monospace; font-size:0.95rem; color:#bfdbfe; margin-left:8px;">(Roll: <?= e($statusSummary['roll_number']) ?>)</span>
+                <?php endif; ?>
+              </h3>
+            </div>
+            <span style="background:#be123c; color:#ffffff; padding:4px 12px; border-radius:20px; font-size:0.78rem; font-weight:800;">
+              <i class="fas fa-lock"></i> <?= e($unpaidStatusTxt) ?>
+            </span>
           </div>
-          <a href="<?= APP_URL ?>/admission-form.php" style="font-size: 0.9rem; font-weight: 600;">
-            Submit another application &rarr;
-          </a>
+
+          <div style="padding:1.5rem;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap:1rem; font-size:0.9rem; margin-bottom:1.25rem;">
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Applicant Name</span>
+                <strong style="color:#0f172a; font-size:1rem;"><?= e($application['full_name']) ?></strong>
+              </div>
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Selected Department &amp; Program</span>
+                <strong style="color:#0f2c59;"><?= e($statusSummary['program_name']) ?></strong>
+                <small style="display:block; color:#475569;"><?= e($statusSummary['department_name']) ?> &bull; <?= e($statusSummary['degree_type']) ?></small>
+              </div>
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Academic Session &amp; Duration</span>
+                <strong style="color:#0f172a;"><?= e($statusSummary['academic_session']) ?></strong>
+                <small style="display:block; color:#475569;"><?= e($statusSummary['duration_label']) ?></small>
+              </div>
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Passing Year Details</span>
+                <strong style="color:#0f172a;">Actual: <?= e(!empty($statusSummary['actual_passing_year']) ? $statusSummary['actual_passing_year'] : 'N/A') ?></strong>
+                <?php if (!empty($application['expected_passing_year'])): ?>
+                  <small style="display:block; color:#1e40af;">Expected (Advisory): <?= (int)$application['expected_passing_year'] ?></small>
+                <?php endif; ?>
+              </div>
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Application Status</span>
+                <strong><?= e($statusSummary['app_status_label']) ?></strong>
+              </div>
+              <div>
+                <span style="display:block; font-size:0.76rem; color:#64748b; text-transform:uppercase; font-weight:700;">Student ID Status</span>
+                <strong><?= e($statusSummary['student_id_detail']) ?></strong>
+              </div>
+            </div>
+
+            <div style="background:#f8fafc; border:1.5px dashed #94a3b8; border-radius:8px; padding:1rem 1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+              <div style="font-size:0.88rem; color:#334155;">
+                <i class="fas fa-shield-alt" style="color:#0f2c59;"></i>
+                <strong>Official Application Card Locked:</strong> Your Paid Application Card, QR Card, and A4 PDF will be generated automatically immediately after verifying your ৳150 fee payment.
+              </div>
+              <a href="<?= APP_URL ?>/admission-payment.php?ref=<?= urlencode($application['application_ref']) ?>" class="btn-primary" style="background:#e11d48; text-decoration:none; white-space:normal; text-align:center;">
+                <i class="fas fa-credit-card"></i> Pay ৳150 &amp; Generate Application Card
+              </a>
+            </div>
+          </div>
         </div>
+      <?php endif; ?>
+
+      <div class="no-print" style="margin-top: 1.5rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+        <a href="<?= APP_URL ?>/admission-form.php" style="font-size: 0.9rem; font-weight: 600;">
+          Submit another application &rarr;
+        </a>
+        <?php if (!empty($application['student_id']) && ($application['status'] ?? '') === 'Accepted'): ?>
+          <a href="<?= e($admLoginUrl) ?>" style="font-size: 0.9rem; font-weight: 700; color:#15803d;">
+            <i class="fas fa-sign-in-alt"></i> Login to Student Portal &rarr;
+          </a>
+        <?php endif; ?>
       </div>
     <?php endif; ?>
   </div>
 </section>
 
-<!-- Print Specific Styling -->
-<style>
-@media print {
-  .rmu-topbar, .rmu-navbar, .rmu-footer, .breadcrumb-section, .btn-primary, form {
-    display: none !important;
-  }
-  body, html {
-    background: #ffffff !important;
-    padding: 0 !important;
-  }
-  .form-container {
-    box-shadow: none !important;
-    border: none !important;
-    padding: 0 !important;
-  }
-}
-</style>
-
 <?php include __DIR__ . '/includes/footer.php'; ?>
-

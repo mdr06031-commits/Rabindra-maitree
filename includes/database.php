@@ -20,8 +20,8 @@ function getDb(): PDO {
             error_log("Database connection failure: " . $e->getMessage());
             die("<div style='font-family: sans-serif; padding: 2rem; background: #fff5f5; border: 1px solid #feb2b2; margin: 2rem; border-radius: 8px;'>
                 <h2 style='color: #c53030; margin-top:0;'>Database Connection Error</h2>
-                <p>Could not connect to the RMU database server. Please ensure MySQL is running in XAMPP and <code>rmu_db</code> has been imported.</p>
-                <small style='color: #718096;'>Technical details: " . htmlspecialchars($e->getMessage()) . "</small>
+                <p>Could not connect to the RMU database server. Please ensure MySQL is running in XAMPP and <code>rmu_db</code> is accessible.</p>
+                <small style='color: #718096;'>Please contact the system administrator if this issue persists.</small>
             </div>");
         }
     }

@@ -98,7 +98,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
               <div class="form-error-msg">Please provide your full name.</div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
               <div class="form-group">
                 <label class="form-label">Email Address <span class="required">*</span></label>
                 <input type="email" name="email" class="form-control" placeholder="your@email.com" required>
@@ -113,7 +113,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
             <div class="form-group">
               <label class="form-label">Subject <span class="required">*</span></label>
-              <input type="text" name="subject" class="form-control" placeholder="e.g. Admission Inquiry for Fall 2026" required>
+              <input type="text" name="subject" class="form-control" placeholder="e.g. Admission Inquiry for <?= e(get_setting('admission_active_term', 'Fall 2026')) ?>" required>
               <div class="form-error-msg">Please enter a subject.</div>
             </div>
 

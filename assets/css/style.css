@@ -42,6 +42,9 @@
 html {
   font-size: 16px;
   scroll-behavior: smooth;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -53,6 +56,12 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow-x: clip;
+}
+
+body.rmu-drawer-open {
+  overflow: hidden;
+  touch-action: none;
 }
 
 a {
@@ -73,6 +82,7 @@ img {
 
 .container {
   width: 100%;
+  min-width: 0;
   max-width: 1240px;
   margin: 0 auto;
   padding: 0 1.25rem;
@@ -1504,6 +1514,8 @@ img {
   padding: 0.6rem 0;
   display: flex;
   align-items: center;
+  overflow: hidden;
+  max-width: 100%;
 }
 
 .ticker-label {
@@ -1522,6 +1534,7 @@ img {
   overflow: hidden;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
 }
 
 .ticker-item {
@@ -1595,6 +1608,12 @@ img {
   gap: 1.5rem;
 }
 
+.grid-2 > *,
+.grid-3 > *,
+.grid-4 > * {
+  min-width: 0;
+}
+
 /* Academic Faculty Cards */
 .faculty-card {
   background: var(--rmu-white);
@@ -1658,6 +1677,8 @@ img {
 /* 3 Underline Buttons & Filter Tabs for Academic Programs */
 .program-tabs-wrapper {
   margin-bottom: 2.2rem;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .program-tabs-nav {
@@ -1879,9 +1900,11 @@ img {
 .breadcrumb-nav {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   font-size: 0.9rem;
   opacity: 0.9;
+  min-width: 0;
 }
 
 .breadcrumb-nav a {
@@ -1899,6 +1922,8 @@ img {
 .breadcrumb-nav .current {
   color: var(--rmu-warning);
   font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Admission Prototype Form */
@@ -1935,7 +1960,7 @@ img {
   background-color: var(--rmu-bg-light);
   border: 1.5px solid var(--rmu-border);
   border-radius: var(--rmu-radius-sm);
-  transition: var(--rmu-transition);
+  transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
 }
 
 .form-control:focus, .form-select:focus {
@@ -2109,6 +2134,8 @@ img {
 /* Tables */
 .table-responsive {
   overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
   margin-bottom: 1.5rem;
 }
 
@@ -2141,9 +2168,11 @@ img {
 .pagination {
   display: flex;
   justify-content: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
   margin-top: 2.5rem;
   list-style: none;
+  max-width: 100%;
 }
 
 .page-item .page-link {

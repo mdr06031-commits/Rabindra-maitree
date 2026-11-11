@@ -26,35 +26,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (empty($fullName) || empty($email)) {
                 flash_set('error', 'Full Name and Email are required.');
+            } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                flash_set('error', 'Please enter a valid administrator email address.');
             } else {
-                // If attempting to change password, verify current password
-                if (!empty($newPassword)) {
-                    $uStmt = $db->prepare("SELECT password_hash FROM users WHERE id = ?");
-                    $uStmt->execute([$currentUser['id']]);
-                    $hash = $uStmt->fetchColumn();
+                try {
+                    // If attempting to change password, verify current password
+                    if (!empty($newPassword)) {
+                        $uStmt = $db->prepare("SELECT password_hash FROM users WHERE id = ?");
+                        $uStmt->execute([$currentUser['id']]);
+                        $hash = $uStmt->fetchColumn();
 
-                    if (!password_verify($currentPassword, $hash)) {
-                        flash_set('error', 'Current password was incorrect. Password change failed.');
-                        header("Location: " . APP_URL . "/admin/users.php");
-                        exit;
+                        if (!password_verify($currentPassword, $hash)) {
+                            flash_set('error', 'Current password was incorrect. Password change failed.');
+                            header("Location: " . APP_URL . "/admin/users.php");
+                            exit;
+                        }
+
+                        if (strlen($newPassword) < 6) {
+                            flash_set('error', 'New password must be at least 6 characters.');
+                            header("Location: " . APP_URL . "/admin/users.php");
+                            exit;
+                        }
+
+                        $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+                        $upd = $db->prepare("UPDATE users SET full_name = ?, email = ?, password_hash = ? WHERE id = ?");
+                        $upd->execute([$fullName, $email, $newHash, $currentUser['id']]);
+                        $_SESSION['user_fullname'] = $fullName;
+                        $_SESSION['user_email'] = $email;
+                        session_regenerate_id(true);
+                        log_audit('PASSWORD_CHANGED', "Administrator {$currentUser['username']} updated their password.");
+                        flash_set('success', 'Profile and password updated successfully.');
+                    } else {
+                        $upd = $db->prepare("UPDATE users SET full_name = ?, email = ? WHERE id = ?");
+                        $upd->execute([$fullName, $email, $currentUser['id']]);
+                        $_SESSION['user_fullname'] = $fullName;
+                        $_SESSION['user_email'] = $email;
+                        log_audit('PROFILE_UPDATED', "Administrator {$currentUser['username']} updated profile information.");
+                        flash_set('success', 'Profile information updated successfully.');
                     }
-
-                    if (strlen($newPassword) < 6) {
-                        flash_set('error', 'New password must be at least 6 characters.');
-                        header("Location: " . APP_URL . "/admin/users.php");
-                        exit;
-                    }
-
-                    $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
-                    $upd = $db->prepare("UPDATE users SET full_name = ?, email = ?, password_hash = ? WHERE id = ?");
-                    $upd->execute([$fullName, $email, $newHash, $currentUser['id']]);
-                    log_audit('PASSWORD_CHANGED', "Administrator {$currentUser['username']} updated their password.");
-                    flash_set('success', 'Profile and password updated successfully.');
-                } else {
-                    $upd = $db->prepare("UPDATE users SET full_name = ?, email = ? WHERE id = ?");
-                    $upd->execute([$fullName, $email, $currentUser['id']]);
-                    log_audit('PROFILE_UPDATED', "Administrator {$currentUser['username']} updated profile information.");
-                    flash_set('success', 'Profile information updated successfully.');
+                } catch (PDOException $e) {
+                    flash_set('error', 'Could not update profile because that email address is already in use.');
                 }
             }
         }
@@ -72,19 +83,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if (empty($username) || empty($fullName) || empty($email) || empty($password)) {
                     flash_set('error', 'All fields are required.');
+                } elseif (!preg_match('/^[a-zA-Z0-9_.-]{3,32}$/', $username)) {
+                    flash_set('error', 'Username must be 3-32 characters containing only letters, numbers, dots, underscores, or hyphens.');
+                } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    flash_set('error', 'Please enter a valid administrator email address.');
                 } elseif (strlen($password) < 6) {
                     flash_set('error', 'Password must be at least 6 characters.');
                 } else {
-                    $chk = $db->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
-                    $chk->execute([$username, $email]);
-                    if ($chk->fetch()) {
-                        flash_set('error', 'Username or email already in use.');
-                    } else {
-                        $hash = password_hash($password, PASSWORD_DEFAULT);
-                        $ins = $db->prepare("INSERT INTO users (username, full_name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'active')");
-                        $ins->execute([$username, $fullName, $email, $hash, $role]);
-                        log_audit('ADMIN_USER_CREATED', "Created new {$role} user: {$username}");
-                        flash_set('success', "Administrator '{$username}' created successfully.");
+                    try {
+                        $chk = $db->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
+                        $chk->execute([$username, $email]);
+                        if ($chk->fetch()) {
+                            flash_set('error', 'Username or email already in use.');
+                        } else {
+                            $hash = password_hash($password, PASSWORD_DEFAULT);
+                            $ins = $db->prepare("INSERT INTO users (username, full_name, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'active')");
+                            $ins->execute([$username, $fullName, $email, $hash, $role]);
+                            log_audit('ADMIN_USER_CREATED', "Created new {$role} user: {$username}");
+                            flash_set('success', "Administrator '{$username}' created successfully.");
+                        }
+                    } catch (PDOException $e) {
+                        flash_set('error', 'Could not create administrator account (username or email constraint).');
                     }
                 }
             }
@@ -99,11 +118,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $newPass = (string)($_POST['reset_password'] ?? '');
 
                 if ($targetId > 0 && strlen($newPass) >= 6) {
-                    $h = password_hash($newPass, PASSWORD_DEFAULT);
-                    $rst = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
-                    $rst->execute([$h, $targetId]);
-                    log_audit('ADMIN_PASSWORD_RESET', "Superadmin reset password for user ID #{$targetId}");
-                    flash_set('success', "Password for user #{$targetId} reset successfully.");
+                    try {
+                        $h = password_hash($newPass, PASSWORD_DEFAULT);
+                        $rst = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+                        $rst->execute([$h, $targetId]);
+                        log_audit('ADMIN_PASSWORD_RESET', "Superadmin reset password for user ID #{$targetId}");
+                        flash_set('success', "Password for user #{$targetId} reset successfully.");
+                    } catch (PDOException $e) {
+                        flash_set('error', 'Could not update password due to a database error.');
+                    }
                 } else {
                     flash_set('error', 'Password must be at least 6 characters.');
                 }
@@ -119,10 +142,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($targetId === (int)$currentUser['id']) {
                     flash_set('error', 'You cannot delete your own active administrator account.');
                 } elseif ($targetId > 0) {
-                    $del = $db->prepare("DELETE FROM users WHERE id = ?");
-                    $del->execute([$targetId]);
-                    log_audit('ADMIN_USER_DELETED', "Superadmin deleted user ID #{$targetId}");
-                    flash_set('success', "Administrator account removed.");
+                    try {
+                        $del = $db->prepare("DELETE FROM users WHERE id = ?");
+                        $del->execute([$targetId]);
+                        log_audit('ADMIN_USER_DELETED', "Superadmin deleted user ID #{$targetId}");
+                        flash_set('success', "Administrator account removed.");
+                    } catch (PDOException $e) {
+                        flash_set('error', 'Cannot remove administrator account because audit logs or system records reference this user.');
+                    }
                 }
             }
         }
@@ -137,7 +164,7 @@ $users = $db->query("SELECT * FROM users ORDER BY role = 'superadmin' DESC, id A
 include __DIR__ . '/includes/admin-header.php';
 ?>
 
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;">
   <div>
     <h2 style="font-size: 1.5rem; font-weight: 700; color: #0f172a; margin: 0 0 0.2rem;">
       <i class="fas fa-user-shield" style="color: var(--rmu-primary);"></i> Admin Users &amp; Security Controls
@@ -146,7 +173,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 2rem; align-items: start;">
   
   <!-- Left: All Admin Users Table -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
@@ -194,14 +221,14 @@ include __DIR__ . '/includes/admin-header.php';
               <td style="text-align: right; white-space: nowrap;">
                 <?php if ($currentUser['role'] === 'superadmin'): ?>
                   <!-- Reset Password Form Button -->
-                  <button type="button" onclick="showResetModal(<?= $u['id'] ?>, '<?= e($u['username']) ?>')" style="background: none; border: none; color: #0284c7; cursor: pointer; font-size: 0.82rem; font-weight: 600; margin-right: 6px;" title="Reset Password">
+                  <button type="button" onclick="showResetModal(<?= (int)$u['id'] ?>, <?= htmlspecialchars(json_encode($u['username']), ENT_QUOTES, 'UTF-8') ?>)" style="background: none; border: none; color: #0284c7; cursor: pointer; font-size: 0.82rem; font-weight: 600; margin-right: 6px;" title="Reset Password">
                     <i class="fas fa-key"></i> Password
                   </button>
                   <?php if ((int)$u['id'] !== (int)$currentUser['id']): ?>
-                    <form action="<?= APP_URL ?>/admin/users.php" method="POST" style="display: inline;" onsubmit="return confirm('Remove administrator account <?= e($u['username']) ?>?');">
+                    <form action="<?= APP_URL ?>/admin/users.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Remove administrator account ' . $u['username'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                       <?= csrf_field() ?>
                       <input type="hidden" name="action" value="delete_user">
-                      <input type="hidden" name="target_id" value="<?= $u['id'] ?>">
+                      <input type="hidden" name="target_id" value="<?= (int)$u['id'] ?>">
                       <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.82rem;">
                         <i class="fas fa-trash-alt"></i>
                       </button>
@@ -296,7 +323,7 @@ include __DIR__ . '/includes/admin-header.php';
 
           <div class="form-group">
             <label class="form-label">Initial Password *</label>
-            <input type="text" name="password" value="Admin@RMU<?= date('Y') ?>" class="form-control" required>
+            <input type="password" name="password" placeholder="Minimum 6 characters" minlength="6" autocomplete="new-password" class="form-control" required>
           </div>
 
           <button type="submit" class="btn-primary" style="width: 100%; justify-content: center; margin-top: 1.25rem;">
@@ -310,8 +337,8 @@ include __DIR__ . '/includes/admin-header.php';
 </div>
 
 <!-- Modal for Password Reset -->
-<div id="resetModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-  <div style="background: #ffffff; padding: 2rem; border-radius: 10px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
+<div id="resetModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; padding: 0.75rem; overflow-y: auto;">
+  <div style="background: #ffffff; padding: 1.5rem; border-radius: 10px; width: 100%; max-width: 400px; max-height: 92dvh; overflow-y: auto; box-shadow: 0 10px 25px rgba(0,0,0,0.2);">
     <h3 style="margin-top: 0; font-size: 1.2rem; color: #0f172a;">Reset Password for <span id="resetModalUsername" style="color: var(--rmu-primary);"></span></h3>
     <form action="<?= APP_URL ?>/admin/users.php" method="POST">
       <?= csrf_field() ?>
@@ -340,6 +367,13 @@ function showResetModal(id, username) {
 function closeResetModal() {
   document.getElementById('resetModal').style.display = 'none';
 }
+document.addEventListener('click', function(e) {
+  var m = document.getElementById('resetModal');
+  if (m && e.target === m) closeResetModal();
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeResetModal();
+});
 </script>
 
 <?php include __DIR__ . '/includes/admin-footer.php'; ?>

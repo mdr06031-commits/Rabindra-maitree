@@ -18,13 +18,20 @@ if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
 
 $ref = trim($_POST['ref'] ?? '');
 $db = getDb();
-$stmt = $db->prepare("SELECT * FROM admissions WHERE application_ref = ? LIMIT 1");
-$stmt->execute([$ref]);
+$stmt = $db->prepare("SELECT * FROM admissions WHERE application_ref = ? OR application_id = ? OR roll_number = ? LIMIT 1");
+$stmt->execute([$ref, $ref, $ref]);
 $adm = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$adm) {
     flash_set('error', 'Application not found.');
     header("Location: " . APP_URL . "/admission-status.php");
+    exit;
+}
+
+if (!can_access_admission_document($adm)) {
+    log_audit('ADMISSION_PHOTO_IDOR_BLOCKED', "Blocked unauthorized photo upload attempt for application {$adm['application_ref']}");
+    flash_set('error', 'Access denied. Please verify your application ownership before updating the photograph.');
+    header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode((string)$adm['application_ref']));
     exit;
 }
 
@@ -41,6 +48,7 @@ if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
             if (!is_dir($uploadDir)) {
                 mkdir($uploadDir, 0755, true);
             }
+            $oldPhoto = basename(trim((string)($adm['photo'] ?? '')));
             $cleanMobile = preg_replace('/[^0-9]/', '', $adm['mobile']);
             $filename = 'applicant_' . $cleanMobile . '_' . time() . '.' . $ext;
             if (move_uploaded_file($file['tmp_name'], $uploadDir . $filename)) {
@@ -54,6 +62,20 @@ if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
                     $updStudent->execute([$filename, $adm['student_id']]);
                 }
 
+                // Safely unlink orphaned custom applicant/student photo if no record references it
+                if ($oldPhoto !== '' && $oldPhoto !== $filename && (strpos($oldPhoto, 'applicant_') === 0 || strpos($oldPhoto, 'student_') === 0)) {
+                    $chkAdm = $db->prepare("SELECT COUNT(*) FROM admissions WHERE photo = ?");
+                    $chkAdm->execute([$oldPhoto]);
+                    $chkSt = $db->prepare("SELECT COUNT(*) FROM students WHERE avatar = ?");
+                    $chkSt->execute([$oldPhoto]);
+                    if ((int)$chkAdm->fetchColumn() === 0 && (int)$chkSt->fetchColumn() === 0 && is_file($uploadDir . $oldPhoto)) {
+                        @unlink($uploadDir . $oldPhoto);
+                    }
+                }
+
+                authorize_applicant_session_ref((string)$adm['application_ref'], $adm['application_id'] ?? null, $adm['roll_number'] ?? null);
+                refresh_admission_application_pdf_async((int)$adm['id'], $db);
+
                 flash_set('success', 'Your photograph has been updated on your Application Card and Student Portal!');
             }
         } else {
@@ -66,6 +88,6 @@ if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
     flash_set('error', 'Please choose a photo to upload.');
 }
 
-header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($ref));
+header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode((string)$adm['application_ref']));
 exit;
 

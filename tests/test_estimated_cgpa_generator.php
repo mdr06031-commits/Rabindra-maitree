@@ -188,3 +188,4 @@ $db->prepare("DELETE FROM students WHERE id IN (?, ?)")->execute([$bachelorPk, $
 echo "======================================================================\n";
 echo ">>> ALL ESTIMATED CGPA & RESULT GENERATOR TESTS PASSED (100%)! <<<\n";
 echo "======================================================================\n";
+

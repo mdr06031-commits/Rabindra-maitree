@@ -5,6 +5,7 @@
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
 
+$activeAdmissionTerm = get_setting('admission_active_term', 'Fall 2026');
 $pageTitle = 'Admission FAQs';
 $breadcrumbTitle = 'Frequently Asked Questions (FAQs)';
 $breadcrumbs = [['title' => 'Admission', 'url' => APP_URL . '/admissions.php'], ['title' => 'FAQs']];
@@ -34,7 +35,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
       <details style="background: var(--rmu-bg-light); border: 1px solid var(--rmu-border); border-radius: var(--rmu-radius-md); padding: 1.25rem; cursor: pointer;">
         <summary style="font-weight: 700; color: var(--rmu-dark); font-size: 1.05rem; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-          <span>How can I apply for Fall 2026 admission?</span>
+          <span>How can I apply for <?= e($activeAdmissionTerm) ?> admission?</span>
           <i class="fas fa-chevron-down" style="color: var(--rmu-primary);"></i>
         </summary>
         <p style="margin-top: 1rem; color: var(--rmu-muted); line-height: 1.7; font-size: 0.95rem;">

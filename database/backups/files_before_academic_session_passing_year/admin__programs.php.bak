@@ -1,0 +1,375 @@
+<?php
+/**
+ * Admin Panel: Degree Programs Management
+ */
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
+
+require_login();
+$adminPageTitle = 'Manage Degree Programs';
+$db = getDb();
+
+// Handle Add/Edit Form
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        flash_set('error', 'CSRF verification failed.');
+    } elseif (!is_admin_manager_role()) {
+        log_audit('PROGRAM_ACTION_DENIED', "Unauthorized role '" . current_admin_role() . "' attempted action '" . ($_POST['action'] ?? '') . "' in programs.php");
+        flash_set('error', 'Access denied: Only Administrator accounts may add, modify, or delete degree programs.');
+    } else {
+        $action = $_POST['action'] ?? '';
+
+        if ($action === 'delete') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id > 0) {
+                $st = $db->prepare("SELECT title_en FROM programs WHERE id = ?");
+                $st->execute([$id]);
+                $pData = $st->fetch();
+                $del = $db->prepare("DELETE FROM programs WHERE id = ?");
+                $del->execute([$id]);
+                log_audit('PROGRAM_DELETED', "Deleted program: {$pData['title_en']}");
+                flash_set('success', "Degree program deleted successfully.");
+            }
+        } else {
+            $deptId = (int)($_POST['department_id'] ?? 0);
+            $titleEn = trim($_POST['title_en'] ?? '');
+            $titleBn = trim($_POST['title_bn'] ?? '');
+            $degreeType = trim($_POST['degree_type'] ?? 'Bachelor / Honours');
+            if (!in_array($degreeType, ['Bachelor / Honours', 'B.Ed', "Master's"], true)) {
+                $degreeType = 'Bachelor / Honours';
+            }
+            $level = trim($_POST['degree_level'] ?? ($degreeType === "Master's" ? 'Postgraduate' : 'Undergraduate'));
+
+            // Enforce valid semester structures per degree type
+            $rawSems = (int)($_POST['total_semesters'] ?? 8);
+            if ($degreeType === 'Bachelor / Honours') {
+                $totalSemesters = 8;
+                $durationYears = 4.0;
+                $level = 'Undergraduate';
+            } elseif ($degreeType === 'B.Ed') {
+                $totalSemesters = in_array($rawSems, [2, 3], true) ? $rawSems : 2;
+                $durationYears = ($totalSemesters === 3) ? 1.5 : 1.0;
+            } else {
+                $totalSemesters = in_array($rawSems, [2, 3, 4], true) ? $rawSems : 4;
+                $durationYears = ($totalSemesters === 4) ? 2.0 : (($totalSemesters === 3) ? 1.5 : 1.0);
+                $level = 'Postgraduate';
+            }
+            if (!empty($_POST['duration_years']) && is_numeric($_POST['duration_years'])) {
+                $durationYears = max(1.0, min(6.0, round((float)$_POST['duration_years'], 1)));
+            }
+
+            $yearsStr = ($durationYears == floor($durationYears))
+                ? ((int)$durationYears . ((int)$durationYears === 1 ? ' Year' : ' Years'))
+                : (number_format($durationYears, 1) . ' Years');
+            $duration = trim($_POST['duration'] ?? '');
+            if ($duration === '') {
+                $duration = "{$yearsStr} ({$totalSemesters} Semesters)";
+            }
+            $credits = max(10, (int)($_POST['total_credits'] ?? ($totalSemesters * 15)));
+
+            $semCreditsMap = [];
+            if (!empty($_POST['sem_credits']) && is_array($_POST['sem_credits'])) {
+                for ($si = 1; $si <= $totalSemesters; $si++) {
+                    if (isset($_POST['sem_credits'][$si]) && is_numeric($_POST['sem_credits'][$si]) && (float)$_POST['sem_credits'][$si] > 0) {
+                        $semCreditsMap[(string)$si] = round((float)$_POST['sem_credits'][$si], 1);
+                    }
+                }
+            }
+            $semCreditsJson = !empty($semCreditsMap) ? json_encode($semCreditsMap) : null;
+
+            $eligibility = trim($_POST['eligibility'] ?? '');
+            $description = trim($_POST['description'] ?? '');
+            $tuitionFee = trim($_POST['tuition_fee'] ?? '');
+            $sortOrder = (int)($_POST['sort_order'] ?? 0);
+
+            if (empty($titleEn) || $deptId <= 0) {
+                flash_set('error', 'Department and program title are required.');
+            } else {
+                if ($action === 'add') {
+                    $slug = slugify($titleEn);
+                    $stmt = $db->prepare("
+                        INSERT INTO programs (department_id, slug, title_en, title_bn, degree_level, degree_type, duration, duration_years, total_semesters, total_credits, semester_credits_json, eligibility, description, tuition_fee, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ");
+                    $stmt->execute([$deptId, $slug, $titleEn, $titleBn, $level, $degreeType, $duration, $durationYears, $totalSemesters, $credits, $semCreditsJson, $eligibility, $description, $tuitionFee, $sortOrder]);
+                    log_audit('PROGRAM_ADDED', "Added program: {$titleEn} ({$degreeType}, {$totalSemesters} Semesters)");
+                    flash_set('success', "Program '{$titleEn}' added successfully.");
+                } elseif ($action === 'edit') {
+                    $id = (int)($_POST['id'] ?? 0);
+                    $stmt = $db->prepare("
+                        UPDATE programs 
+                        SET department_id = ?, title_en = ?, title_bn = ?, degree_level = ?, degree_type = ?, duration = ?, duration_years = ?, total_semesters = ?, total_credits = ?, semester_credits_json = ?, eligibility = ?, description = ?, tuition_fee = ?, sort_order = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$deptId, $titleEn, $titleBn, $level, $degreeType, $duration, $durationYears, $totalSemesters, $credits, $semCreditsJson, $eligibility, $description, $tuitionFee, $sortOrder, $id]);
+
+                    // Propagate updated degree/semester structure to enrolled active students
+                    $db->prepare("
+                        UPDATE students
+                        SET degree_type = ?, program_duration = ?, total_semesters = ?, total_credits_required = ?
+                        WHERE program_id = ? AND status NOT IN ('Deleted', 'Graduated')
+                    ")->execute([$degreeType, $duration, $totalSemesters, $credits, $id]);
+
+                    $stSync = $db->prepare("SELECT id FROM students WHERE program_id = ? AND status != 'Deleted'");
+                    $stSync->execute([$id]);
+                    foreach ($stSync->fetchAll(PDO::FETCH_COLUMN) as $sPk) {
+                        sync_student_semester_results((int)$sPk);
+                    }
+
+                    log_audit('PROGRAM_EDITED', "Updated program ID {$id}: {$titleEn} ({$degreeType}, {$totalSemesters} Semesters, {$credits} Cr)");
+                    flash_set('success', "Program '{$titleEn}' updated and synchronized with enrolled students.");
+                }
+            }
+        }
+    }
+    header("Location: " . APP_URL . "/admin/programs.php");
+    exit;
+}
+
+// Fetch edit target
+$editProg = null;
+if (isset($_GET['edit'])) {
+    $editId = (int)$_GET['edit'];
+    $stmt = $db->prepare("SELECT * FROM programs WHERE id = ?");
+    $stmt->execute([$editId]);
+    $editProg = $stmt->fetch();
+}
+
+// Fetch departments for select
+$departments = $db->query("SELECT id, name_en, code FROM departments WHERE is_active = 1 ORDER BY name_en ASC")->fetchAll();
+
+// Fetch programs
+$programs = $db->query("
+    SELECT p.*, d.name_en AS dept_name, d.code AS dept_code 
+    FROM programs p 
+    JOIN departments d ON p.department_id = d.id 
+    ORDER BY p.sort_order ASC
+")->fetchAll();
+
+include __DIR__ . '/includes/admin-header.php';
+?>
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+  <div>
+    <h2 style="font-size: 1.5rem; font-weight: 700; color: #0f172a; margin: 0;">Academic Degree Programs</h2>
+    <span style="color: #64748b; font-size: 0.88rem;">Manage undergraduate and graduate degree curricula and tuition costs.</span>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+  <!-- Form -->
+  <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
+    <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
+      <?= $editProg ? 'Edit Program' : 'Add New Degree Program' ?>
+    </h3>
+
+    <form action="<?= APP_URL ?>/admin/programs.php" method="POST">
+      <?= csrf_field() ?>
+      <input type="hidden" name="action" value="<?= $editProg ? 'edit' : 'add' ?>">
+      <?php if ($editProg): ?>
+        <input type="hidden" name="id" value="<?= (int)$editProg['id'] ?>">
+      <?php endif; ?>
+
+      <div class="form-group">
+        <label class="form-label">Department <span class="required">*</span></label>
+        <select name="department_id" class="form-select" required>
+          <option value="">-- Select Department --</option>
+          <?php foreach ($departments as $d): ?>
+            <option value="<?= (int)$d['id'] ?>" <?= (($editProg['department_id'] ?? 0) == $d['id']) ? 'selected' : '' ?>>
+              <?= e($d['name_en']) ?> (<?= e($d['code']) ?>)
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Program Title (English) <span class="required">*</span></label>
+        <input type="text" name="title_en" value="<?= e($editProg['title_en'] ?? '') ?>" class="form-control" placeholder="e.g. BSc Engg in CSE" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Program Short Code / Subtitle (Optional)</label>
+        <input type="text" name="title_bn" value="<?= e($editProg['title_bn'] ?? '') ?>" class="form-control" placeholder="e.g. CSE">
+      </div>
+
+      <?php
+        $curDegType = $editProg['degree_type'] ?? 'Bachelor / Honours';
+        $curSems = (int)($editProg['total_semesters'] ?? ($curDegType === 'B.Ed' ? 2 : ($curDegType === "Master's" ? 4 : 8)));
+        $curDurYears = (float)($editProg['duration_years'] ?? ($curSems === 8 ? 4.0 : ($curSems === 4 ? 2.0 : ($curSems === 3 ? 1.5 : 1.0))));
+        $curSemCredits = [];
+        if (!empty($editProg['semester_credits_json'])) {
+            $dec = json_decode((string)$editProg['semester_credits_json'], true);
+            if (is_array($dec)) $curSemCredits = $dec;
+        }
+      ?>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Degree Type <span class="required">*</span></label>
+          <select name="degree_type" id="progDegreeType" class="form-select" onchange="syncProgramStructureForm()">
+            <option value="Bachelor / Honours" <?= ($curDegType === 'Bachelor / Honours') ? 'selected' : '' ?>>Bachelor / Honours</option>
+            <option value="B.Ed" <?= ($curDegType === 'B.Ed') ? 'selected' : '' ?>>B.Ed</option>
+            <option value="Master's" <?= ($curDegType === "Master's") ? 'selected' : '' ?>>Master's</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Degree Level</label>
+          <select name="degree_level" id="progDegreeLevel" class="form-select">
+            <option value="Undergraduate" <?= (($editProg['degree_level'] ?? '') === 'Undergraduate') ? 'selected' : '' ?>>Undergraduate</option>
+            <option value="Postgraduate" <?= (($editProg['degree_level'] ?? '') === 'Postgraduate') ? 'selected' : '' ?>>Postgraduate</option>
+            <option value="Diploma" <?= (($editProg['degree_level'] ?? '') === 'Diploma') ? 'selected' : '' ?>>Diploma</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+        <div class="form-group">
+          <label class="form-label">Configured Semesters</label>
+          <select name="total_semesters" id="progTotalSemesters" class="form-select" onchange="syncSemesterCount()">
+            <option value="2" <?= ($curSems === 2) ? 'selected' : '' ?>>2 Semesters (1 Year)</option>
+            <option value="3" <?= ($curSems === 3) ? 'selected' : '' ?>>3 Semesters (1.5 Years)</option>
+            <option value="4" <?= ($curSems === 4) ? 'selected' : '' ?>>4 Semesters (2 Years)</option>
+            <option value="8" <?= ($curSems === 8) ? 'selected' : '' ?>>8 Semesters (4 Years)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Duration (Years)</label>
+          <input type="number" step="0.5" min="1" max="6" name="duration_years" id="progDurationYears" value="<?= htmlspecialchars((string)$curDurYears) ?>" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Total Credits</label>
+          <input type="number" name="total_credits" id="progTotalCredits" value="<?= (int)($editProg['total_credits'] ?? 140) ?>" class="form-control" required>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label class="form-label">Duration Display Label</label>
+          <input type="text" name="duration" id="progDurationText" value="<?= e($editProg['duration'] ?? '4 Years (8 Semesters)') ?>" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tuition Fee Info</label>
+          <input type="text" name="tuition_fee" value="<?= e($editProg['tuition_fee'] ?? 'BDT 3,50,000') ?>" class="form-control" placeholder="e.g. BDT 3,80,000">
+        </div>
+      </div>
+
+      <div class="form-group" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:0.75rem;">
+        <label class="form-label" style="margin-bottom:0.4rem; font-size:0.8rem;">Optional Per-Semester Credit Distribution</label>
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:0.4rem;">
+          <?php for ($sc = 1; $sc <= 8; $sc++): ?>
+            <div class="prog-sem-cr-cell" data-sem="<?= $sc ?>" style="<?= ($sc > $curSems) ? 'display:none;' : '' ?>">
+              <small style="display:block; color:#64748b; font-size:0.7rem;">Sem <?= $sc ?> Cr</small>
+              <input type="number" step="0.5" min="0" max="30" name="sem_credits[<?= $sc ?>]" value="<?= isset($curSemCredits[(string)$sc]) ? htmlspecialchars((string)$curSemCredits[(string)$sc]) : '' ?>" class="form-control" style="padding:4px 6px; font-size:0.8rem;" placeholder="Auto">
+            </div>
+          <?php endfor; ?>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Admission Eligibility Criteria</label>
+        <textarea name="eligibility" rows="2" class="form-control" placeholder="Minimum GPA requirements and prerequisite subjects..."><?= e($editProg['eligibility'] ?? '') ?></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Program Description</label>
+        <textarea name="description" rows="3" class="form-control" placeholder="Curriculum summary..."><?= e($editProg['description'] ?? '') ?></textarea>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+        <button type="submit" class="btn-primary" style="flex: 1; justify-content: center;">
+          <i class="fas fa-save"></i> <?= $editProg ? 'Save Changes' : 'Create Program' ?>
+        </button>
+        <?php if ($editProg): ?>
+          <a href="<?= APP_URL ?>/admin/programs.php" class="btn-primary" style="background: #94a3b8; justify-content: center;">Cancel</a>
+        <?php endif; ?>
+      </div>
+    </form>
+  </div>
+
+  <!-- Table -->
+  <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <div class="table-responsive">
+      <table class="rmu-table" style="box-shadow: none;">
+        <thead>
+          <tr>
+            <th>Program Title</th>
+            <th>Department</th>
+            <th>Level</th>
+            <th>Credits &amp; Duration</th>
+            <th>Fee</th>
+            <th style="text-align: right;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($programs as $p): ?>
+            <tr>
+              <td>
+                <strong style="color: #0f172a; display: block; font-size: 0.92rem;"><?= e($p['title_en']) ?></strong>
+                <span style="font-size: 0.8rem; color: var(--rmu-muted); font-family: 'Hind Siliguri', sans-serif;"><?= e($p['title_bn']) ?></span>
+              </td>
+              <td style="font-size: 0.82rem; color: #475569;"><?= e($p['dept_code']) ?></td>
+              <td>
+                <span class="notice-category-badge <?= ($p['degree_level'] === 'Undergraduate') ? 'badge-academic' : 'badge-scholarship' ?>">
+                  <?= e($p['degree_type'] ?: $p['degree_level']) ?>
+                </span>
+                <div style="font-size:0.72rem; color:#64748b; margin-top:2px;"><?= e($p['degree_level']) ?></div>
+              </td>
+              <td style="font-size: 0.82rem; color: #334155;">
+                <strong><?= (int)($p['total_semesters'] ?? 8) ?> Semesters</strong> &bull; <?= (int)$p['total_credits'] ?> Cr<br>
+                <small style="color:#64748b;"><?= e($p['duration']) ?></small>
+              </td>
+              <td style="font-size: 0.82rem; font-weight: 600; color: var(--rmu-primary);">
+                <?= e($p['tuition_fee'] ?? 'Standard') ?>
+              </td>
+              <td style="text-align: right; white-space: nowrap;">
+                <a href="<?= APP_URL ?>/admin/programs.php?edit=<?= (int)$p['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
+                  <i class="fas fa-edit"></i> Edit
+                </a>
+                <form action="<?= APP_URL ?>/admin/programs.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete program <?= addslashes(e($p['title_en'])) ?>?');">
+                  <?= csrf_field() ?>
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                  <button type="submit" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 0.85rem;" title="Delete">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function syncProgramStructureForm() {
+  var deg = document.getElementById('progDegreeType').value;
+  var lvl = document.getElementById('progDegreeLevel');
+  var sems = document.getElementById('progTotalSemesters');
+  if (deg === 'Bachelor / Honours') {
+    lvl.value = 'Undergraduate';
+    sems.value = '8';
+  } else if (deg === 'B.Ed') {
+    lvl.value = 'Undergraduate';
+    if (sems.value !== '2' && sems.value !== '3') sems.value = '2';
+  } else {
+    lvl.value = 'Postgraduate';
+    if (sems.value !== '2' && sems.value !== '3' && sems.value !== '4') sems.value = '4';
+  }
+  syncSemesterCount();
+}
+function syncSemesterCount() {
+  var sCount = parseInt(document.getElementById('progTotalSemesters').value, 10) || 8;
+  var yrs = (sCount === 8 ? '4' : (sCount === 4 ? '2' : (sCount === 3 ? '1.5' : '1')));
+  document.getElementById('progDurationYears').value = yrs;
+  document.getElementById('progDurationText').value = yrs + (yrs === '1' ? ' Year' : ' Years') + ' (' + sCount + ' Semesters)';
+  var cells = document.querySelectorAll('.prog-sem-cr-cell');
+  cells.forEach(function(cell) {
+    var sn = parseInt(cell.getAttribute('data-sem'), 10);
+    cell.style.display = (sn <= sCount) ? 'block' : 'none';
+  });
+}
+</script>
+
+<?php include __DIR__ . '/includes/admin-footer.php'; ?>
+

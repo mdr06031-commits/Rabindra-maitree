@@ -1,36 +1,99 @@
 <?php
 /**
- * Action: Process ৳150 Admission Application Fee Payment & Verification
- * Official Recipient: 01336367336 (Send Money)
- * Stores Sender Number, TrxID, and Payment Screenshot
+ * Action: Admission ৳150 Fee Payment Gateway Controller & Single-Use Callback Verifier
+ *
+ * Supported flows:
+ *  1) POST action=initiate_sandbox_payment -> Creates/reuses idempotent Sandbox checkout session & redirects to sandbox-gateway.php
+ *  2) GET/POST action=gateway_callback   -> Validates HMAC-signed Sandbox authorization ONCE (`validated_once_at`),
+ *                                           marks application Paid atomically, writes SVG slip, generates A4 PDF,
+ *                                           and redirects to admission-status.php?ref=...&paid=1
+ *  3) Rejects any legacy/direct transaction_id spoof attempt without a verified Sandbox Gateway session.
  */
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: " . APP_URL . "/admission-form.php");
-    exit;
-}
-
-if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
-    flash_set('error', 'Session expired. Please try your payment again.');
-    header("Location: " . APP_URL . "/admission-form.php");
-    exit;
-}
-
-$ref = trim($_POST['ref'] ?? '');
-$method = trim($_POST['payment_method'] ?? 'bKash');
-$senderNumber = trim($_POST['sender_number'] ?? '');
-$transactionId = strtoupper(trim($_POST['transaction_id'] ?? ''));
-
-$validMethods = ['bKash', 'Nagad', 'Rocket', 'Upay', 'Online Banking / Card'];
-if (!in_array($method, $validMethods, true)) {
-    $method = 'bKash';
-}
-
 $db = getDb();
-$stmt = $db->prepare("SELECT * FROM admissions WHERE application_ref = ? LIMIT 1");
-$stmt->execute([$ref]);
+ensure_admission_payment_gateway_schema($db);
+
+$requestAction = trim((string)($_REQUEST['action'] ?? ''));
+
+// =========================================================================
+// 1. SANDBOX GATEWAY CALLBACK VERIFICATION (SINGLE-USE)
+// =========================================================================
+if ($requestAction === 'gateway_callback') {
+    $sessionId = trim((string)($_REQUEST['session'] ?? ''));
+    $trxId     = trim((string)($_REQUEST['trx'] ?? ''));
+    $signature = trim((string)($_REQUEST['sig'] ?? ''));
+
+    $verify = rmu_sandbox_verify_and_complete_payment($db, $sessionId, $trxId, $signature);
+
+    if (!empty($verify['success'])) {
+        $verifiedAdm = $verify['admission'] ?? [];
+        $canonicalRef = (string)($verifiedAdm['application_ref'] ?? '');
+        if ($canonicalRef !== '') {
+            authorize_applicant_session_ref(
+                $canonicalRef,
+                $verifiedAdm['application_id'] ?? null,
+                $verifiedAdm['roll_number'] ?? null
+            );
+        }
+
+        if (!empty($verify['already_verified'])) {
+            flash_set('info', (string)($verify['message'] ?? 'This payment transaction has already been verified once.'));
+            header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($canonicalRef));
+            exit;
+        }
+
+        flash_set('success', (string)($verify['message'] ?? '৳150 Application Fee verified successfully!'));
+        header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($canonicalRef) . "&paid=1");
+        exit;
+    }
+
+    // Verification failed or replay blocked: keep Paid card locked and show clear error
+    $errRef = trim((string)($verify['admission_ref'] ?? ''));
+    if ($errRef !== '') {
+        $admRow = fetch_admission_full_record(0, $errRef, $db, false);
+        if ($admRow) {
+            authorize_applicant_session_ref(
+                (string)$admRow['application_ref'],
+                $admRow['application_id'] ?? null,
+                $admRow['roll_number'] ?? null
+            );
+            $errRef = (string)$admRow['application_ref'];
+        }
+        flash_set('error', (string)($verify['error'] ?? 'Payment verification failed. Please retry via the Sandbox Gateway.'));
+        header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($errRef));
+        exit;
+    }
+
+    flash_set('error', (string)($verify['error'] ?? 'Payment verification failed.'));
+    header("Location: " . APP_URL . "/admission-status.php");
+    exit;
+}
+
+// Non-callback GET requests redirect cleanly to Admission Form
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    header("Location: " . APP_URL . "/admission-form.php");
+    exit;
+}
+
+// =========================================================================
+// 2. INITIATE SANDBOX GATEWAY SESSION (POST)
+// =========================================================================
+if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+    flash_set('error', 'Session expired. Please start your payment checkout again.');
+    $postedRef = trim((string)($_POST['ref'] ?? ''));
+    if ($postedRef !== '') {
+        header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($postedRef));
+    } else {
+        header("Location: " . APP_URL . "/admission-form.php");
+    }
+    exit;
+}
+
+$ref = trim((string)($_POST['ref'] ?? ''));
+$stmt = $db->prepare("SELECT * FROM admissions WHERE application_ref = ? OR application_id = ? OR roll_number = ? LIMIT 1");
+$stmt->execute([$ref, $ref, $ref]);
 $adm = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$adm) {
@@ -39,115 +102,60 @@ if (!$adm) {
     exit;
 }
 
-// Fallback for sender number if blank
-if (empty($senderNumber)) {
-    $senderNumber = $adm['mobile'];
-}
+$canonicalRef = (string)$adm['application_ref'];
+authorize_applicant_session_ref(
+    $canonicalRef,
+    $adm['application_id'] ?? null,
+    $adm['roll_number'] ?? null
+);
 
-// Fallback for transaction ID if blank
-if (empty($transactionId)) {
-    $prefix = strtoupper(substr($method, 0, 2));
-    $transactionId = 'TRX-' . $prefix . '-' . rand(10000000, 99999999);
-}
-
-// Handle payment screenshot upload
-$screenshotFilename = null;
-$payDir = STORAGE_PATH . '/uploads/payments';
-if (!is_dir($payDir)) {
-    mkdir($payDir, 0755, true);
-}
-
-if (!empty($_FILES['payment_screenshot']['name']) && $_FILES['payment_screenshot']['error'] === UPLOAD_ERR_OK) {
-    $tmpName = $_FILES['payment_screenshot']['tmp_name'];
-    $originalName = $_FILES['payment_screenshot']['name'];
-    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-    $allowedExts = ['jpg', 'jpeg', 'png', 'webp'];
-
-    if (in_array($ext, $allowedExts, true)) {
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mime = finfo_file($finfo, $tmpName);
-        finfo_close($finfo);
-
-        $allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
-        if (in_array($mime, $allowedMimes, true)) {
-            $cleanRef = preg_replace('/[^a-zA-Z0-9]/', '', $adm['application_ref']);
-            $screenshotFilename = 'pay_' . $cleanRef . '_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
-            move_uploaded_file($tmpName, $payDir . '/' . $screenshotFilename);
-        }
-    }
-}
-
-// If no file uploaded (e.g. quick demo pay), generate an official digital payment slip receipt SVG
-if (empty($screenshotFilename)) {
-    $cleanRef = preg_replace('/[^a-zA-Z0-9]/', '', $adm['application_ref']);
-    $screenshotFilename = 'receipt_' . $cleanRef . '_' . time() . '.svg';
-    $svgContent = <<<SVG
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="420" viewBox="0 0 600 420">
-  <rect width="600" height="420" rx="16" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
-  <rect width="600" height="85" fill="#15803d"/>
-  <circle cx="50" cy="42" r="24" fill="#ffffff" opacity="0.2"/>
-  <text x="50" y="49" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#ffffff" text-anchor="middle">✓</text>
-  <text x="90" y="40" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#ffffff">Rabindra Maitree University</text>
-  <text x="90" y="62" font-family="Arial, sans-serif" font-size="13" fill="#dcfce7">Official Online Intake Fee Receipt - ৳150 BDT</text>
-  
-  <!-- Receipt Body -->
-  <rect x="25" y="105" width="550" height="290" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
-  
-  <text x="45" y="140" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Applicant Reference:</text>
-  <text x="230" y="140" font-family="monospace" font-size="15" font-weight="bold" fill="#1e40af">{$adm['application_ref']}</text>
-
-  <text x="45" y="175" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Candidate Legal Name:</text>
-  <text x="230" y="175" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">{$adm['full_name']}</text>
-
-  <text x="45" y="210" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Payment Recipient No:</text>
-  <text x="230" y="210" font-family="monospace" font-size="14" font-weight="bold" fill="#15803d">01336367336 (Send Money)</text>
-
-  <text x="45" y="245" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Payment Method:</text>
-  <text x="230" y="245" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#be123c">{$method}</text>
-
-  <text x="45" y="280" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Sender Mobile Number:</text>
-  <text x="230" y="280" font-family="monospace" font-size="14" font-weight="bold" fill="#0f172a">{$senderNumber}</text>
-
-  <text x="45" y="315" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Transaction ID (TrxID):</text>
-  <text x="230" y="315" font-family="monospace" font-size="15" font-weight="bold" fill="#b91c1c">{$transactionId}</text>
-
-  <line x1="45" y1="335" x2="555" y2="335" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4"/>
-
-  <text x="45" y="365" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#15803d">Total Amount Paid:</text>
-  <text x="230" y="365" font-family="Arial, sans-serif" font-size="18" font-weight="900" fill="#15803d">৳ 150.00 BDT (Verified)</text>
-  <text x="45" y="385" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8">Verified at: <?= date('Y-m-d H:i:s') ?> &bull; Permanent Campus, Kushtia</text>
-</svg>
-SVG;
-    file_put_contents($payDir . '/' . $screenshotFilename, $svgContent);
-}
-
-// Duplicate transaction ID protection
-$chkTrx = $db->prepare("SELECT id FROM admissions WHERE transaction_id = ? AND id != ? AND payment_status = 'Paid'");
-$chkTrx->execute([$transactionId, $adm['id']]);
-if ($chkTrx->fetchColumn()) {
-    flash_set('error', 'This Transaction ID has already been verified for another application.');
-    header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($ref));
+// Strictly block any client POST attempting to bypass Sandbox Gateway with a direct fake/manual Transaction ID
+if ($requestAction !== 'initiate_sandbox_payment' || isset($_POST['transaction_id'])) {
+    log_audit(
+        'ADMISSION_PAYMENT_BYPASS_BLOCKED',
+        "Blocked direct/unverified payment submission for {$canonicalRef} (action='{$requestAction}')"
+    );
+    flash_set('error', 'Direct Transaction ID submission is disabled. Please complete verification securely through the Sandbox Payment Gateway.');
+    header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($canonicalRef));
     exit;
 }
 
-// Update payment details in database
-$upd = $db->prepare("
-    UPDATE admissions 
-    SET payment_status = 'Paid',
-        payment_amount = 150.00,
-        payment_method = ?,
-        transaction_id = ?,
-        sender_number = ?,
-        payment_screenshot = COALESCE(?, payment_screenshot),
-        payment_gateway_mode = 'sandbox',
-        paid_at = NOW(),
-        status = 'Under Review'
-    WHERE id = ?
-");
-$upd->execute([$method, $transactionId, $senderNumber, $screenshotFilename, $adm['id']]);
+// Idempotent guard: never create a duplicate checkout if application is already Paid
+if (($adm['payment_status'] ?? '') === 'Paid') {
+    flash_set('info', 'This admission application fee has already been paid and verified (TrxID: ' . ($adm['transaction_id'] ?: 'Verified') . ').');
+    header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($canonicalRef));
+    exit;
+}
 
-log_audit('ADMISSION_FEE_PAID', "Applicant {$adm['application_ref']} paid ৳150 fee via {$method} (TrxID: {$transactionId})");
+$method = rmu_sandbox_normalize_method($_POST['payment_method'] ?? 'bKash');
+$senderInput = trim((string)($_POST['sender_number'] ?? ''));
 
-flash_set('success', "৳150 Application Fee Payment Verified (TrxID: {$transactionId})! Your official Payment Receipt has been generated and your application is now Under Review by the Admissions Office.");
-header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($ref) . "&paid=1");
+if ($senderInput !== '') {
+    if (!validate_bd_mobile($senderInput)) {
+        flash_set('error', 'Please enter a valid 11-digit Bangladeshi mobile number (e.g. 017XXXXXXXX).');
+        header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($canonicalRef));
+        exit;
+    }
+    $senderNumber = normalize_bd_mobile($senderInput);
+} else {
+    $senderNumber = normalize_bd_mobile((string)$adm['mobile']);
+}
+
+$idempotencyKey = trim((string)($_POST['idempotency_key'] ?? ''));
+$checkout = rmu_sandbox_create_checkout_session($db, $adm, $method, $senderNumber, $idempotencyKey);
+
+if (!empty($checkout['already_paid'])) {
+    flash_set('info', 'Application fee of ৳150 is already paid and verified.');
+    header("Location: " . APP_URL . "/admission-status.php?ref=" . urlencode($canonicalRef));
+    exit;
+}
+
+if (empty($checkout['success']) || empty($checkout['session']['gateway_session_id'])) {
+    flash_set('error', (string)($checkout['error'] ?? 'Could not initialize Sandbox Payment Gateway session. Please try again.'));
+    header("Location: " . APP_URL . "/admission-payment.php?ref=" . urlencode($canonicalRef));
+    exit;
+}
+
+$gatewaySessionId = (string)$checkout['session']['gateway_session_id'];
+header("Location: " . APP_URL . "/sandbox-gateway.php?session=" . urlencode($gatewaySessionId));
 exit;

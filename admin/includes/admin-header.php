@@ -13,7 +13,7 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title><?= e($adminTitle) ?></title>
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
   
@@ -24,7 +24,8 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 
   <!-- Core Admin Styles -->
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/style.css')) ?>">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/responsive.css')) ?>">
   <style>
     :root {
       --admin-sidebar-width: 260px;
@@ -46,18 +47,43 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
       top: 0;
       left: 0;
       height: 100vh;
+      height: 100dvh;
       overflow-y: auto;
       z-index: 100;
       border-right: 1px solid #1e293b;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .admin-brand-row {
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-right: 0.75rem;
     }
     .admin-brand {
       padding: 1.25rem 1.5rem;
-      border-bottom: 1px solid #1e293b;
       display: flex;
       align-items: center;
       gap: 0.8rem;
       color: #ffffff;
       text-decoration: none;
+      flex: 1;
+      min-width: 0;
+    }
+    .admin-sidebar-close {
+      display: none;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid #334155;
+      color: #f8fafc;
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      font-size: 1.4rem;
+      line-height: 1;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
     }
     .admin-brand img {
       width: 40px;
@@ -114,6 +140,8 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
     .admin-content {
       padding: 2rem;
       flex: 1;
+      min-width: 0;
+      overflow-x: clip;
     }
     .stat-card {
       background: #ffffff;
@@ -134,6 +162,29 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
       justify-content: center;
       font-size: 1.5rem;
     }
+    .admin-mobile-toggle {
+      display: none;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      color: #0f172a;
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1.05rem;
+    }
+    .admin-sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+      z-index: 95;
+    }
+    .admin-sidebar-backdrop.show {
+      display: block;
+    }
     @media (max-width: 991px) {
       .admin-sidebar {
         transform: translateX(-100%);
@@ -142,13 +193,86 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
       .admin-sidebar.open {
         transform: translateX(0);
       }
+      .admin-sidebar-close {
+        display: inline-flex;
+      }
       .admin-main {
         margin-left: 0;
+      }
+      .admin-mobile-toggle {
+        display: inline-flex;
+        width: 44px;
+        height: 44px;
+      }
+      .admin-topbar {
+        padding: 0 1rem;
+      }
+      .admin-topbar-title {
+        display: none;
+      }
+      .admin-content {
+        padding: 1.15rem;
+      }
+    }
+    @media screen and (max-width: 767px) {
+      .admin-topbar {
+        height: auto;
+        min-height: 58px;
+        padding: 0.5rem 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .admin-topbar-actions {
+        gap: 0.65rem !important;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .admin-topbar-public-link span {
+        display: none;
+      }
+      .admin-nav-link {
+        min-height: 44px;
+      }
+      .admin-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+      .admin-content select,
+      .admin-content textarea {
+        font-size: 16px !important;
+        max-width: 100%;
+      }
+      .admin-content button,
+      .admin-content input[type="submit"],
+      .admin-content .btn-primary,
+      .admin-content .btn-secondary {
+        min-height: 44px;
+      }
+      .admin-content [id$="Modal"] {
+        padding: 0.75rem !important;
+      }
+      .admin-content [id$="Modal"] > div {
+        max-height: 92dvh !important;
+        overflow-y: auto !important;
+        padding: 1.15rem !important;
+      }
+    }
+    @media (max-width: 480px) {
+      .admin-topbar {
+        padding: 0.5rem 0.75rem;
+        height: auto;
+        min-height: 58px;
+      }
+      .admin-content {
+        padding: 0.75rem;
+      }
+      .stat-card {
+        padding: 1rem;
+        gap: 0.85rem;
       }
     }
   </style>
 </head>
 <body>
+
+  <div class="admin-sidebar-backdrop" id="adminSidebarBackdrop" onclick="toggleAdminSidebar(false)"></div>
 
   <!-- Admin Sidebar -->
   <?php include __DIR__ . '/admin-sidebar.php'; ?>
@@ -156,12 +280,15 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
   <!-- Admin Main Content Area -->
   <div class="admin-main">
     <header class="admin-topbar">
-      <div>
-        <span style="color: #64748b; font-size: 0.9rem;">Rabindra Maitree University Administration</span>
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <button type="button" class="admin-mobile-toggle" onclick="toggleAdminSidebar()" aria-label="Toggle Admin Menu">
+          <i class="fas fa-bars"></i>
+        </button>
+        <span class="admin-topbar-title" style="color: #64748b; font-size: 0.9rem;">Rabindra Maitree University Administration</span>
       </div>
-      <div style="display: flex; align-items: center; gap: 1.5rem;">
-        <a href="<?= APP_URL ?>/index.php" target="_blank" style="font-size: 0.88rem; color: #475569; display: flex; align-items: center; gap: 0.4rem;">
-          <i class="fas fa-external-link-alt"></i> View Public Site
+      <div class="admin-topbar-actions" style="display: flex; align-items: center; gap: 1.5rem;">
+        <a href="<?= APP_URL ?>/index.php" target="_blank" class="admin-topbar-public-link" style="font-size: 0.88rem; color: #475569; display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; min-width: 44px; min-height: 44px;" title="View Public Site" aria-label="View Public Site">
+          <i class="fas fa-external-link-alt"></i> <span>View Public Site</span>
         </a>
         <div style="display: flex; align-items: center; gap: 0.6rem;">
           <div style="width: 36px; height: 36px; border-radius: 50%; background: #38bdf8; color: #0f172a; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;">
@@ -172,7 +299,7 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
             <span style="color: #64748b;"><?= ucfirst($user['role'] ?? 'Staff') ?></span>
           </div>
         </div>
-        <a href="<?= APP_URL ?>/admin/logout.php" style="color: #ef4444; font-size: 0.9rem;" title="Logout">
+        <a href="<?= APP_URL ?>/admin/logout.php" style="color: #ef4444; font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;" title="Logout" aria-label="Logout">
           <i class="fas fa-sign-out-alt"></i>
         </a>
       </div>
@@ -188,6 +315,16 @@ $adminTitle = isset($adminPageTitle) ? $adminPageTitle . ' - RMU Admin' : 'RMU A
       <?php if ($error = flash_get('error')): ?>
         <div class="alert alert-error" style="margin-bottom: 1.5rem;">
           <i class="fas fa-exclamation-circle"></i> <div><?= e($error) ?></div>
+        </div>
+      <?php endif; ?>
+      <?php if ($info = flash_get('info')): ?>
+        <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+          <i class="fas fa-info-circle"></i> <div><?= e($info) ?></div>
+        </div>
+      <?php endif; ?>
+      <?php if ($warning = flash_get('warning')): ?>
+        <div class="alert" style="margin-bottom: 1.5rem; background-color: #fffbeb; border: 1px solid #fde68a; color: #b45309;">
+          <i class="fas fa-exclamation-triangle"></i> <div><?= e($warning) ?></div>
         </div>
       <?php endif; ?>
 

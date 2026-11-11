@@ -18,6 +18,7 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
 $validCats = ['General', 'Admission', 'Academic', 'Scholarship', 'Exam'];
+$allNoticesCount = (int)$db->query("SELECT COUNT(*) FROM notices WHERE is_active = 1")->fetchColumn();
 
 if (in_array($category, $validCats, true)) {
     $countStmt = $db->prepare("SELECT COUNT(*) FROM notices WHERE is_active = 1 AND category = ?");
@@ -36,7 +37,7 @@ if (in_array($category, $validCats, true)) {
     $stmt->execute();
 } else {
     $category = 'All';
-    $total = (int)$db->query("SELECT COUNT(*) FROM notices WHERE is_active = 1")->fetchColumn();
+    $total = $allNoticesCount;
     $stmt = $db->prepare("
         SELECT * FROM notices 
         WHERE is_active = 1 
@@ -60,7 +61,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
     <!-- Category Tabs -->
     <div style="display: flex; gap: 0.6rem; margin-bottom: 2.5rem; flex-wrap: wrap; justify-content: center;">
       <a href="<?= APP_URL ?>/notices.php" class="<?= ($category === 'All') ? 'btn-primary' : 'btn-outline-white' ?>" style="<?= ($category !== 'All') ? 'color:var(--rmu-dark)!important; border-color:var(--rmu-border);' : '' ?> padding: 0.45rem 1.1rem; font-size: 0.88rem;">
-        All Notices (<?= $total ?>)
+        All Notices (<?= $allNoticesCount ?>)
       </a>
       <?php foreach ($validCats as $c): ?>
         <a href="<?= APP_URL ?>/notices.php?cat=<?= urlencode($c) ?>" class="<?= ($category === $c) ? 'btn-primary' : 'btn-outline-white' ?>" style="<?= ($category !== $c) ? 'color:var(--rmu-dark)!important; border-color:var(--rmu-border);' : '' ?> padding: 0.45rem 1.1rem; font-size: 0.88rem;">

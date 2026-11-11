@@ -11,11 +11,39 @@ $db = getDb();
 $studentId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
 $unreadNotifCount = $unreadNotifCount ?? ($studentId > 0 ? get_student_unread_notifications_count($studentId) : 0);
 
-// Retrieve academic summary (only published results)
+// Resolve Application ID & Admission Roll Number with fallback from linked admission dossier
+$dashAppId = trim((string)($student['application_number'] ?? ''));
+$dashRollNo = trim((string)($student['roll_number'] ?? ''));
+if (($dashAppId === '' || $dashRollNo === '') && !empty($student['student_id'])) {
+    $admLinkStmt = $db->prepare("SELECT application_ref, application_id, roll_number, exam_roll FROM admissions WHERE student_id = ? ORDER BY id DESC LIMIT 1");
+    $admLinkStmt->execute([$student['student_id']]);
+    if ($admLink = $admLinkStmt->fetch(PDO::FETCH_ASSOC)) {
+        if ($dashAppId === '') {
+            $dashAppId = trim((string)($admLink['application_ref'] ?: ($admLink['application_id'] ?? '')));
+        }
+        if ($dashRollNo === '') {
+            $dashRollNo = trim((string)($admLink['roll_number'] ?: ($admLink['exam_roll'] ?? '')));
+        }
+    }
+}
+
+// Retrieve academic summary (only published & visible results)
 $academicSummary = get_student_academic_summary($studentId, true);
 $hasPublishedResults = $academicSummary['has_results'];
-$studentCgpa = $hasPublishedResults ? number_format($academicSummary['final_cgpa'], 2) : '0.00';
-$studentEarnedCredits = $hasPublishedResults ? (int)$academicSummary['total_earned_credits'] : 0;
+$isResultsHidden = !empty($academicSummary['results_hidden']);
+$isResultsSuspended = !empty($academicSummary['results_suspended']);
+$progStruct = $academicSummary['program_structure'] ?? [
+    'degree_type' => $student['degree_type'] ?? 'Bachelor / Honours',
+    'duration_label' => $student['program_duration'] ?? '4 Years (8 Semesters)',
+    'total_semesters' => (int)($student['total_semesters'] ?? 8),
+];
+$totalSemesters = max(1, (int)($progStruct['total_semesters'] ?? 8));
+$semSchedule = $academicSummary['semester_schedule'] ?? [];
+$semesterGpas = $academicSummary['semester_gpas'] ?? [];
+$hasEstimatedResults = !empty($academicSummary['has_estimated_results']);
+$pubDateDisplay = !empty($student['result_publication_date']) ? format_date($student['result_publication_date']) : '';
+$studentCgpa = ($hasPublishedResults && !$isResultsSuspended && !$isResultsHidden) ? number_format($academicSummary['final_cgpa'], 2) : '0.00';
+$studentEarnedCredits = ($hasPublishedResults && !$isResultsSuspended && !$isResultsHidden) ? (int)$academicSummary['total_earned_credits'] : 0;
 
 // Retrieve all distinct semesters student has enrolled courses in
 $semStmt = $db->prepare("SELECT DISTINCT semester FROM student_courses WHERE student_id = ? ORDER BY semester ASC");
@@ -66,14 +94,17 @@ if (!empty($courses)) {
     }
 }
 
-// Retrieve recent published results
-$recentResultsStmt = $db->prepare("
-  SELECT * FROM student_results 
-  WHERE student_id = ? AND is_published = 1
-  ORDER BY id DESC LIMIT 5
-");
-$recentResultsStmt->execute([$studentId]);
-$recentResults = $recentResultsStmt->fetchAll(PDO::FETCH_ASSOC);
+// Retrieve recent published results (strictly hidden if admin hid or suspended student results)
+$recentResults = [];
+if (!$isResultsHidden && !$isResultsSuspended) {
+    $recentResultsStmt = $db->prepare("
+      SELECT * FROM student_results 
+      WHERE student_id = ? AND is_published = 1
+      ORDER BY id DESC LIMIT 5
+    ");
+    $recentResultsStmt->execute([$studentId]);
+    $recentResults = $recentResultsStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 
 // Retrieve fee and payment history
 $feeStmt = $db->prepare("
@@ -89,6 +120,9 @@ $notices = $db->query("
   SELECT * FROM student_portal_notices 
   ORDER BY is_pinned DESC, published_at DESC LIMIT 4
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+// Retrieve authorized admission applications belonging to this logged-in student
+$myApplications = fetch_authorized_student_applications($student, $db);
 ?>
 
 <div class="sp-main-container">
@@ -120,6 +154,18 @@ $notices = $db->query("
     </div>
   <?php endif; ?>
 
+  <?php if (!empty($student['must_change_password'])): ?>
+    <div style="background:#fffbeb; border:1.5px solid #fcd34d; border-radius:10px; padding:0.85rem 1.2rem; margin-bottom:1.5rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; color:#92400e; font-size:0.84rem;">
+      <div>
+        <i class="fas fa-key" style="color:#d97706;"></i>
+        <strong>Security Advisory:</strong> You are currently using an initial or admin-reset temporary password. Update your password from your profile settings.
+      </div>
+      <a href="<?= APP_URL ?>/student/profile.php#portalPasswordCard" style="background:#d97706; color:#ffffff; padding:5px 12px; border-radius:6px; font-weight:700; font-size:0.8rem; text-decoration:none;">
+        <i class="fas fa-lock"></i> Change Password
+      </a>
+    </div>
+  <?php endif; ?>
+
   <!-- Profile Banner -->
   <div class="sp-profile-banner">
     <div class="sp-profile-meta">
@@ -131,7 +177,19 @@ $notices = $db->query("
         <p><i class="fas fa-university"></i> <?= e($student['program_name'] ?? 'Degree Program') ?> (<?= e($student['department_name'] ?? '') ?>)</p>
         <div class="sp-profile-tags">
           <span class="sp-tag"><i class="fas fa-id-badge"></i> Student ID: <strong><?= e($student['student_id']) ?></strong></span>
-          <span class="sp-tag"><i class="fas fa-layer-group"></i> Batch: <?= e($student['batch']) ?></span>
+          <?php if ($dashAppId !== ''): ?>
+            <span class="sp-tag"><i class="fas fa-file-alt"></i> Application ID: <strong><?= e($dashAppId) ?></strong></span>
+          <?php endif; ?>
+          <?php if ($dashRollNo !== ''): ?>
+            <span class="sp-tag"><i class="fas fa-hashtag"></i> Admission Roll: <strong><?= e($dashRollNo) ?></strong></span>
+          <?php endif; ?>
+          <span class="sp-tag"><i class="fas fa-graduation-cap"></i> <?= e($progStruct['degree_type'] ?? 'Bachelor / Honours') ?> (<?= $totalSemesters ?> Semesters)</span>
+          <?php $dashDurLabel = !empty($student['program_duration']) ? $student['program_duration'] : ($progStruct['duration_label'] ?? format_duration_years_label((float)($student['duration_years'] ?? ($totalSemesters / 2)), $totalSemesters)); ?>
+          <span class="sp-tag"><i class="fas fa-clock"></i> Duration: <?= e($dashDurLabel) ?></span>
+          <span class="sp-tag"><i class="fas fa-layer-group"></i> Session: <?= e($student['academic_session'] ?? $student['batch']) ?></span>
+          <?php if (!empty($student['passing_year'])): ?>
+            <span class="sp-tag"><i class="fas fa-award"></i> Passing Year: <?= e($student['passing_year']) ?></span>
+          <?php endif; ?>
           <span class="sp-tag"><i class="fas fa-calendar-alt"></i> Current: <?= e($student['current_year']) ?> (<?= e($student['current_semester']) ?>)</span>
           <span class="sp-tag" style="background:#22c55e;"><i class="fas fa-check-circle"></i> Status: <?= e($student['status']) ?></span>
           <a href="<?= APP_URL ?>/student/profile.php#uploadPhoto" class="sp-tag" style="background:#f59e0b; color:#fff; text-decoration:none;"><i class="fas fa-camera"></i> Change Photo</a>
@@ -146,6 +204,23 @@ $notices = $db->query("
     </div>
   </div>
 
+  <?php if ($isResultsSuspended): ?>
+    <div style="background:#fff7ed; border:2px solid #fb923c; border-radius:10px; padding:1.15rem 1.4rem; margin-bottom:1.5rem; display:flex; align-items:flex-start; gap:0.85rem;">
+      <div style="width:42px; height:42px; border-radius:50%; background:#ffedd5; color:#c2410c; display:flex; align-items:center; justify-content:center; font-size:1.25rem; flex-shrink:0;">
+        <i class="fas fa-user-lock"></i>
+      </div>
+      <div>
+        <h4 style="margin:0 0 0.25rem; font-size:1rem; font-weight:800; color:#9a3412;">Result Access Suspended</h4>
+        <p style="margin:0; font-size:0.85rem; color:#7c2d12; line-height:1.5;">
+          Your Student Portal login and registration profile remain active, while access to view academic results, semester GPAs, CGPA, and transcripts has been suspended.
+          <?php if (!empty($academicSummary['results_suspended_reason'])): ?>
+            <br><strong>Reason:</strong> <?= e($academicSummary['results_suspended_reason']) ?>
+          <?php endif; ?>
+        </p>
+      </div>
+    </div>
+  <?php endif; ?>
+
   <!-- KPI Metrics Grid -->
   <div class="sp-kpi-grid">
     <!-- CGPA Card -->
@@ -154,9 +229,15 @@ $notices = $db->query("
         <i class="fas fa-award"></i>
       </div>
       <div>
-        <?php if ($hasPublishedResults): ?>
+        <?php if ($hasPublishedResults && !$isResultsSuspended && !$isResultsHidden): ?>
           <div class="sp-kpi-val" style="color:#15803d;"><?= $studentCgpa ?></div>
-          <div class="sp-kpi-label">Cumulative GPA (out of 4.00)</div>
+          <div class="sp-kpi-label">Cumulative GPA (out of 4.00)<?= $hasEstimatedResults ? ' — Estimated' : '' ?></div>
+        <?php elseif ($isResultsSuspended): ?>
+          <div class="sp-kpi-val" style="color:#c2410c; font-size:1.05rem;"><i class="fas fa-user-lock"></i> Result Access Suspended</div>
+          <div class="sp-kpi-label">Contact Exam Controller</div>
+        <?php elseif (!empty($isResultsHidden)): ?>
+          <div class="sp-kpi-val" style="color:#b91c1c; font-size:1.15rem;"><i class="fas fa-eye-slash"></i> Hidden</div>
+          <div class="sp-kpi-label">Results hidden by administration</div>
         <?php else: ?>
           <div class="sp-kpi-val" style="color:#64748b; font-size:1.35rem;">N/A</div>
           <div class="sp-kpi-label">No published results yet</div>
@@ -198,8 +279,158 @@ $notices = $db->query("
     </div>
   </div>
 
+  <?php if ($hasPublishedResults && !$isResultsSuspended && !$isResultsHidden): ?>
+    <!-- Dynamic N-Semester Overview & Mandatory Estimated Result Disclaimer -->
+    <div class="sp-card" style="margin-bottom:1.75rem;">
+      <div class="sp-card-header" style="flex-wrap:wrap; gap:0.5rem;">
+        <div>
+          <h3 style="margin:0; font-size:1.05rem; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">
+            <i class="fas fa-chart-line" style="color:var(--sp-primary);"></i> Semester-Wise GPA Overview (<?= $totalSemesters ?> Semesters)
+          </h3>
+          <div style="font-size:0.78rem; color:#64748b; margin-top:2px;">
+            Session: <strong><?= e($student['academic_session'] ?? $student['batch']) ?></strong>
+            <?php if ($pubDateDisplay !== ''): ?> &bull; Published: <strong><?= e($pubDateDisplay) ?></strong><?php endif; ?>
+          </div>
+        </div>
+        <a href="<?= APP_URL ?>/student/results.php" style="font-size:0.82rem; font-weight:700; color:var(--sp-primary); text-decoration:none; background:#eff6ff; border:1px solid #bfdbfe; padding:5px 12px; border-radius:6px;">
+          View Complete Grade Sheet &rarr;
+        </a>
+      </div>
+      <div class="sp-card-body">
+        <?php if ($hasEstimatedResults): ?>
+          <div style="background:#fffbeb; border:1.5px solid #f59e0b; border-radius:8px; padding:0.7rem 1rem; margin-bottom:1rem; font-size:0.82rem; color:#92400e;">
+            <span style="background:#dc2626; color:#ffffff; font-weight:900; padding:2px 7px; border-radius:3px; font-size:0.72rem; margin-right:6px;">ESTIMATED / GENERATED</span>
+            <strong>ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT</strong>
+          </div>
+        <?php endif; ?>
+        <div class="sp-sem-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:0.65rem;">
+          <?php for ($sn = 1; $sn <= $totalSemesters; $sn++): ?>
+            <?php
+              $sgVal = $semesterGpas[$sn] ?? null;
+              $hasSem = ($sgVal !== null);
+              $semEst = !empty($semSchedule[$sn]['is_estimated']);
+            ?>
+            <div style="background:<?= $hasSem ? ($semEst ? '#fffbeb' : '#f0fdf4') : '#f8fafc' ?>; border:1.5px solid <?= $hasSem ? ($semEst ? '#fcd34d' : '#86efac') : '#e2e8f0' ?>; border-radius:8px; padding:0.6rem 0.5rem; text-align:center;">
+              <div style="font-size:0.74rem; font-weight:700; color:#475569;">
+                Semester <?= $sn ?><?= ($hasSem && $semEst) ? ' (EST)' : '' ?>
+              </div>
+              <div style="font-size:1.2rem; font-weight:900; color:<?= $hasSem ? '#0f2c59' : '#94a3b8' ?>; margin:2px 0;">
+                <?= $hasSem ? number_format((float)$sgVal, 2) : '—' ?>
+              </div>
+              <div style="font-size:0.7rem; font-weight:700; color:<?= $hasSem ? '#15803d' : '#64748b' ?>;">
+                <?= $hasSem ? 'Completed' : 'Pending' ?>
+              </div>
+            </div>
+          <?php endfor; ?>
+        </div>
+      </div>
+    </div>
+  <?php endif; ?>
+
+  <!-- My Applications Section -->
+  <div class="sp-card" id="myApplicationsSection" style="margin-bottom:1.75rem; border-top:3px solid #0f2c59;">
+    <div class="sp-card-header" style="flex-wrap:wrap; gap:0.75rem;">
+      <div>
+        <h3 style="margin:0; font-size:1.05rem; font-weight:700; color:#0f2c59; display:flex; align-items:center; gap:8px;">
+          <i class="fas fa-file-signature" style="color:#c9a227;"></i> My Applications
+        </h3>
+        <div style="font-size:0.78rem; color:#64748b; margin-top:2px;">
+          Official admission application card, bilingual A4 PDF downloads, and payment receipt
+        </div>
+      </div>
+      <span style="background:#eff6ff; color:#0f2c59; border:1px solid #bfdbfe; padding:3px 10px; border-radius:14px; font-size:0.76rem; font-weight:700;">
+        <?= count($myApplications) ?> Record<?= count($myApplications) === 1 ? '' : 's' ?>
+      </span>
+    </div>
+    <div class="sp-card-body" style="padding:<?= empty($myApplications) ? '1.5rem' : '0' ?>;">
+      <?php if (empty($myApplications)): ?>
+        <div style="text-align:center; color:#64748b; font-size:0.86rem;">
+          No linked online admission application records found for this student account.
+        </div>
+      <?php else: ?>
+        <div style="overflow-x:auto;">
+          <table class="sp-table">
+            <thead>
+              <tr>
+                <th>Application ID &amp; Roll</th>
+                <th>Program &amp; Department</th>
+                <th>Session</th>
+                <th>Submitted</th>
+                <th>Application Status</th>
+                <th>Payment Status</th>
+                <th style="text-align:right;">Document Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php foreach ($myApplications as $myApp): ?>
+                <?php
+                  $appMeta = enrich_admission_document_data($myApp, $db);
+                  $docBase = APP_URL . '/admission-document.php?id=' . (int)$myApp['id'];
+                  $myIsPaid = ($appMeta['pay_status_label'] === 'Paid');
+                ?>
+                <tr>
+                  <td>
+                    <strong style="font-family:monospace; color:#0f2c59; font-size:0.9rem; display:block;"><?= e($appMeta['application_id']) ?></strong>
+                    <?php if ($appMeta['roll_number'] !== ''): ?>
+                      <small style="font-family:monospace; color:#6d28d9; font-weight:700;">Roll: <?= e($appMeta['roll_number']) ?></small>
+                    <?php endif; ?>
+                  </td>
+                  <td>
+                    <strong style="color:#0f172a; font-size:0.86rem; display:block;"><?= e($appMeta['program_name']) ?></strong>
+                    <small style="color:#64748b;"><?= e($appMeta['department_name']) ?></small>
+                  </td>
+                  <td style="font-size:0.84rem; font-weight:600; color:#334155;">
+                    <?= e($appMeta['academic_session']) ?>
+                  </td>
+                  <td style="font-size:0.8rem; color:#475569;">
+                    <?= e($appMeta['submission_date']) ?>
+                  </td>
+                  <td>
+                    <span style="display:inline-block; padding:2px 9px; border-radius:4px; font-size:0.75rem; font-weight:700; <?= $appMeta['app_status_tone'] === 'approved' ? 'background:#dcfce7;color:#166534;' : ($appMeta['app_status_tone'] === 'rejected' ? 'background:#fee2e2;color:#991b1b;' : 'background:#fef3c7;color:#92400e;') ?>">
+                      <?= e($appMeta['app_status_label']) ?>
+                    </span>
+                  </td>
+                  <td>
+                    <span style="display:inline-block; padding:2px 9px; border-radius:4px; font-size:0.75rem; font-weight:700; <?= $myIsPaid ? 'background:#dcfce7;color:#166534;' : 'background:#fee2e2;color:#991b1b;' ?>">
+                      <?= e($appMeta['pay_status_label']) ?>
+                    </span>
+                  </td>
+                  <td style="text-align:right;">
+                    <div style="display:flex; gap:5px; justify-content:flex-end; flex-wrap:wrap;">
+                      <?php if ($myIsPaid): ?>
+                        <a href="<?= e($docBase) ?>&amp;doc=application&amp;action=view" style="padding:4px 9px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#0f2c59; color:#ffffff; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                          <i class="fas fa-eye"></i> View Application
+                        </a>
+                        <a href="<?= e($docBase) ?>&amp;doc=application&amp;action=pdf" target="_blank" style="padding:4px 9px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#b91c1c; color:#ffffff; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                          <i class="fas fa-file-pdf"></i> View PDF
+                        </a>
+                        <a href="<?= e($docBase) ?>&amp;doc=application&amp;action=download" style="padding:4px 9px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#1e40af; color:#ffffff; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                          <i class="fas fa-download"></i> Download PDF
+                        </a>
+                        <a href="<?= e($docBase) ?>&amp;doc=application&amp;action=print" target="_blank" style="padding:4px 9px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#f8fafc; color:#0f2c59; border:1px solid #cbd5e1; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                          <i class="fas fa-print"></i> Print Application
+                        </a>
+                        <a href="<?= e($docBase) ?>&amp;doc=receipt&amp;action=view" style="padding:4px 9px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#15803d; color:#ffffff; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                          <i class="fas fa-receipt"></i> Payment Receipt
+                        </a>
+                      <?php else: ?>
+                        <a href="<?= APP_URL ?>/admission-payment.php?ref=<?= urlencode((string)$myApp['application_ref']) ?>" style="padding:4px 11px; border-radius:5px; font-size:0.76rem; font-weight:700; background:#e11d48; color:#ffffff; text-decoration:none; display:inline-flex; align-items:center; gap:5px;">
+                          <i class="fas fa-credit-card"></i> Pay ৳150 &amp; Generate Card
+                        </a>
+                      <?php endif; ?>
+                    </div>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      <?php endif; ?>
+    </div>
+  </div>
+
   <!-- 2-Column Content Grid: Enrolled Courses & Routine + Recent Results & Notices -->
-  <div style="display:grid; grid-template-columns: 2fr 1.2fr; gap:1.75rem; align-items:start;">
+  <div class="sp-dash-grid" style="display:grid; grid-template-columns: 2fr 1.2fr; gap:1.75rem; align-items:start;">
     
     <!-- Left Column: Current Courses & Class Routine -->
     <div>
@@ -223,7 +454,10 @@ $notices = $db->query("
               <select id="semSelectFilter" name="semester" onchange="this.form.submit()" style="padding: 4px 8px; font-size: 0.82rem; font-weight: 600; border-radius: 6px; border: 1px solid #cbd5e1; background: #ffffff; color: #0f172a; cursor: pointer;">
                 <option value="all" <?= ($selectedSemester === 'all') ? 'selected' : '' ?>>All Semesters</option>
                 <?php
-                $standardSems = ['1st Semester', '2nd Semester', '3rd Semester', '4th Semester', '5th Semester', '6th Semester', '7th Semester', '8th Semester'];
+                $standardSems = [];
+                for ($si = 1; $si <= $totalSemesters; $si++) {
+                    $standardSems[] = get_semester_ordinal_title($si);
+                }
                 $dropdownSems = array_unique(array_merge($standardSems, $availableSemesters));
                 foreach ($dropdownSems as $sem):
                 ?>
@@ -457,12 +691,12 @@ $notices = $db->query("
 
           <a href="<?= APP_URL ?>/student/results.php" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; color:#1e293b; text-decoration:none; font-size:0.85rem; font-weight:600; transition:all 0.15s ease;">
             <i class="fas fa-file-invoice" style="color:#16a34a; font-size:1.1rem;"></i>
-            <span>Download Semester Transcripts (সেমিস্টার ট্রান্সক্রিপ্ট)</span>
+            <span>Download Semester Transcripts</span>
           </a>
 
-          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; color:#166534; text-decoration:none; font-size:0.85rem; font-weight:700; transition:all 0.15s ease;">
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all&amp;download=pdf" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; color:#166534; text-decoration:none; font-size:0.85rem; font-weight:700; transition:all 0.15s ease;">
             <i class="fas fa-file-pdf" style="color:#dc2626; font-size:1.1rem;"></i>
-            <span>Full Academic Transcript (৮টি সেমিস্টার PDF)</span>
+            <span>Full Academic Transcript (<?= $totalSemesters ?> Semesters PDF)</span>
           </a>
 
           <a href="<?= APP_URL ?>/student/fees.php" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; color:#1e293b; text-decoration:none; font-size:0.85rem; font-weight:600; transition:all 0.15s ease;">
@@ -472,7 +706,7 @@ $notices = $db->query("
 
           <a href="<?= APP_URL ?>/programs.php" target="_blank" style="display:flex; align-items:center; gap:0.65rem; padding:0.65rem 0.9rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; color:#1e293b; text-decoration:none; font-size:0.85rem; font-weight:600; transition:all 0.15s ease;">
             <i class="fas fa-book" style="color:#6366f1; font-size:1.1rem;"></i>
-            <span>Full 4-Year University Curriculum &rarr;</span>
+            <span><?= e($progStruct['duration_label'] ?? 'Full Academic') ?> University Curriculum &rarr;</span>
           </a>
         </div>
       </div>

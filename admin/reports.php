@@ -18,21 +18,21 @@ $acceptedApps = (int)$db->query("SELECT COUNT(*) FROM admissions WHERE status = 
 $rejectedApps = (int)$db->query("SELECT COUNT(*) FROM admissions WHERE status = 'Rejected'")->fetchColumn();
 $underReviewApps = (int)$db->query("SELECT COUNT(*) FROM admissions WHERE status = 'Under Review'")->fetchColumn();
 
-// 2. Student Distribution by Department
+// 2. Student Distribution by Department (exclude Deleted accounts)
 $deptDistribution = $db->query("
     SELECT d.name_en as dept_name, COUNT(s.id) as student_count, AVG(s.cgpa) as avg_cgpa
     FROM departments d
-    LEFT JOIN students s ON s.department_id = d.id
+    LEFT JOIN students s ON s.department_id = d.id AND s.status != 'Deleted'
     GROUP BY d.id, d.name_en
     ORDER BY student_count DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// 3. Academic CGPA Banding
-$cgpaOutstanding = (int)$db->query("SELECT COUNT(*) FROM students WHERE cgpa >= 3.75")->fetchColumn();
-$cgpaVeryGood = (int)$db->query("SELECT COUNT(*) FROM students WHERE cgpa >= 3.00 AND cgpa < 3.75")->fetchColumn();
-$cgpaGood = (int)$db->query("SELECT COUNT(*) FROM students WHERE cgpa >= 2.50 AND cgpa < 3.00")->fetchColumn();
-$cgpaConditional = (int)$db->query("SELECT COUNT(*) FROM students WHERE cgpa >= 2.00 AND cgpa < 2.50")->fetchColumn();
-$cgpaProbation = (int)$db->query("SELECT COUNT(*) FROM students WHERE cgpa < 2.00 AND cgpa > 0")->fetchColumn();
+// 3. Academic CGPA Banding (exclude Deleted accounts)
+$cgpaOutstanding = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND cgpa >= 3.75")->fetchColumn();
+$cgpaVeryGood = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND cgpa >= 3.00 AND cgpa < 3.75")->fetchColumn();
+$cgpaGood = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND cgpa >= 2.50 AND cgpa < 3.00")->fetchColumn();
+$cgpaConditional = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND cgpa >= 2.00 AND cgpa < 2.50")->fetchColumn();
+$cgpaProbation = (int)$db->query("SELECT COUNT(*) FROM students WHERE status != 'Deleted' AND cgpa < 2.00 AND cgpa > 0")->fetchColumn();
 
 // 4. Financial Revenue Analytics
 $totalAdmissionRev = (float)$db->query("SELECT COALESCE(SUM(payment_amount), 0) FROM admissions WHERE payment_status = 'Paid'")->fetchColumn();
@@ -60,7 +60,7 @@ include __DIR__ . '/includes/admin-header.php';
 <h4 style="font-size:1.05rem; font-weight:800; color:#0f2c59; margin-bottom:0.85rem;">
   <i class="fas fa-filter" style="color:var(--rmu-primary);"></i> Admission Intake Conversion Funnel
 </h4>
-<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:2rem;">
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap:1rem; margin-bottom:2rem;">
   <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:8px; padding:1.2rem; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.04);">
     <div style="font-size:1.8rem; font-weight:800; color:#0f172a;"><?= $totalApps ?></div>
     <div style="font-size:0.8rem; color:#64748b; font-weight:700; text-transform:uppercase; margin-top:3px;">Total Applications</div>
@@ -84,12 +84,16 @@ include __DIR__ . '/includes/admin-header.php';
 </div>
 
 <!-- 2-Column: Department Enrollment (Left) + CGPA Distribution (Right) -->
-<div style="display:grid; grid-template-columns:1.5fr 1fr; gap:1.75rem; margin-bottom:2rem; align-items:start;">
+<style>
+  @media (max-width: 900px) { .admin-rep-grid { grid-template-columns: 1fr !important; } }
+</style>
+<div class="admin-rep-grid" style="display:grid; grid-template-columns:1.5fr 1fr; gap:1.75rem; margin-bottom:2rem; align-items:start;">
   <!-- Department Distribution Table -->
-  <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+  <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05); min-width:0;">
     <div style="padding:1rem 1.25rem; border-bottom:1px solid #e2e8f0; background:#f8fafc;">
       <strong style="color:#0f172a; font-size:0.95rem;"><i class="fas fa-university" style="color:var(--rmu-primary);"></i> Student Enrollment by Department</strong>
     </div>
+    <div class="table-responsive" style="margin-bottom:0;">
     <table class="rmu-table" style="box-shadow:none; margin:0; font-size:0.88rem;">
       <thead>
         <tr>
@@ -114,6 +118,7 @@ include __DIR__ . '/includes/admin-header.php';
         <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
   </div>
 
   <!-- Academic CGPA Banding -->

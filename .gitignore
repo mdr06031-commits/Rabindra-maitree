@@ -1,11 +1,15 @@
 # Environment & Local Configuration
 config/database.local.php
+config/gateway_secret.php
+config/.gateway_secret_*.tmp.php
 
 # Storage Uploads & Temporary Files
 storage/uploads/*
 !storage/uploads/.gitkeep
 storage/downloads/*
 !storage/downloads/.gitkeep
+storage/admissions/*
+!storage/admissions/.gitkeep
 
 # Operating System & IDE Artifacts
 .DS_Store

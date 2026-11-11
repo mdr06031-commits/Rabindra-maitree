@@ -65,8 +65,8 @@ include __DIR__ . '/includes/breadcrumbs.php';
   <div class="container" style="max-width: 900px;">
     <!-- Search Bar Form -->
     <div style="margin-bottom: 2.5rem;">
-      <form action="<?= APP_URL ?>/search.php" method="GET" style="display: flex; gap: 0.5rem;">
-        <input type="text" name="q" value="<?= e($query) ?>" placeholder="Search notices, degree programs, departments, news..." class="form-control" style="font-size: 1.05rem; padding: 0.85rem 1.25rem;" required>
+      <form action="<?= APP_URL ?>/search.php" method="GET" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <input type="text" name="q" value="<?= e($query) ?>" placeholder="Search notices, degree programs, departments, news..." class="form-control" style="flex: 1; min-width: min(100%, 220px); font-size: 1.05rem; padding: 0.85rem 1.25rem;" required>
         <button type="submit" class="btn-primary" style="padding: 0.85rem 2rem; font-size: 1rem;">
           <i class="fas fa-search"></i> Search
         </button>

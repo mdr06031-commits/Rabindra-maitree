@@ -117,6 +117,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!navMenu) return;
       navMenu.classList.add('mobile-open');
       backdrop.classList.add('show');
+      document.body.classList.add('rmu-drawer-open');
       if (navToggleBtn) {
         navToggleBtn.classList.add('active');
         navToggleBtn.setAttribute('aria-expanded', 'true');
@@ -127,6 +128,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!navMenu) return;
       navMenu.classList.remove('mobile-open');
       backdrop.classList.remove('show');
+      document.body.classList.remove('rmu-drawer-open');
       if (navToggleBtn) {
         navToggleBtn.classList.remove('active');
         navToggleBtn.setAttribute('aria-expanded', 'false');
@@ -224,6 +226,11 @@ document.addEventListener('DOMContentLoaded', function () {
           dropdown.style.setProperty('display', 'block', 'important');
           dropdown.style.setProperty('visibility', 'visible', 'important');
           dropdown.style.setProperty('opacity', '1', 'important');
+          dropdown.style.setProperty('position', 'static', 'important');
+          if (dropdown.id === 'programsDropdownMenu') {
+            dropdown.style.setProperty('max-height', '460px', 'important');
+            dropdown.style.setProperty('overflow-y', 'auto', 'important');
+          }
         }
       } else {
         parentItem.classList.remove('dropdown-show');
@@ -233,6 +240,11 @@ document.addEventListener('DOMContentLoaded', function () {
           dropdown.style.setProperty('display', 'none', 'important');
           dropdown.style.removeProperty('visibility');
           dropdown.style.removeProperty('opacity');
+          dropdown.style.removeProperty('position');
+          if (dropdown.id === 'programsDropdownMenu') {
+            dropdown.style.removeProperty('max-height');
+            dropdown.style.removeProperty('overflow-y');
+          }
         }
       }
     }
@@ -343,8 +355,12 @@ document.addEventListener('DOMContentLoaded', function () {
     // Global Escape key handler
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
+        const wasOpen = navMenu && navMenu.classList.contains('mobile-open');
         closeAllSubmenus();
         closeDrawer();
+        if (wasOpen && navToggleBtn) {
+          navToggleBtn.focus();
+        }
       }
     });
 

@@ -13,6 +13,10 @@ $breadcrumbs = [['title' => 'Programs']];
 $level = $_GET['level'] ?? 'All';
 $db = getDb();
 
+$progCountAll = (int)$db->query("SELECT COUNT(*) FROM programs WHERE is_active = 1")->fetchColumn();
+$progCountUG = (int)$db->query("SELECT COUNT(*) FROM programs WHERE is_active = 1 AND degree_level = 'Undergraduate'")->fetchColumn();
+$progCountPG = (int)$db->query("SELECT COUNT(*) FROM programs WHERE is_active = 1 AND degree_level = 'Postgraduate'")->fetchColumn();
+
 if (in_array($level, ['Undergraduate', 'Postgraduate'], true)) {
     $stmt = $db->prepare("
         SELECT p.*, d.name_en AS dept_name, d.slug AS dept_slug, f.name_en AS faculty_name 
@@ -60,10 +64,10 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
     <div class="section-header" style="text-align: left; margin-bottom: 2rem;">
       <span class="section-subtitle">Academic Curricula &amp; Degrees</span>
-      <h2 class="section-title" style="text-align: left;">Academic Degree Programs &amp; 4-Year Subject Curriculums</h2>
+      <h2 class="section-title" style="text-align: left;">Academic Degree Programs &amp; Approved Curriculums</h2>
       <div class="section-line" style="margin: 0.8rem 0 0 0;"></div>
       <p style="color: var(--rmu-muted); margin-top: 0.8rem; font-size: 0.95rem; max-width: 850px; margin-left: 0; margin-right: auto;">
-        Rabindra Maitree University offers comprehensive UGC-approved undergraduate and postgraduate programs across four academic faculties: Arts &amp; Social Science, Engineering &amp; Technology, Business Studies, and Agriculture. Explore each program's complete 4-year subject curriculum organized by 1st Year, 2nd Year, 3rd Year, and 4th Year.
+        Rabindra Maitree University offers comprehensive UGC-approved undergraduate and postgraduate programs across four academic faculties: Arts &amp; Social Science, Engineering &amp; Technology, Business Studies, and Agriculture. Explore each program's approved duration, semester structure, and subject curriculum.
       </p>
     </div>
 
@@ -71,13 +75,13 @@ include __DIR__ . '/includes/breadcrumbs.php';
     <div class="program-tabs-wrapper">
       <div class="program-tabs-nav" role="tablist" aria-label="Academic Degree Categories">
         <a href="<?= APP_URL ?>/programs.php" class="program-tab-btn <?= ($level === 'All') ? 'active' : '' ?>" role="tab" aria-selected="<?= ($level === 'All') ? 'true' : 'false' ?>">
-          <i class="fas fa-th-large"></i> All Degree Programs <span class="tab-count"><?= ($level === 'All') ? count($programs) : '14' ?></span>
+          <i class="fas fa-th-large"></i> All Degree Programs <span class="tab-count"><?= $progCountAll ?></span>
         </a>
         <a href="<?= APP_URL ?>/programs.php?level=Undergraduate" class="program-tab-btn <?= ($level === 'Undergraduate') ? 'active' : '' ?>" role="tab" aria-selected="<?= ($level === 'Undergraduate') ? 'true' : 'false' ?>">
-          <i class="fas fa-user-graduate"></i> Undergraduate <span class="tab-count">11</span>
+          <i class="fas fa-user-graduate"></i> Undergraduate <span class="tab-count"><?= $progCountUG ?></span>
         </a>
         <a href="<?= APP_URL ?>/programs.php?level=Postgraduate" class="program-tab-btn <?= ($level === 'Postgraduate') ? 'active' : '' ?>" role="tab" aria-selected="<?= ($level === 'Postgraduate') ? 'true' : 'false' ?>">
-          <i class="fas fa-graduation-cap"></i> Postgraduate <span class="tab-count">3</span>
+          <i class="fas fa-graduation-cap"></i> Postgraduate <span class="tab-count"><?= $progCountPG ?></span>
         </a>
       </div>
     </div>
@@ -89,9 +93,10 @@ include __DIR__ . '/includes/breadcrumbs.php';
           $isAgri = ($prog['slug'] === 'bsc-in-agriculture');
           $cardBg = $isAgri ? 'background: #ffffff; border: 2px solid #22c55e;' : 'background: var(--rmu-bg-light); border: 1px solid var(--rmu-border);';
           $curriculum = get_program_curriculum_by_slug($prog['slug']);
+          $progStruct = get_program_academic_structure((int)$prog['id']);
           $displayTitle = (!empty($curriculum['title'])) ? $curriculum['title'] : $prog['title_en'];
         ?>
-        <div style="<?= $cardBg ?> border-radius: var(--rmu-radius-md); padding: 1.75rem; display: flex; flex-direction: column; position: relative;">
+        <div style="<?= $cardBg ?> border-radius: var(--rmu-radius-md); padding: 1.75rem; display: flex; flex-direction: column; position: relative; min-width: 0; overflow-wrap: anywhere;">
           
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
             <span class="notice-category-badge <?= ($prog['degree_level'] === 'Undergraduate') ? 'badge-academic' : 'badge-scholarship' ?>">
@@ -123,15 +128,14 @@ include __DIR__ . '/includes/breadcrumbs.php';
           </p>
 
           <div style="background: var(--rmu-white); padding: 0.6rem 0.9rem; border-radius: var(--rmu-radius-sm); border: 1px solid var(--rmu-border-light); margin-bottom: 1.2rem; font-size: 0.82rem;">
-            <div><i class="fas fa-clock"></i> <strong>Duration:</strong> <?= e($prog['duration']) ?></div>
+            <div><i class="fas fa-clock"></i> <strong>Duration:</strong> <?= e($progStruct['duration_label']) ?></div>
             <div style="margin-top: 3px;"><i class="fas fa-tag"></i> <strong>Fee:</strong> <?= e($prog['tuition_fee'] ?? 'Standard Fee') ?></div>
           </div>
 
-          <?php $curriculum = get_program_curriculum_by_slug($prog['slug']); ?>
           <?php if ($curriculum): ?>
             <details class="program-curriculum-accordion" style="margin-bottom: 1.25rem; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0.65rem 0.85rem;" open>
               <summary style="font-size: 0.84rem; font-weight: 700; color: #1e73be; cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between;">
-                <span><i class="fas fa-book-reader" style="margin-right: 5px;"></i> 4-Year Academic Subjects (Curriculum)</span>
+                <span><i class="fas fa-book-reader" style="margin-right: 5px;"></i> Academic Subjects (<?= e($progStruct['duration_label']) ?> Curriculum)</span>
                 <span style="font-size: 0.72rem; color: #64748b; font-weight: 600;"><i class="fas fa-chevron-down"></i></span>
               </summary>
               <div style="margin-top: 0.75rem; border-top: 1px solid #e2e8f0; padding-top: 0.6rem;">

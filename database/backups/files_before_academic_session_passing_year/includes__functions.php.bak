@@ -1,0 +1,3239 @@
+<?php
+/**
+ * Global Utility and Security Functions
+ */
+
+require_once __DIR__ . '/database.php';
+
+/**
+ * Escape HTML output to prevent XSS
+ */
+function e(?string $string): string {
+    return htmlspecialchars((string)$string, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+/**
+ * Generate CSRF Token
+ */
+function csrf_token(): string {
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+/**
+ * Render CSRF hidden input
+ */
+function csrf_field(): string {
+    return '<input type="hidden" name="csrf_token" value="' . e(csrf_token()) . '">';
+}
+
+/**
+ * Verify CSRF Token
+ */
+function verify_csrf_token(?string $token): bool {
+    if (empty($_SESSION['csrf_token']) || empty($token)) {
+        return false;
+    }
+    return hash_equals($_SESSION['csrf_token'], $token);
+}
+
+/**
+ * Get Site Setting from Database
+ */
+function get_setting(string $key, string $default = ''): string {
+    static $settings = null;
+    if ($settings === null) {
+        $settings = [];
+        try {
+            $db = getDb();
+            $stmt = $db->query("SELECT setting_key, setting_value FROM site_settings");
+            while ($row = $stmt->fetch()) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+        } catch (Exception $e) {
+            // fallback
+        }
+    }
+    return $settings[$key] ?? $default;
+}
+
+/**
+ * Convert string to URL slug
+ */
+function slugify(string $text): string {
+    $text = preg_replace('~[^\pL\d]+~u', '-', $text);
+    $text = trim($text, '-');
+    $text = preg_replace('~-+~', '-', $text);
+    $text = strtolower($text);
+    return empty($text) ? 'n-a' : $text;
+}
+
+/**
+ * Format date for university notices and events
+ */
+function format_date(string $date, string $format = 'M d, Y'): string {
+    if (empty($date) || $date === '0000-00-00') return '';
+    $timestamp = strtotime($date);
+    return $timestamp ? date($format, $timestamp) : $date;
+}
+
+/**
+ * Flash messaging helpers
+ */
+function flash_set(string $type, string $message): void {
+    if (!isset($_SESSION['flash'])) {
+        $_SESSION['flash'] = [];
+    }
+    $_SESSION['flash'][$type] = $message;
+}
+
+function flash_get(string $type): ?string {
+    if (isset($_SESSION['flash'][$type])) {
+        $msg = $_SESSION['flash'][$type];
+        unset($_SESSION['flash'][$type]);
+        return $msg;
+    }
+    return null;
+}
+
+function flash_has(string $type): bool {
+    return isset($_SESSION['flash'][$type]);
+}
+
+/**
+ * Authentication and Role Checks
+ */
+function is_logged_in(): bool {
+    return !empty($_SESSION['user_id']) && !empty($_SESSION['user_role']);
+}
+
+function current_user(): ?array {
+    if (!is_logged_in()) {
+        return null;
+    }
+    return [
+        'id'        => $_SESSION['user_id'],
+        'username'  => $_SESSION['user_name'] ?? '',
+        'full_name' => $_SESSION['user_fullname'] ?? '',
+        'role'      => $_SESSION['user_role'] ?? '',
+        'email'     => $_SESSION['user_email'] ?? ''
+    ];
+}
+
+function require_login(): void {
+    if (!is_logged_in()) {
+        flash_set('error', 'Please log in to access the administrative dashboard.');
+        header("Location: " . APP_URL . "/admin/login.php");
+        exit;
+    }
+}
+
+function require_role(array $allowedRoles): void {
+    require_login();
+    $role = $_SESSION['user_role'] ?? '';
+    if (!in_array($role, $allowedRoles, true)) {
+        flash_set('error', 'Access denied. You do not possess the required administrative clearance.');
+        header("Location: " . APP_URL . "/admin/dashboard.php");
+        exit;
+    }
+}
+
+function current_admin_role(): string {
+    return (string)($_SESSION['user_role'] ?? '');
+}
+
+function is_admin_manager_role(?string $role = null): bool {
+    $r = $role ?? current_admin_role();
+    return in_array($r, ['superadmin', 'admin'], true);
+}
+
+function require_admin_manager_role(): void {
+    require_role(['superadmin', 'admin']);
+}
+
+function get_pending_admissions_count(): int {
+    try {
+        $db = getDb();
+        return (int)$db->query("SELECT COUNT(*) FROM admissions WHERE status IN ('Submitted','Pending','Under Review')")->fetchColumn();
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+/**
+ * Log Administrative Action
+ */
+function log_audit(string $action, string $details = '', ?int $overrideUserId = null): void {
+    try {
+        $db = getDb();
+        $userId = $overrideUserId ?? ($_SESSION['user_id'] ?? null);
+        if ($userId !== null) {
+            $userId = (int)$userId;
+        }
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+        $stmt = $db->prepare("INSERT INTO audit_logs (user_id, action, details, ip_address) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$userId, $action, $details, $ip]);
+    } catch (Exception $e) {
+        error_log("Failed to write audit log: " . $e->getMessage());
+    }
+}
+
+/**
+ * Bangladeshi Mobile Number Validation
+ * Accepts 11 digits starting with 013-019
+ */
+function validate_bd_mobile(string $mobile): bool {
+    $cleaned = preg_replace('/[^0-9]/', '', $mobile);
+    if (str_starts_with($cleaned, '8801')) {
+        $cleaned = '01' . substr($cleaned, 4);
+    }
+    return (bool)preg_match('/^01[3-9]\d{8}$/', $cleaned);
+}
+
+/**
+ * Normalize Bangladeshi Mobile Number
+ */
+function normalize_bd_mobile(string $mobile): string {
+    $cleaned = preg_replace('/[^0-9]/', '', $mobile);
+    if (str_starts_with($cleaned, '8801')) {
+        $cleaned = '01' . substr($cleaned, 4);
+    }
+    return $cleaned;
+}
+
+/**
+ * Validate GPA (Between 1.00 and 5.00)
+ */
+function validate_gpa($gpa): bool {
+    if (!is_numeric($gpa)) return false;
+    $val = (float)$gpa;
+    return $val >= 1.00 && $val <= 5.00;
+}
+
+/**
+ * Generate Application Tracking Reference Number
+ * Format: RMU-2026-XXXX
+ */
+function generate_application_ref(PDO $db): string {
+    $year = date('Y');
+    do {
+        $randNum = mt_rand(1000, 9999);
+        $ref = "RMU-{$year}-{$randNum}";
+        $stmt = $db->prepare("SELECT COUNT(*) FROM admissions WHERE application_ref = ?");
+        $stmt->execute([$ref]);
+        $exists = $stmt->fetchColumn() > 0;
+    } while ($exists);
+    return $ref;
+}
+
+/**
+ * Fetch Faculties with their Departments for Menus
+ */
+function get_faculties_menu(): array {
+    static $tree = null;
+    if ($tree !== null) return $tree;
+    $tree = [];
+    try {
+        $db = getDb();
+        $faculties = $db->query("SELECT id, slug, name_en, name_bn FROM faculties WHERE is_active = 1 ORDER BY sort_order ASC")->fetchAll();
+        $deptStmt = $db->prepare("SELECT id, faculty_id, slug, name_en, name_bn, code FROM departments WHERE faculty_id = ? AND is_active = 1 ORDER BY sort_order ASC");
+        foreach ($faculties as $f) {
+            $deptStmt->execute([$f['id']]);
+            $depts = $deptStmt->fetchAll();
+            $tree[] = [
+                'faculty'     => $f,
+                'departments' => $depts
+            ];
+        }
+    } catch (Exception $e) {
+        // fallback empty
+    }
+    return $tree;
+}
+
+/**
+ * Truncate words with ellipsis
+ */
+function truncate_words(string $text, int $limit = 25): string {
+    $clean = strip_tags($text);
+    $words = explode(' ', $clean);
+    if (count($words) > $limit) {
+        return implode(' ', array_slice($words, 0, $limit)) . '...';
+    }
+    return $clean;
+}
+
+/**
+ * Fetch Categorized Academic Programs for Navigation Menu Dropdown
+ */
+function get_programs_menu(): array {
+    static $menu = null;
+    if ($menu !== null) return $menu;
+    $menu = ['undergraduate' => [], 'postgraduate' => []];
+    try {
+        $db = getDb();
+        $stmt = $db->query("SELECT id, slug, title_en, degree_level, duration FROM programs WHERE is_active = 1 ORDER BY FIELD(degree_level, 'Undergraduate', 'Postgraduate'), sort_order ASC");
+        while ($row = $stmt->fetch()) {
+            if ($row['degree_level'] === 'Undergraduate') {
+                $menu['undergraduate'][] = $row;
+            } else {
+                $menu['postgraduate'][] = $row;
+            }
+        }
+    } catch (Exception $e) {
+        // fallback empty
+    }
+    return $menu;
+}
+
+/**
+ * Official Academic Programs & 4-Year Subject Curriculums
+ */
+function get_all_programs_curriculum(): array {
+    static $curriculums = null;
+    if ($curriculums !== null) return $curriculums;
+
+    $curriculums = [
+        'ba-in-bangla' => [
+            'id' => 1,
+            'title' => 'BA (Honours) in Bangla',
+            'slug' => 'ba-in-bangla',
+            'department' => 'Department of Bangla',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'BAN 101', 'name' => 'History of Bangla Literature (Ancient & Medieval Periods)'],
+                    ['code' => 'BAN 102', 'name' => 'Introduction to Bangla Linguistics, Phonetics & Grammar'],
+                    ['code' => 'BAN 103', 'name' => 'Bangla Folklore, Heritage & Oral Literature'],
+                    ['code' => 'BAN 104', 'name' => 'Bangla Prose Composition, Rhetoric & Prosody']
+                ],
+                '2nd Year' => [
+                    ['code' => 'BAN 201', 'name' => 'Modern Bangla Literature (1801–1947: Renaissance to Partition)'],
+                    ['code' => 'BAN 202', 'name' => '19th & 20th Century Bangla Poetry (Madhusudan to Jibanananda)'],
+                    ['code' => 'BAN 203', 'name' => 'Evolution of Bangla Drama & Theatre Practices'],
+                    ['code' => 'BAN 204', 'name' => 'Modern Bangla Prose, Essays & Periodicals']
+                ],
+                '3rd Year' => [
+                    ['code' => 'BAN 301', 'name' => 'Rabindra Literature: Novels, Short Stories & Philosophy'],
+                    ['code' => 'BAN 302', 'name' => 'Kazi Nazrul Islam: Rebel Aesthetics, Poetry & Music'],
+                    ['code' => 'BAN 303', 'name' => 'Eastern & Western Literary Criticism and Aesthetics'],
+                    ['code' => 'BAN 304', 'name' => 'Bangla Fiction & Modern Short Story Traditions']
+                ],
+                '4th Year' => [
+                    ['code' => 'BAN 401', 'name' => 'Literature of Bangladesh Liberation War (1971) & Post-Independence Era'],
+                    ['code' => 'BAN 402', 'name' => 'South Asian & Comparative Literature in Translation'],
+                    ['code' => 'BAN 403', 'name' => 'Contemporary Bangla Fiction & Modern Poetry'],
+                    ['code' => 'BAN 404', 'name' => 'Research Methodology, Fieldwork & Academic Monograph']
+                ]
+            ]
+        ],
+        'ba-in-english' => [
+            'id' => 2,
+            'title' => 'BA (Honours) in English',
+            'slug' => 'ba-in-english',
+            'department' => 'Department of English',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'ENG 101', 'name' => 'Introduction to English Poetry & Versification'],
+                    ['code' => 'ENG 102', 'name' => 'Introduction to Prose & Non-Fictional Writing'],
+                    ['code' => 'ENG 103', 'name' => 'Fundamentals of English Drama & Performance'],
+                    ['code' => 'ENG 104', 'name' => 'Advanced English Language Skills, Phonetics & Composition']
+                ],
+                '2nd Year' => [
+                    ['code' => 'ENG 201', 'name' => '16th & 17th Century English Poetry and Drama (Shakespeare & Marlowe)'],
+                    ['code' => 'ENG 202', 'name' => '18th Century English Literature, Prose & Satire'],
+                    ['code' => 'ENG 203', 'name' => 'Romantic Poetry (Wordsworth, Coleridge, Keats, Shelley, Byron)'],
+                    ['code' => 'ENG 204', 'name' => 'Introduction to English Linguistics & Applied Syntax']
+                ],
+                '3rd Year' => [
+                    ['code' => 'ENG 301', 'name' => 'Victorian Poetry and the Rise of the Victorian Novel'],
+                    ['code' => 'ENG 302', 'name' => '20th Century Modernist Poetry and Fiction (Yeats, Eliot, Woolf, Joyce)'],
+                    ['code' => 'ENG 303', 'name' => 'American Literature: Puritans to Postmodernists'],
+                    ['code' => 'ENG 304', 'name' => 'History of Western Literary Theory & Classical Criticism']
+                ],
+                '4th Year' => [
+                    ['code' => 'ENG 401', 'name' => 'Modern & Contemporary Critical Theory (Post-Structuralism to Cultural Studies)'],
+                    ['code' => 'ENG 402', 'name' => 'Postcolonial Literatures in English (Africa, Caribbean, South Asia)'],
+                    ['code' => 'ENG 403', 'name' => 'English Language Teaching (ELT) Methodology & Testing'],
+                    ['code' => 'ENG 404', 'name' => 'Shakespeare: Selected Tragedies, Comedies & Critical Perspectives'],
+                    ['code' => 'ENG 405', 'name' => 'Senior Seminar & Research Monograph']
+                ]
+            ]
+        ],
+        'ba-in-music' => [
+            'id' => 3,
+            'title' => 'BA (Honours) in Music',
+            'slug' => 'ba-in-music',
+            'department' => 'Department of Music',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'MUS 101', 'name' => 'Fundamentals of Classical Ragas, Swaras & Tala Systems'],
+                    ['code' => 'MUS 102', 'name' => 'Rabindra Sangeet: Puja, Prem, Swadesh & Prakriti Stages'],
+                    ['code' => 'MUS 103', 'name' => 'Folk Music Traditions of Greater Bengal (Baul, Bhatiali, Bhawaiya)'],
+                    ['code' => 'MUS 104', 'name' => 'Voice Culture, Riyaz Techniques & Pitch Precision (Practical)']
+                ],
+                '2nd Year' => [
+                    ['code' => 'MUS 201', 'name' => 'Khayal & Dhrupad Vocal Forms: Bandish & Improvised Alap'],
+                    ['code' => 'MUS 202', 'name' => 'Nazrul Sangeet: Classical, Ragpradhan, Ghazal & Mass Songs'],
+                    ['code' => 'MUS 203', 'name' => 'Bengali Musical Notation (Akarmatrik System) & History of Music'],
+                    ['code' => 'MUS 204', 'name' => 'Traditional Folk Instruments: Harmonium, Tanpura, Tabla & Dotara']
+                ],
+                '3rd Year' => [
+                    ['code' => 'MUS 301', 'name' => 'Advanced Ragas: Thumri, Dadra & Semi-Classical Expressions'],
+                    ['code' => 'MUS 302', 'name' => 'Tagore Musical Dance Dramas (Chitrangada, Chandalika, Shyama)'],
+                    ['code' => 'MUS 303', 'name' => 'Mystical Traditions: Lalon Shai, Hason Raja & Shah Abdul Karim'],
+                    ['code' => 'MUS 304', 'name' => 'Composition Techniques, Western Harmony & World Music Traditions']
+                ],
+                '4th Year' => [
+                    ['code' => 'MUS 401', 'name' => 'Modern Bengali Songs (Adhunik Gaan) & Recording Studio Artistry'],
+                    ['code' => 'MUS 402', 'name' => 'Musicology, Aesthetics, Philosophy & Acoustics of Sound'],
+                    ['code' => 'MUS 403', 'name' => 'Applied Music Technology & Digital Audio Workstations (DAW)'],
+                    ['code' => 'MUS 404', 'name' => 'Graduation Solo Recital & Research Dissertation']
+                ]
+            ]
+        ],
+        'ba-in-fine-arts' => [
+            'id' => 4,
+            'title' => 'BFA (Honours) in Fine Arts',
+            'slug' => 'ba-in-fine-arts',
+            'department' => 'Department of Fine Arts',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'ART 101', 'name' => 'Fundamentals of Drawing, Object Study & Perspective Anatomy'],
+                    ['code' => 'ART 102', 'name' => 'Color Theory, Chromatic Relationships & 2D Composition'],
+                    ['code' => 'ART 103', 'name' => '3D Form, Spatial Structure & Clay Modeling Basics'],
+                    ['code' => 'ART 104', 'name' => 'History of Eastern, Bengal & Ancient Asian Art Traditions']
+                ],
+                '2nd Year' => [
+                    ['code' => 'ART 201', 'name' => 'Figurative & Portrait Drawing from Live Models'],
+                    ['code' => 'ART 202', 'name' => 'Oil & Acrylic Painting Techniques: Still Life & Landscape'],
+                    ['code' => 'ART 203', 'name' => 'Printmaking: Relief, Woodcut & Linocut Studio Workshop'],
+                    ['code' => 'ART 204', 'name' => 'History of Western Art: Classical Antiquity to Impressionism']
+                ],
+                '3rd Year' => [
+                    ['code' => 'ART 301', 'name' => 'Advanced Painting: Experimental Composition & Color Field'],
+                    ['code' => 'ART 302', 'name' => 'Printmaking: Intaglio, Etching, Aquatint & Silk Screen Printing'],
+                    ['code' => 'ART 303', 'name' => 'Sculpture Studio: Metal Fabrication, Terracotta & Wood Carving'],
+                    ['code' => 'ART 304', 'name' => 'Modern Art Movements: Cubism, Surrealism & Abstract Expressionism']
+                ],
+                '4th Year' => [
+                    ['code' => 'ART 401', 'name' => 'Contemporary Art Practices, Conceptual Art & Public Installations'],
+                    ['code' => 'ART 402', 'name' => 'Curatorial Studies, Gallery Administration & Exhibition Design'],
+                    ['code' => 'ART 403', 'name' => 'South Asian Contemporary Visual Culture & Digital Media Art'],
+                    ['code' => 'ART 404', 'name' => 'Senior Studio Thesis, Graduation Exhibition & Artist Portfolio']
+                ]
+            ]
+        ],
+        'bba' => [
+            'id' => 5,
+            'title' => 'BBA (Honours) in Business Administration',
+            'slug' => 'bba',
+            'department' => 'Department of Business Administration',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'BBA 101', 'name' => 'Introduction to Modern Business & Organizations'],
+                    ['code' => 'BBA 102', 'name' => 'Principles of Financial Accounting I & II'],
+                    ['code' => 'BBA 103', 'name' => 'Microeconomics & Macroeconomic Principles'],
+                    ['code' => 'BBA 104', 'name' => 'Business Mathematics & Commercial Computing Applications']
+                ],
+                '2nd Year' => [
+                    ['code' => 'BBA 201', 'name' => 'Principles of Marketing & Consumer Behavior Analysis'],
+                    ['code' => 'BBA 202', 'name' => 'Principles of Finance & Working Capital Management'],
+                    ['code' => 'BBA 203', 'name' => 'Organizational Behavior & Human Resource Management'],
+                    ['code' => 'BBA 204', 'name' => 'Business Statistics & Decision Analysis'],
+                    ['code' => 'BBA 205', 'name' => 'Business Law, Contract Acts & Corporate Regulations']
+                ],
+                '3rd Year' => [
+                    ['code' => 'BBA 301', 'name' => 'Managerial Accounting, Cost Estimation & Budgeting'],
+                    ['code' => 'BBA 302', 'name' => 'Financial Markets, Banking Institutions & Credit Appraisal'],
+                    ['code' => 'BBA 303', 'name' => 'Strategic Marketing, Brand Management & Supply Chain Logistics'],
+                    ['code' => 'BBA 304', 'name' => 'Management Information Systems (MIS) & E-Commerce'],
+                    ['code' => 'BBA 305', 'name' => 'Entrepreneurship, Innovation & Startup Incubation']
+                ],
+                '4th Year' => [
+                    ['code' => 'BBA 401', 'name' => 'Strategic Corporate Management, Business Policy & Simulation'],
+                    ['code' => 'BBA 402', 'name' => 'International Business Management & Global Trade'],
+                    ['code' => 'BBA 403', 'name' => 'Business Ethics, CSR & Sustainable Business Practices'],
+                    ['code' => 'BBA 404', 'name' => 'Digital Marketing Analytics, SEO & Social Media Campaigns'],
+                    ['code' => 'BBA 405', 'name' => 'Capstone Internship Practicum, Research Monograph & Comprehensive Viva']
+                ]
+            ]
+        ],
+        'bsc-in-agriculture' => [
+            'id' => 6,
+            'title' => 'BSc (Honours) in Agriculture',
+            'slug' => 'bsc-in-agriculture',
+            'department' => 'Department of Agriculture',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'AGR 101', 'name' => 'Fundamentals of Agronomy & Crop Production Science'],
+                    ['code' => 'AGR 102', 'name' => 'Agricultural Chemistry & Soil Science Foundations'],
+                    ['code' => 'AGR 103', 'name' => 'Agricultural Botany: Morphology, Anatomy & Taxonomy'],
+                    ['code' => 'AGR 104', 'name' => 'Principles of Horticulture & Nursery Management'],
+                    ['code' => 'AGR 105', 'name' => 'Introduction to Agricultural Entomology & Beneficial Insects']
+                ],
+                '2nd Year' => [
+                    ['code' => 'AGR 201', 'name' => 'Genetics, Cytology & Plant Breeding Fundamentals'],
+                    ['code' => 'AGR 202', 'name' => 'Soil Fertility, Plant Nutrition & Fertilizer Technology'],
+                    ['code' => 'AGR 203', 'name' => 'Plant Pathology & Crop Disease Epidemiology'],
+                    ['code' => 'AGR 204', 'name' => 'Farm Machinery, Irrigation Systems & Drainage Engineering'],
+                    ['code' => 'AGR 205', 'name' => 'Agricultural Microbiology, Bio-fertilizers & Composting']
+                ],
+                '3rd Year' => [
+                    ['code' => 'AGR 301', 'name' => 'Agronomy of Major Field Crops (Cereals, Pulses, Oilseeds & Fiber)'],
+                    ['code' => 'AGR 302', 'name' => 'Commercial Olericulture, Pomology & Floriculture'],
+                    ['code' => 'AGR 303', 'name' => 'Economic Crop Entomology & Pesticide Toxicology'],
+                    ['code' => 'AGR 304', 'name' => 'Agricultural Extension Education & Participatory Rural Appraisal'],
+                    ['code' => 'AGR 305', 'name' => 'Post-Harvest Handling, Processing & Cold Storage Technology']
+                ],
+                '4th Year' => [
+                    ['code' => 'AGR 401', 'name' => 'Agribusiness Management, Supply Chain Logistics & Agricultural Marketing'],
+                    ['code' => 'AGR 402', 'name' => 'Agricultural Biotechnology, Tissue Culture & Molecular Breeding'],
+                    ['code' => 'AGR 403', 'name' => 'Integrated Pest Management (IPM) & Biological Controls'],
+                    ['code' => 'AGR 404', 'name' => 'Climate-Resilient Agriculture, Agroforestry & Environmental Sustainability'],
+                    ['code' => 'AGR 405', 'name' => 'Field Practicum, Agricultural Extension Camp & Research Thesis']
+                ]
+            ]
+        ],
+        'bsc-in-cse' => [
+            'id' => 7,
+            'title' => 'BSc in Computer Science and Engineering (CSE)',
+            'slug' => 'bsc-in-cse',
+            'department' => 'Department of Computer Science and Engineering',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'CSE 101', 'name' => 'Structured Programming Language (C / C++) with Lab'],
+                    ['code' => 'CSE 102', 'name' => 'Discrete Mathematics & Graph Theory'],
+                    ['code' => 'CSE 103', 'name' => 'Electrical Circuits & Basic Electronics with Lab'],
+                    ['code' => 'CSE 104', 'name' => 'Differential Calculus, Integral Calculus & Analytical Geometry'],
+                    ['code' => 'CSE 105', 'name' => 'Physics: Waves, Electromagnetism & Modern Physics']
+                ],
+                '2nd Year' => [
+                    ['code' => 'CSE 201', 'name' => 'Data Structures with Lab (Linear & Non-Linear Structures)'],
+                    ['code' => 'CSE 202', 'name' => 'Object-Oriented Programming (Java / Python) with Lab'],
+                    ['code' => 'CSE 203', 'name' => 'Digital Logic Design & Circuit Synthesis with Lab'],
+                    ['code' => 'CSE 204', 'name' => 'Database Management Systems (DBMS) & SQL with Lab'],
+                    ['code' => 'CSE 205', 'name' => 'Design & Analysis of Algorithms with Lab'],
+                    ['code' => 'CSE 206', 'name' => 'Linear Algebra, Matrices & Differential Equations']
+                ],
+                '3rd Year' => [
+                    ['code' => 'CSE 301', 'name' => 'Operating Systems & System Programming with Lab'],
+                    ['code' => 'CSE 302', 'name' => 'Microprocessors, Microcontrollers & Embedded Systems with Lab'],
+                    ['code' => 'CSE 303', 'name' => 'Computer Networks, TCP/IP Protocols & Socket Programming with Lab'],
+                    ['code' => 'CSE 304', 'name' => 'Software Engineering, Design Patterns & Agile Methodologies'],
+                    ['code' => 'CSE 305', 'name' => 'Theory of Computation, Formal Languages & Automata'],
+                    ['code' => 'CSE 306', 'name' => 'Web Technologies & Full-Stack Application Development with Lab']
+                ],
+                '4th Year' => [
+                    ['code' => 'CSE 401', 'name' => 'Artificial Intelligence & Machine Learning with Lab'],
+                    ['code' => 'CSE 402', 'name' => 'Compiler Design, Syntax Analysis & Code Generation with Lab'],
+                    ['code' => 'CSE 403', 'name' => 'Network Security, Cryptography & Cyber Defense Systems'],
+                    ['code' => 'CSE 404', 'name' => 'Cloud Computing, Virtualization & Distributed Architectures'],
+                    ['code' => 'CSE 405', 'name' => 'Senior Capstone Project / Undergraduate Research Thesis (Phase I & II)']
+                ]
+            ]
+        ],
+        'bsc-in-ict' => [
+            'id' => 8,
+            'title' => 'BSc in Information and Communication Technology (ICT)',
+            'slug' => 'bsc-in-ict',
+            'department' => 'Department of Information and Communication Technology',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'ICT 101', 'name' => 'Introduction to Information and Communication Technology'],
+                    ['code' => 'ICT 102', 'name' => 'Structured Computer Programming with C/C++ & Lab'],
+                    ['code' => 'ICT 103', 'name' => 'Basic Electrical & Electronic Engineering with Lab'],
+                    ['code' => 'ICT 104', 'name' => 'Engineering Mathematics (Differential Calculus & Linear Algebra)'],
+                    ['code' => 'ICT 105', 'name' => 'Applied Physics for Information & Communication Systems']
+                ],
+                '2nd Year' => [
+                    ['code' => 'ICT 201', 'name' => 'Data Structures & Algorithmic Problem Solving with Lab'],
+                    ['code' => 'ICT 202', 'name' => 'Object Oriented Design & Dynamic Web Application Development with Lab'],
+                    ['code' => 'ICT 203', 'name' => 'Digital Electronics, Logic Design & Pulse Circuits with Lab'],
+                    ['code' => 'ICT 204', 'name' => 'Relational Database Management Systems & Architecture with Lab'],
+                    ['code' => 'ICT 205', 'name' => 'Signals, Linear Systems & Fourier Transforms']
+                ],
+                '3rd Year' => [
+                    ['code' => 'ICT 301', 'name' => 'Data Communications & Modern Computer Networks with Lab'],
+                    ['code' => 'ICT 302', 'name' => 'Telecommunication Engineering, Switching & Signaling Systems'],
+                    ['code' => 'ICT 303', 'name' => 'Wireless & Mobile Cellular Communications (4G/5G Architectures)'],
+                    ['code' => 'ICT 304', 'name' => 'Internet of Things (IoT), Sensor Networks & Microcontrollers with Lab'],
+                    ['code' => 'ICT 305', 'name' => 'Information System Security, Cryptographic Protocols & Network Defense']
+                ],
+                '4th Year' => [
+                    ['code' => 'ICT 401', 'name' => 'Optical Fiber Communication Systems, Photonics & Microwave Engineering with Lab'],
+                    ['code' => 'ICT 402', 'name' => 'Cloud Infrastructure, Server Virtualization & DevOps Automation'],
+                    ['code' => 'ICT 403', 'name' => 'Applied Artificial Intelligence, Data Mining & Big Data Analytics with Lab'],
+                    ['code' => 'ICT 404', 'name' => 'Cyber Law, ICT Ethics, Digital Forensics & Intellectual Property'],
+                    ['code' => 'ICT 405', 'name' => 'Senior Capstone Design Project / Engineering Thesis & Comprehensive Defense']
+                ]
+            ]
+        ],
+        'bsc-in-eee' => [
+            'id' => 9,
+            'title' => 'Electrical and Electronic Engineering (EEE)',
+            'slug' => 'bsc-in-eee',
+            'department' => 'Department of Electrical and Electronic Engineering',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'EEE 101', 'name' => 'Electrical Circuits I & Circuit Simulation Lab'],
+                    ['code' => 'EEE 102', 'name' => 'Structured C Programming for Engineers with Lab'],
+                    ['code' => 'EEE 103', 'name' => 'Engineering Physics (Electromagnetism & Waves)'],
+                    ['code' => 'EEE 104', 'name' => 'Differential Calculus, Coordinate Geometry & Differential Equations']
+                ],
+                '2nd Year' => [
+                    ['code' => 'EEE 201', 'name' => 'Electrical Circuits II & Network Analysis with Lab'],
+                    ['code' => 'EEE 202', 'name' => 'Analog Electronics I & Semiconductor Devices with Lab'],
+                    ['code' => 'EEE 203', 'name' => 'Digital Electronics & Logic Design with Lab'],
+                    ['code' => 'EEE 204', 'name' => 'Signals and Linear Systems Analysis'],
+                    ['code' => 'EEE 205', 'name' => 'Engineering Mathematics (Complex Variables & Linear Algebra)']
+                ],
+                '3rd Year' => [
+                    ['code' => 'EEE 301', 'name' => 'Electromagnetic Fields and Waves'],
+                    ['code' => 'EEE 302', 'name' => 'Electrical Machines I & II (Transformers & AC/DC Motors) with Lab'],
+                    ['code' => 'EEE 303', 'name' => 'Microprocessor Systems & Interfacing (Intel 8086 & ARM) with Lab'],
+                    ['code' => 'EEE 304', 'name' => 'Power System Analysis & Transmission Engineering with Lab'],
+                    ['code' => 'EEE 305', 'name' => 'Control Systems Engineering & State Variable Analysis']
+                ],
+                '4th Year' => [
+                    ['code' => 'EEE 401', 'name' => 'Power Electronics & Industrial Drives with Lab'],
+                    ['code' => 'EEE 402', 'name' => 'Telecommunication Engineering & Digital Signal Processing (DSP)'],
+                    ['code' => 'EEE 403', 'name' => 'Renewable Energy Technologies & Solar Photovoltaic Systems'],
+                    ['code' => 'EEE 404', 'name' => 'Power Plant Engineering & High Voltage Protection'],
+                    ['code' => 'EEE 405', 'name' => 'Capstone Senior Engineering Project / Research Thesis (Parts I & II)']
+                ]
+            ]
+        ],
+        'bsc-in-microbiology' => [
+            'id' => 10,
+            'title' => 'Microbiology — BSc (Honours)',
+            'slug' => 'bsc-in-microbiology',
+            'department' => 'Department of Microbiology',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'MIC 101', 'name' => 'Fundamentals of General Microbiology & Laboratory Techniques'],
+                    ['code' => 'MIC 102', 'name' => 'Microbial Chemistry, Biomolecules & Enzymology'],
+                    ['code' => 'MIC 103', 'name' => 'Basic Cell Biology, Microscopy & Staining Methods'],
+                    ['code' => 'MIC 104', 'name' => 'Biostatistics & Applied Mathematics for Life Sciences']
+                ],
+                '2nd Year' => [
+                    ['code' => 'MIC 201', 'name' => 'Microbial Genetics & Molecular Biology Foundations'],
+                    ['code' => 'MIC 202', 'name' => 'Bacteriology & Systematics of Prokaryotes with Lab'],
+                    ['code' => 'MIC 203', 'name' => 'Virology: Plant, Animal & Bacteriophage Biology'],
+                    ['code' => 'MIC 204', 'name' => 'Mycology & Phycology (Fungi and Algae)'],
+                    ['code' => 'MIC 205', 'name' => 'Microbial Ecology & Environmental Microbiology']
+                ],
+                '3rd Year' => [
+                    ['code' => 'MIC 301', 'name' => 'Immunology & Immunotechnology with Practical'],
+                    ['code' => 'MIC 302', 'name' => 'Medical Microbiology & Pathogenic Mechanisms'],
+                    ['code' => 'MIC 303', 'name' => 'Food & Dairy Microbiology, Quality Control Standards'],
+                    ['code' => 'MIC 304', 'name' => 'Industrial Microbiology & Fermentation Biotechnology'],
+                    ['code' => 'MIC 305', 'name' => 'Pharmaceutical Microbiology & Antimicrobial Chemotherapy']
+                ],
+                '4th Year' => [
+                    ['code' => 'MIC 401', 'name' => 'Clinical Microbiology, Diagnostic Pathology & Infection Control'],
+                    ['code' => 'MIC 402', 'name' => 'Recombinant DNA Technology & Genetic Engineering with Lab'],
+                    ['code' => 'MIC 403', 'name' => 'Genomics, Proteomics & Bioinformatics in Microbiology'],
+                    ['code' => 'MIC 404', 'name' => 'Biosafety, Bioethics & Research Quality Management'],
+                    ['code' => 'MIC 405', 'name' => 'Undergraduate Research Project & Laboratory Dissertation']
+                ]
+            ]
+        ],
+        'physical-education-sports-science' => [
+            'id' => 11,
+            'title' => 'Physical Education and Sports Science',
+            'slug' => 'physical-education-sports-science',
+            'department' => 'Department of Physical Education and Sports Science',
+            'degree_level' => 'Undergraduate',
+            'years' => [
+                '1st Year' => [
+                    ['code' => 'PES 101', 'name' => 'History and Principles of Physical Education and Sports'],
+                    ['code' => 'PES 102', 'name' => 'Human Anatomy and Physiology in Exercise'],
+                    ['code' => 'PES 103', 'name' => 'Foundations of Track and Field Athletics (Practical)'],
+                    ['code' => 'PES 104', 'name' => 'Health Education, First Aid & Safety Measures']
+                ],
+                '2nd Year' => [
+                    ['code' => 'PES 201', 'name' => 'Kinesiology and Biomechanics of Human Movement'],
+                    ['code' => 'PES 202', 'name' => 'Sports Psychology and Motor Learning'],
+                    ['code' => 'PES 203', 'name' => 'Team Sports I: Football, Cricket & Volleyball (Rules & Officiating)'],
+                    ['code' => 'PES 204', 'name' => 'Gymnastics, Calisthenics & Physical Fitness Conditioning']
+                ],
+                '3rd Year' => [
+                    ['code' => 'PES 301', 'name' => 'Exercise Physiology, Metabolic Testing & Fitness Assessment'],
+                    ['code' => 'PES 302', 'name' => 'Sports Nutrition, Dietetics & Athletic Weight Management'],
+                    ['code' => 'PES 303', 'name' => 'Team Sports II: Basketball, Handball, Badminton & Swimming'],
+                    ['code' => 'PES 304', 'name' => 'Sports Pedagogy, Curriculum Design & Teaching Methods'],
+                    ['code' => 'PES 305', 'name' => 'Prevention and Management of Sports Injuries & Sports Massage']
+                ],
+                '4th Year' => [
+                    ['code' => 'PES 401', 'name' => 'Sports Training Methodology & Periodization'],
+                    ['code' => 'PES 402', 'name' => 'Sports Management, Administration & Tournament Organization'],
+                    ['code' => 'PES 403', 'name' => 'Adapted Physical Education for Specially Abled Athletes'],
+                    ['code' => 'PES 404', 'name' => 'Measurement, Evaluation & Statistics in Physical Education'],
+                    ['code' => 'PES 405', 'name' => 'Coaching Practicum, Field Internship & Undergraduate Thesis']
+                ]
+            ]
+        ]
+    ];
+
+    return $curriculums;
+}
+
+/**
+ * Get Curriculum for a specific program slug
+ */
+function get_program_curriculum_by_slug(string $slug): ?array {
+    $all = get_all_programs_curriculum();
+    return $all[$slug] ?? null;
+}
+
+/**
+ * ========================================================
+ * STUDENT PORTAL HELPER FUNCTIONS
+ * ========================================================
+ */
+
+function clear_student_session(): void {
+    unset(
+        $_SESSION['student_id'],
+        $_SESSION['student_pk_id'],
+        $_SESSION['student_name'],
+        $_SESSION['student_email'],
+        $_SESSION['student_session_version']
+    );
+}
+
+function is_student_logged_in(): bool {
+    return isset($_SESSION['student_id']) && !empty($_SESSION['student_id']) && !empty($_SESSION['student_pk_id']);
+}
+
+function get_logged_in_student(): ?array {
+    if (!is_student_logged_in()) {
+        return null;
+    }
+    $pkId = (int)($_SESSION['student_pk_id'] ?? 0);
+    if ($pkId <= 0) {
+        clear_student_session();
+        return null;
+    }
+    $db = getDb();
+    $stmt = $db->prepare("
+        SELECT s.*, p.title_en AS program_name, p.slug AS program_slug, p.degree_level,
+               p.degree_type AS prog_degree_type, p.duration AS prog_duration,
+               p.duration_years AS prog_duration_years, p.total_semesters AS prog_total_semesters,
+               d.name_en AS department_name
+        FROM students s
+        LEFT JOIN programs p ON s.program_id = p.id
+        LEFT JOIN departments d ON s.department_id = d.id
+        WHERE s.id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$pkId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        clear_student_session();
+        return null;
+    }
+
+    // Strictly block Suspended, Deactivated, and Deleted student accounts & destroy any active session
+    if (in_array($student['status'], ['Suspended', 'Deactivated', 'Deleted'], true)) {
+        if ($student['status'] === 'Deactivated') {
+            $_SESSION['student_auth_error'] = 'Your student portal account has been deactivated by university administration. Please contact the Registrar / Controller of Examinations.';
+        } elseif ($student['status'] === 'Deleted') {
+            $_SESSION['student_auth_error'] = 'This student portal account has been permanently deleted and access has been revoked.';
+        } else {
+            $_SESSION['student_auth_error'] = 'Your student portal account is currently suspended. Contact administration.';
+        }
+        clear_student_session();
+        return null;
+    }
+
+    // Immediate session invalidation check when session_version was tracked on login
+    if (isset($_SESSION['student_session_version']) && (int)$_SESSION['student_session_version'] !== (int)($student['session_version'] ?? 1)) {
+        $_SESSION['student_auth_error'] = 'Your portal session was invalidated due to an administrative account security update. Please sign in again.';
+        clear_student_session();
+        return null;
+    }
+
+    return $student;
+}
+
+function require_student_login(): void {
+    $student = get_logged_in_student();
+    if (!$student) {
+        $msg = $_SESSION['student_auth_error'] ?? 'Please log in with your Student ID and Password to access the Student Portal.';
+        unset($_SESSION['student_auth_error']);
+        flash_set('error', $msg);
+        header('Location: ' . APP_URL . '/student/login.php');
+        exit;
+    }
+}
+
+function get_semester_number(string $name): int {
+    if (preg_match('/1(?:st)?\s*Semester/i', $name)) return 1;
+    if (preg_match('/2(?:nd)?\s*Semester/i', $name)) return 2;
+    if (preg_match('/3(?:rd)?\s*Semester/i', $name)) return 3;
+    if (preg_match('/4(?:th)?\s*Semester/i', $name)) return 4;
+    if (preg_match('/5(?:th)?\s*Semester/i', $name)) return 5;
+    if (preg_match('/6(?:th)?\s*Semester/i', $name)) return 6;
+    if (preg_match('/7(?:th)?\s*Semester/i', $name)) return 7;
+    if (preg_match('/8(?:th)?\s*Semester/i', $name)) return 8;
+    if (preg_match('/\b([1-8])\b/', $name, $m)) return (int)$m[1];
+    return 99;
+}
+
+/**
+ * Calculate UGC Uniform Letter Grade, Grade Point, and Result Status from Marks (out of 100)
+ */
+function get_configured_grading_rules(): array {
+    static $cachedRules = null;
+    if ($cachedRules !== null) {
+        return $cachedRules;
+    }
+    try {
+        $db = getDb();
+        $stmt = $db->query("SELECT * FROM grading_rules WHERE is_active = 1 ORDER BY sort_order ASC, min_marks DESC");
+        $cachedRules = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    } catch (Exception $e) {
+        $cachedRules = [];
+    }
+    return $cachedRules ?: [];
+}
+
+function calculate_grade_from_marks(float $marks): array {
+    $marks = max(0.00, min(100.00, $marks));
+    $rules = get_configured_grading_rules();
+    if (!empty($rules)) {
+        foreach ($rules as $r) {
+            $min = (float)$r['min_marks'];
+            $max = (float)$r['max_marks'];
+            if ($marks >= $min && ($marks <= $max || ($max >= 99.0 && $marks <= 100.0))) {
+                $status = ($r['letter_grade'] === 'F' || (float)$r['grade_point'] <= 0.0) ? 'Fail' : 'Pass';
+                return [
+                    'letter_grade' => $r['letter_grade'],
+                    'grade_point'  => (float)$r['grade_point'],
+                    'status'       => $status,
+                    'remarks'      => $r['remarks'] ?? ($status === 'Pass' ? 'Pass' : 'Fail')
+                ];
+            }
+        }
+    }
+
+    if ($marks >= 80.00) {
+        return ['letter_grade' => 'A+', 'grade_point' => 4.00, 'status' => 'Pass', 'remarks' => 'Outstanding'];
+    } elseif ($marks >= 75.00) {
+        return ['letter_grade' => 'A',  'grade_point' => 3.75, 'status' => 'Pass', 'remarks' => 'Excellent'];
+    } elseif ($marks >= 70.00) {
+        return ['letter_grade' => 'A-', 'grade_point' => 3.50, 'status' => 'Pass', 'remarks' => 'Very Good'];
+    } elseif ($marks >= 65.00) {
+        return ['letter_grade' => 'B+', 'grade_point' => 3.25, 'status' => 'Pass', 'remarks' => 'Good'];
+    } elseif ($marks >= 60.00) {
+        return ['letter_grade' => 'B',  'grade_point' => 3.00, 'status' => 'Pass', 'remarks' => 'Satisfactory'];
+    } elseif ($marks >= 55.00) {
+        return ['letter_grade' => 'B-', 'grade_point' => 2.75, 'status' => 'Pass', 'remarks' => 'Above Average'];
+    } elseif ($marks >= 50.00) {
+        return ['letter_grade' => 'C+', 'grade_point' => 2.50, 'status' => 'Pass', 'remarks' => 'Average'];
+    } elseif ($marks >= 45.00) {
+        return ['letter_grade' => 'C',  'grade_point' => 2.25, 'status' => 'Pass', 'remarks' => 'Pass'];
+    } elseif ($marks >= 40.00) {
+        return ['letter_grade' => 'D',  'grade_point' => 2.00, 'status' => 'Pass', 'remarks' => 'Conditional Pass'];
+    } else {
+        return ['letter_grade' => 'F',  'grade_point' => 0.00, 'status' => 'Fail', 'remarks' => 'Fail'];
+    }
+}
+
+/**
+ * Recalculate credit-weighted CGPA & completed credits for a student and sync with database
+ */
+function recalculate_student_cgpa(int $studentId): array {
+    $db = getDb();
+    $stmt = $db->prepare("
+        SELECT 
+            COUNT(*) AS total_courses,
+            SUM(credit) AS total_registered_credits,
+            SUM(CASE WHEN grade_point >= 2.00 THEN credit ELSE 0 END) AS total_earned_credits,
+            SUM(credit * grade_point) AS total_grade_points
+        FROM student_results
+        WHERE student_id = ? AND is_published = 1
+    ");
+    $stmt->execute([$studentId]);
+    $stats = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $totalCourses = (int)($stats['total_courses'] ?? 0);
+    $totalRegCredits = (float)($stats['total_registered_credits'] ?? 0);
+    $totalEarnedCredits = (float)($stats['total_earned_credits'] ?? 0);
+    $totalGradePoints = (float)($stats['total_grade_points'] ?? 0);
+
+    $cgpa = ($totalCourses > 0 && $totalRegCredits > 0)
+        ? round($totalGradePoints / $totalRegCredits, 2)
+        : 0.00;
+
+    $upd = $db->prepare("UPDATE students SET cgpa = ?, credits_completed = ? WHERE id = ?");
+    $upd->execute([$cgpa, (int)$totalEarnedCredits, $studentId]);
+
+    if (function_exists('sync_student_semester_results')) {
+        sync_student_semester_results($studentId);
+    }
+
+    return [
+        'cgpa' => $cgpa,
+        'credits_completed' => (int)$totalEarnedCredits,
+        'total_registered_credits' => $totalRegCredits,
+        'total_grade_points' => $totalGradePoints,
+        'total_courses' => $totalCourses,
+    ];
+}
+
+/**
+ * Get comprehensive N-semester (2, 3, 4, or 8) breakdown and cumulative statistics for a student
+ */
+function get_student_academic_summary(int $studentId, bool $publishedOnly = true): array {
+    $db = getDb();
+    
+    // Fetch student profile
+    $stStmt = $db->prepare("
+        SELECT s.*, p.title_en AS program_name, p.slug AS program_slug, p.degree_level,
+               p.degree_type AS prog_degree_type, p.duration AS prog_duration,
+               p.duration_years AS prog_duration_years, p.total_semesters AS prog_total_semesters,
+               d.name_en AS department_name, f.name_en AS faculty_name
+        FROM students s
+        LEFT JOIN programs p ON s.program_id = p.id
+        LEFT JOIN departments d ON s.department_id = d.id
+        LEFT JOIN faculties f ON d.faculty_id = f.id
+        WHERE s.id = ?
+        LIMIT 1
+    ");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return [
+            'has_results' => false,
+            'results_hidden' => false,
+            'results_suspended' => false,
+            'student' => null,
+            'semesters' => [],
+            'semester_schedule' => [],
+            'program_structure' => ['total_semesters' => 8, 'degree_type' => 'Bachelor / Honours', 'duration_label' => '4 Years (8 Semesters)'],
+        ];
+    }
+
+    $progStructure = function_exists('get_student_program_structure')
+        ? get_student_program_structure($student)
+        : [
+            'degree_type' => $student['degree_type'] ?? 'Bachelor / Honours',
+            'duration_label' => $student['program_duration'] ?? ($student['prog_duration'] ?? '4 Years (8 Semesters)'),
+            'total_semesters' => (int)($student['total_semesters'] ?? ($student['prog_total_semesters'] ?? 8)),
+            'duration_years' => (float)($student['prog_duration_years'] ?? 4.0),
+        ];
+    $configuredSemesters = max(1, (int)($progStructure['total_semesters'] ?? 8));
+
+    $ordTitles = [
+        1 => '1st Semester', 2 => '2nd Semester', 3 => '3rd Semester', 4 => '4th Semester',
+        5 => '5th Semester', 6 => '6th Semester', 7 => '7th Semester', 8 => '8th Semester',
+    ];
+
+    $buildSchedule = function(array $bySemNum) use ($configuredSemesters, $ordTitles, $student) {
+        $sched = [];
+        for ($s = 1; $s <= $configuredSemesters; $s++) {
+            if (isset($bySemNum[$s])) {
+                $semInfo = $bySemNum[$s];
+                $sched[$s] = [
+                    'semester_number'    => $s,
+                    'semester_name'      => $semInfo['semester_name'],
+                    'short_name'         => $ordTitles[$s] ?? "Semester {$s}",
+                    'completion_status'  => 'Completed',
+                    'sgpa'               => $semInfo['sgpa'],
+                    'registered_credits' => $semInfo['registered_credits'],
+                    'earned_credits'     => $semInfo['earned_credits'],
+                    'is_estimated'       => $semInfo['is_estimated'],
+                    'academic_session'   => $semInfo['academic_session'] ?? ($student['academic_session'] ?? ($student['batch'] ?? '')),
+                ];
+            } else {
+                $sched[$s] = [
+                    'semester_number'    => $s,
+                    'semester_name'      => $ordTitles[$s] ?? "Semester {$s}",
+                    'short_name'         => $ordTitles[$s] ?? "Semester {$s}",
+                    'completion_status'  => 'Pending',
+                    'sgpa'               => 0.00,
+                    'registered_credits' => 0.0,
+                    'earned_credits'     => 0.0,
+                    'is_estimated'       => false,
+                    'academic_session'   => $student['academic_session'] ?? ($student['batch'] ?? ''),
+                ];
+            }
+        }
+        return $sched;
+    };
+
+    $resultsVisible = !isset($student['results_visible']) || (int)$student['results_visible'] === 1;
+    $resultsSuspended = isset($student['result_access_status']) && $student['result_access_status'] === 'Suspended';
+
+    // When Student Portal (publishedOnly) is active and result access is Suspended, strictly conceal all results
+    if ($publishedOnly && $resultsSuspended) {
+        return [
+            'has_results' => false,
+            'results_hidden' => false,
+            'results_visible' => $resultsVisible ? 1 : 0,
+            'results_hidden_reason' => $student['results_hidden_reason'] ?? '',
+            'results_suspended' => true,
+            'results_suspended_reason' => $student['result_suspended_reason'] ?? 'Your result access has been temporarily suspended by the university administration.',
+            'student' => $student,
+            'program_structure' => $progStructure,
+            'semesters' => [],
+            'semester_gpas' => [],
+            'semester_schedule' => [],
+            'final_cgpa' => 0.00,
+            'total_registered_credits' => 0.0,
+            'total_earned_credits' => 0.0,
+            'total_grade_points' => 0.0,
+            'has_estimated_results' => false,
+            'disclaimer_label' => '',
+        ];
+    }
+
+    // When Student Portal (publishedOnly) is active and admin hid results, hide output without touching DB data
+    if ($publishedOnly && !$resultsVisible) {
+        return [
+            'has_results' => false,
+            'results_hidden' => true,
+            'results_visible' => 0,
+            'results_hidden_reason' => $student['results_hidden_reason'] ?? '',
+            'results_suspended' => false,
+            'results_suspended_reason' => '',
+            'student' => $student,
+            'program_structure' => $progStructure,
+            'semesters' => [],
+            'semester_gpas' => [],
+            'semester_schedule' => [],
+            'final_cgpa' => 0.00,
+            'total_registered_credits' => 0.0,
+            'total_earned_credits' => 0.0,
+            'total_grade_points' => 0.0,
+            'has_estimated_results' => false,
+            'disclaimer_label' => '',
+        ];
+    }
+
+    $sql = "SELECT * FROM student_results WHERE student_id = ?";
+    if ($publishedOnly) {
+        $sql .= " AND is_published = 1";
+    }
+    $sql .= " ORDER BY id ASC";
+
+    $rStmt = $db->prepare($sql);
+    $rStmt->execute([$studentId]);
+    $allResults = $rStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($allResults)) {
+        return [
+            'has_results' => false,
+            'results_hidden' => !$resultsVisible,
+            'results_visible' => $resultsVisible ? 1 : 0,
+            'results_hidden_reason' => $student['results_hidden_reason'] ?? '',
+            'results_suspended' => $resultsSuspended,
+            'results_suspended_reason' => $student['result_suspended_reason'] ?? '',
+            'student' => $student,
+            'program_structure' => $progStructure,
+            'semesters' => [],
+            'semester_gpas' => [],
+            'semester_schedule' => $buildSchedule([]),
+            'final_cgpa' => 0.00,
+            'total_registered_credits' => 0.0,
+            'total_earned_credits' => 0.0,
+            'total_grade_points' => 0.0,
+            'has_estimated_results' => false,
+            'disclaimer_label' => '',
+        ];
+    }
+
+    // Group by semester
+    $grouped = [];
+    foreach ($allResults as $res) {
+        $semKey = trim($res['semester']);
+        $grouped[$semKey][] = $res;
+    }
+
+    // Sort chronologically 1 to N
+    uksort($grouped, function($a, $b) {
+        return get_semester_number($a) <=> get_semester_number($b);
+    });
+
+    $runningRegCredits = 0.0;
+    $runningEarnedCredits = 0.0;
+    $runningGradePoints = 0.0;
+    $semestersData = [];
+    $semesterGpas = [];
+    $bySemNum = [];
+    $hasAnyEstimated = false;
+
+    foreach ($grouped as $semName => $coursesList) {
+        $semNum = get_semester_number($semName);
+        $semRegCr = 0.0;
+        $semEarnedCr = 0.0;
+        $semPts = 0.0;
+        $processedCourses = [];
+        $hasFailedCourse = false;
+        $semHasEstimated = false;
+        $semSession = $student['academic_session'] ?? ($student['batch'] ?? '');
+
+        foreach ($coursesList as $c) {
+            $cr = (float)$c['credit'];
+            $obtainedMarks = isset($c['marks']) && $c['marks'] !== null ? (float)$c['marks'] : null;
+            $fullMarks = isset($c['full_marks']) ? (int)$c['full_marks'] : 100;
+            $gp = (float)$c['grade_point'];
+            $grade = trim($c['letter_grade']);
+            $ptsSecured = round($cr * $gp, 2);
+            $status = ($gp >= 2.00) ? 'Pass' : 'Fail';
+            $isEst = !empty($c['is_estimated']);
+            if ($isEst) {
+                $semHasEstimated = true;
+                $hasAnyEstimated = true;
+            }
+            if (!empty($c['academic_session'])) {
+                $semSession = $c['academic_session'];
+            }
+
+            if ($status === 'Fail') {
+                $hasFailedCourse = true;
+            }
+
+            $semRegCr += $cr;
+            if ($status === 'Pass') {
+                $semEarnedCr += $cr;
+            }
+            $semPts += $ptsSecured;
+
+            $processedCourses[] = [
+                'id' => (int)$c['id'],
+                'course_code' => $c['course_code'],
+                'course_name' => $c['course_name'],
+                'credit' => $cr,
+                'full_marks' => $fullMarks,
+                'marks' => $obtainedMarks,
+                'letter_grade' => $grade,
+                'grade_point' => $gp,
+                'points_secured' => $ptsSecured,
+                'status' => $status,
+                'exam_term' => $c['exam_term'],
+                'academic_session' => $c['academic_session'] ?? $semSession,
+                'publication_date' => $c['publication_date'] ?? null,
+                'is_published' => (bool)$c['is_published'],
+                'is_estimated' => $isEst,
+                'result_type' => $c['result_type'] ?? ($isEst ? 'Estimated' : 'Verified'),
+                'correction_reason' => $c['correction_reason'] ?? '',
+            ];
+        }
+
+        $sgpa = ($semRegCr > 0) ? round($semPts / $semRegCr, 2) : 0.00;
+        $semResultStatus = $hasFailedCourse ? 'PROMOTED (WITH CARRY)' : 'PASSED';
+
+        $runningRegCredits += $semRegCr;
+        $runningEarnedCredits += $semEarnedCr;
+        $runningGradePoints += $semPts;
+        $runningCgpa = ($runningRegCredits > 0) ? round($runningGradePoints / $runningRegCredits, 2) : 0.00;
+
+        $semEntry = [
+            'semester_number' => $semNum,
+            'semester_name' => $semName,
+            'academic_session' => $semSession,
+            'courses' => $processedCourses,
+            'registered_credits' => $semRegCr,
+            'earned_credits' => $semEarnedCr,
+            'semester_points' => $semPts,
+            'sgpa' => $sgpa,
+            'status' => $semResultStatus,
+            'cumulative_reg_credits' => $runningRegCredits,
+            'cumulative_earned_credits' => $runningEarnedCredits,
+            'cumulative_points' => $runningGradePoints,
+            'cumulative_cgpa' => $runningCgpa,
+            'is_estimated' => $semHasEstimated,
+        ];
+
+        $semestersData[$semName] = $semEntry;
+        $semesterGpas[$semNum] = $sgpa;
+        if ($semNum >= 1 && $semNum <= 8) {
+            $bySemNum[$semNum] = $semEntry;
+        }
+    }
+
+    $finalCgpa = ($runningRegCredits > 0) ? round($runningGradePoints / $runningRegCredits, 2) : 0.00;
+
+    return [
+        'has_results' => true,
+        'results_hidden' => !$resultsVisible,
+        'results_visible' => $resultsVisible ? 1 : 0,
+        'results_hidden_reason' => $student['results_hidden_reason'] ?? '',
+        'results_suspended' => $resultsSuspended,
+        'results_suspended_reason' => $student['result_suspended_reason'] ?? '',
+        'student' => $student,
+        'program_structure' => $progStructure,
+        'semesters' => $semestersData,
+        'semester_gpas' => $semesterGpas,
+        'semester_schedule' => $buildSchedule($bySemNum),
+        'final_cgpa' => $finalCgpa,
+        'total_registered_credits' => $runningRegCredits,
+        'total_earned_credits' => $runningEarnedCredits,
+        'total_grade_points' => $runningGradePoints,
+        'has_estimated_results' => $hasAnyEstimated,
+        'disclaimer_label' => $hasAnyEstimated ? 'ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT' : '',
+    ];
+}
+
+function get_student_avatar_url(?array $student): string {
+    if (!empty($student['avatar'])) {
+        $avatarFile = $student['avatar'];
+        $filePath = BASE_PATH . '/storage/uploads/students/' . $avatarFile;
+        if (file_exists($filePath)) {
+            return APP_URL . '/storage/uploads/students/' . $avatarFile;
+        }
+    }
+    return APP_URL . '/assets/images/default-student.svg';
+}
+
+function get_admission_photo_url(?string $photoFilename): string {
+    if (!empty($photoFilename)) {
+        $path = BASE_PATH . '/storage/uploads/students/' . $photoFilename;
+        if (file_exists($path)) {
+            return APP_URL . '/storage/uploads/students/' . $photoFilename;
+        }
+    }
+    return APP_URL . '/assets/images/default-student.svg';
+}
+
+function get_payment_screenshot_url(?string $filename): ?string {
+    if (!empty($filename)) {
+        $path = BASE_PATH . '/storage/uploads/payments/' . $filename;
+        if (file_exists($path)) {
+            return APP_URL . '/storage/uploads/payments/' . $filename;
+        }
+        $path2 = BASE_PATH . '/storage/uploads/' . $filename;
+        if (file_exists($path2)) {
+            return APP_URL . '/storage/uploads/' . $filename;
+        }
+    }
+    return null;
+}
+
+/**
+ * Generate next sequential Student ID for Fall 2026 intake
+ */
+function generate_next_student_id(PDO $db): string {
+    $stmt = $db->query("
+        SELECT MAX(CAST(SUBSTRING(student_id, 4) AS UNSIGNED))
+        FROM students
+        WHERE student_id REGEXP '^RMU26[0-9]{5}$'
+    ");
+    $maxNum = (int)$stmt->fetchColumn();
+    $next = ($maxNum >= 2601004) ? ($maxNum + 1) : 2601004;
+
+    $chkStudent = $db->prepare("SELECT COUNT(*) FROM students WHERE student_id = ?");
+    $chkAdm = $db->prepare("SELECT COUNT(*) FROM admissions WHERE student_id = ?");
+    while (true) {
+        $candidate = 'RMU' . $next;
+        $chkStudent->execute([$candidate]);
+        $chkAdm->execute([$candidate]);
+        if ((int)$chkStudent->fetchColumn() === 0 && (int)$chkAdm->fetchColumn() === 0) {
+            return $candidate;
+        }
+        $next++;
+    }
+}
+
+/**
+ * Generate memorable initial password for Student Portal
+ */
+function generate_initial_student_password(): string {
+    return 'rmu' . rand(1000, 9999);
+}
+
+/**
+ * Provision new Student account and enrolled courses upon ৳150 Admission Fee Payment
+ */
+function provision_student_from_admission(int $admissionId): ?array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT * FROM admissions WHERE id = ?");
+    $stmt->execute([$admissionId]);
+    $adm = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$adm) return null;
+
+    if (!empty($adm['student_id']) && !empty($adm['portal_password'])) {
+        $studentId = $adm['student_id'];
+        $plainPassword = $adm['portal_password'];
+        $examRoll = !empty($adm['roll_number']) ? trim((string)$adm['roll_number']) : ($adm['exam_roll'] ?? ('ADM-' . substr($studentId, -5)));
+    } else {
+        $studentId = generate_next_student_id($db);
+        $plainPassword = generate_initial_student_password();
+        $examRoll = !empty($adm['roll_number']) ? trim((string)$adm['roll_number']) : ('ADM-' . substr($studentId, -5));
+
+        $upd = $db->prepare("UPDATE admissions SET student_id = ?, portal_password = ?, exam_roll = COALESCE(NULLIF(TRIM(exam_roll), ''), ?) WHERE id = ?");
+        $upd->execute([$studentId, $plainPassword, $examRoll, $admissionId]);
+    }
+
+    // Check if student already created in students table
+    $chk = $db->prepare("SELECT id FROM students WHERE student_id = ?");
+    $chk->execute([$studentId]);
+    $existingStudentId = $chk->fetchColumn();
+
+    if (!$existingStudentId) {
+        $subject = $adm['interested_subject'] ?? '';
+        $prog = null;
+        if (!empty($adm['program_id'])) {
+            $pStmt = $db->prepare("SELECT id, department_id, title_en, degree_type, duration, duration_years, total_semesters, total_credits FROM programs WHERE id = ? LIMIT 1");
+            $pStmt->execute([$adm['program_id']]);
+            $prog = $pStmt->fetch(PDO::FETCH_ASSOC);
+        }
+        if (!$prog && !empty($subject)) {
+            $progStmt = $db->prepare("SELECT id, department_id, title_en, degree_type, duration, duration_years, total_semesters, total_credits FROM programs WHERE title_en = ? OR title_en LIKE ? LIMIT 1");
+            $progStmt->execute([$subject, "%$subject%"]);
+            $prog = $progStmt->fetch(PDO::FETCH_ASSOC);
+        }
+
+        $programId = $prog ? (int)$prog['id'] : (!empty($adm['program_id']) ? (int)$adm['program_id'] : 1);
+        $departmentId = $prog ? (int)$prog['department_id'] : (!empty($adm['department_id']) ? (int)$adm['department_id'] : 6);
+        $progStruct = get_program_academic_structure($programId);
+        $degreeType = !empty($adm['degree_type']) ? trim((string)$adm['degree_type']) : $progStruct['degree_type'];
+        $progDuration = $progStruct['duration_label'];
+        $totalSemesters = (int)$progStruct['total_semesters'];
+        $totalReqCredits = (int)($progStruct['total_credits'] ?? 140);
+
+        $session = !empty($adm['academic_session']) ? trim((string)$adm['academic_session']) : 'Fall 2026';
+        $passingYear = !empty($adm['passing_year']) ? trim((string)$adm['passing_year']) : (!empty($adm['hsc_year']) ? trim((string)$adm['hsc_year']) : null);
+        $fatherName = $adm['father_name'] ?? null;
+        $motherName = $adm['mother_name'] ?? null;
+        $dob = !empty($adm['date_of_birth']) ? $adm['date_of_birth'] : null;
+        $gender = !empty($adm['gender']) ? $adm['gender'] : 'Male';
+        $presentAddr = $adm['present_address'] ?? null;
+        $permAddr = $adm['permanent_address'] ?? null;
+
+        $email = !empty($adm['email']) ? $adm['email'] : (strtolower($studentId) . '@student.rmu.ac.bd');
+        $emailChk = $db->prepare("SELECT id FROM students WHERE email = ?");
+        $emailChk->execute([$email]);
+        if ($emailChk->fetchColumn()) {
+            $email = strtolower($studentId) . '@student.rmu.ac.bd';
+        }
+
+        $passwordHash = password_hash($plainPassword, PASSWORD_DEFAULT);
+        $avatar = !empty($adm['photo']) ? $adm['photo'] : null;
+        $appNumber = !empty($adm['application_id']) ? trim((string)$adm['application_id']) : (!empty($adm['application_ref']) ? $adm['application_ref'] : null);
+
+        $insStudent = $db->prepare("
+            INSERT INTO students (
+                student_id, roll_number, application_number, username,
+                full_name, father_name, mother_name, email, phone, password_hash,
+                program_id, degree_type, department_id, batch, academic_session, program_duration, total_semesters,
+                current_year, current_semester, cgpa, results_visible, result_status, result_access_status,
+                credits_completed, total_credits_required, dob, gender, home_district, passing_year,
+                present_address, permanent_address, status, session_version, avatar
+            ) VALUES (
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
+                '1st Year', '1st Semester', 0.00, 1, 'Pending', 'Active',
+                0, ?, ?, ?, ?, ?,
+                ?, ?, 'Active', 1, ?
+            )
+        ");
+        $insStudent->execute([
+            $studentId, $examRoll, $appNumber, $studentId,
+            $adm['full_name'], $fatherName, $motherName, $email, $adm['mobile'], $passwordHash,
+            $programId, $degreeType, $departmentId, $session, $session, $progDuration, $totalSemesters,
+            $totalReqCredits, $dob, $gender, $adm['home_district'], $passingYear,
+            $presentAddr, $permAddr, $avatar
+        ]);
+        $newStudentPk = (int)$db->lastInsertId();
+
+        if (function_exists('sync_student_semester_results')) {
+            sync_student_semester_results($newStudentPk);
+        }
+
+        // Send Welcome & ID Generation notification to student
+        create_student_notification(
+            $newStudentPk,
+            "Admission Accepted — Welcome to RMU!",
+            "Congratulations! Your admission application has been approved. Your official Student ID is {$studentId}. You can now view your enrolled courses, fee invoices, and academic results.",
+            'general'
+        );
+
+        // Seed 4 sample 1st-semester courses from program curriculum (or fallback)
+        $curr = function_exists('get_program_semester_curriculum') ? get_program_semester_curriculum($programId, $totalSemesters) : [];
+        $sem1Curr = $curr[1] ?? [];
+        if (count($sem1Curr) >= 4) {
+            $courses = [];
+            foreach (array_slice($sem1Curr, 0, 4) as $ci => $cc) {
+                $courses[] = [$cc['code'], $cc['name'], (float)($cc['credit'] ?? 3.0), 'RMU Faculty Instructor', 'Sun & Tue 10:00 AM', 'Room ' . (301 + $ci)];
+            }
+        } else {
+            $courses = [
+                ['CSE 101', 'Introduction to Computer Science & Problem Solving', 3.0, 'Prof. Dr. M. A. Rahman', 'Sun & Tue 10:00 AM', 'Room 301'],
+                ['CSE 102', 'Structured Programming Language (C)', 3.0, 'Engr. Tareq Ahmed', 'Mon & Wed 11:30 AM', 'Lab 2'],
+                ['MAT 101', 'Differential and Integral Calculus', 3.0, 'Dr. Shamsul Huda', 'Sun & Wed 02:00 PM', 'Room 205'],
+                ['ENG 101', 'English Reading and Composition Skills', 3.0, 'Ms. Sabrina Akter', 'Mon & Thu 03:30 PM', 'Room 304']
+            ];
+        }
+        $insCourse = $db->prepare("
+            INSERT INTO student_courses (
+                student_id, course_code, course_name, credit,
+                instructor_name, class_schedule, room_no, attendance_percent, semester, status
+            ) VALUES (
+                ?, ?, ?, ?,
+                ?, ?, ?, 90, '1st Semester', 'Enrolled'
+            )
+        ");
+        foreach ($courses as $c) {
+            $insCourse->execute([
+                $newStudentPk, $c[0], $c[1], $c[2], $c[3], $c[4], $c[5]
+            ]);
+        }
+    }
+
+    return [
+        'student_id'      => $studentId,
+        'portal_password' => $plainPassword,
+        'exam_roll'       => $examRoll
+    ];
+}
+
+/**
+ * Result Management & Student Notifications Helpers
+ */
+function create_student_notification(int $studentId, string $title, string $message, string $type = 'result_published', ?int $relatedId = null): bool {
+    try {
+        $db = getDb();
+        $stmt = $db->prepare("
+            INSERT INTO student_notifications (student_id, title, message, type, related_id)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        return $stmt->execute([$studentId, $title, $message, $type, $relatedId]);
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function get_student_notifications(int $studentId, bool $unreadOnly = false, int $limit = 10): array {
+    try {
+        $db = getDb();
+        $visStmt = $db->prepare("SELECT COALESCE(results_visible, 1) AS results_visible, COALESCE(result_access_status, 'Active') AS result_access_status FROM students WHERE id = ? LIMIT 1");
+        $visStmt->execute([$studentId]);
+        $stFlags = $visStmt->fetch(PDO::FETCH_ASSOC) ?: ['results_visible' => 1, 'result_access_status' => 'Active'];
+        $resultsVisible = (int)$stFlags['results_visible'];
+        $resultsSuspended = ($stFlags['result_access_status'] === 'Suspended');
+
+        $pubStmt = $db->prepare("SELECT COUNT(*) FROM student_results WHERE student_id = ? AND is_published = 1");
+        $pubStmt->execute([$studentId]);
+        $publishedCount = (int)$pubStmt->fetchColumn();
+
+        $sql = "SELECT * FROM student_notifications WHERE student_id = ?";
+        if ($resultsVisible === 0 || $resultsSuspended || $publishedCount === 0) {
+            $sql .= " AND type NOT IN ('result_published', 'grade_correction', 'result')";
+        }
+        if ($unreadOnly) {
+            $sql .= " AND is_read = 0";
+        }
+        $sql .= " ORDER BY id DESC LIMIT " . (int)$limit;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$studentId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+function get_student_unread_notifications_count(int $studentId): int {
+    try {
+        $db = getDb();
+        $visStmt = $db->prepare("SELECT COALESCE(results_visible, 1) AS results_visible, COALESCE(result_access_status, 'Active') AS result_access_status FROM students WHERE id = ? LIMIT 1");
+        $visStmt->execute([$studentId]);
+        $stFlags = $visStmt->fetch(PDO::FETCH_ASSOC) ?: ['results_visible' => 1, 'result_access_status' => 'Active'];
+        $resultsVisible = (int)$stFlags['results_visible'];
+        $resultsSuspended = ($stFlags['result_access_status'] === 'Suspended');
+
+        $pubStmt = $db->prepare("SELECT COUNT(*) FROM student_results WHERE student_id = ? AND is_published = 1");
+        $pubStmt->execute([$studentId]);
+        $publishedCount = (int)$pubStmt->fetchColumn();
+
+        $sql = "SELECT COUNT(*) FROM student_notifications WHERE student_id = ? AND is_read = 0";
+        if ($resultsVisible === 0 || $resultsSuspended || $publishedCount === 0) {
+            $sql .= " AND type NOT IN ('result_published', 'grade_correction', 'result')";
+        }
+        $stmt = $db->prepare($sql);
+        $stmt->execute([$studentId]);
+        return (int)$stmt->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+function mark_student_notifications_read(int $studentId, ?int $notificationId = null): bool {
+    try {
+        $db = getDb();
+        if ($notificationId !== null) {
+            $stmt = $db->prepare("UPDATE student_notifications SET is_read = 1 WHERE id = ? AND student_id = ?");
+            return $stmt->execute([$notificationId, $studentId]);
+        } else {
+            $stmt = $db->prepare("UPDATE student_notifications SET is_read = 1 WHERE student_id = ?");
+            return $stmt->execute([$studentId]);
+        }
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function log_result_modification(?int $resultId, int $studentId, int $adminId, string $courseCode, string $semester, string $fieldName, ?string $oldValue, string $newValue, string $reason): bool {
+    try {
+        $db = getDb();
+        $stmt = $db->prepare("
+            INSERT INTO result_modification_history 
+            (result_id, student_id, admin_id, course_code, semester, field_name, old_value, new_value, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        return $stmt->execute([$resultId, $studentId, $adminId, $courseCode, $semester, $fieldName, $oldValue, $newValue, $reason]);
+    } catch (Exception $e) {
+        return false;
+    }
+}
+
+function get_pending_result_requests_count(): int {
+    try {
+        $db = getDb();
+        return (int)$db->query("SELECT COUNT(*) FROM result_requests WHERE status = 'Pending'")->fetchColumn();
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+/**
+ * ========================================================
+ * ONE-CLICK CGPA UPDATE & ESTIMATED RESULT GENERATOR ENGINE
+ * ========================================================
+ */
+
+/**
+ * Resolve degree type, duration label, duration years, total semesters, and per-semester credit caps for a program.
+ * - Bachelor / Honours: 4 Years / 8 Semesters
+ * - B.Ed: Default 1 Year / 2 Semesters (Admin-configurable to 3 Semesters)
+ * - Master's: Admin-configurable 1 Year / 2 Semesters, 1.5 Years / 3 Semesters, or 2 Years / 4 Semesters
+ */
+function get_program_academic_structure(int $programId, ?int $overrideSemesters = null): array {
+    $db = getDb();
+    $progStmt = $db->prepare("
+        SELECT p.*, d.name_en AS dept_name, d.slug AS dept_slug, d.code AS dept_code
+        FROM programs p
+        LEFT JOIN departments d ON p.department_id = d.id
+        WHERE p.id = ?
+        LIMIT 1
+    ");
+    $progStmt->execute([$programId]);
+    $prog = $progStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $slug = strtolower((string)($prog['slug'] ?? ''));
+    $degreeLevel = trim((string)($prog['degree_level'] ?? 'Undergraduate'));
+    $rawType = trim((string)($prog['degree_type'] ?? ''));
+
+    if ($rawType === '') {
+        if ($slug === 'b-ed' || stripos((string)($prog['title_en'] ?? ''), 'b.ed') !== false) {
+            $degreeType = 'B.Ed';
+        } elseif (strtolower($degreeLevel) === 'postgraduate') {
+            $degreeType = "Master's";
+        } else {
+            $degreeType = 'Bachelor / Honours';
+        }
+    } else {
+        $degreeType = $rawType;
+    }
+
+    if ($overrideSemesters !== null && $overrideSemesters > 0) {
+        $totalSemesters = $overrideSemesters;
+    } elseif (!empty($prog['total_semesters'])) {
+        $totalSemesters = (int)$prog['total_semesters'];
+    } elseif ($degreeType === 'B.Ed') {
+        $totalSemesters = 2;
+    } elseif ($degreeType === "Master's" || strtolower($degreeLevel) === 'postgraduate') {
+        $totalSemesters = 4;
+    } else {
+        $totalSemesters = 8;
+    }
+
+    if ($degreeType === 'B.Ed') {
+        $totalSemesters = max(2, min(3, $totalSemesters));
+    } elseif ($degreeType === "Master's") {
+        $totalSemesters = max(2, min(4, $totalSemesters));
+    } else {
+        $totalSemesters = 8;
+    }
+
+    if ($overrideSemesters !== null && $overrideSemesters > 0) {
+        if ($degreeType === 'B.Ed') {
+            $durationYears = ($totalSemesters === 3) ? 1.5 : 1.0;
+        } elseif ($degreeType === "Master's") {
+            $durationYears = ($totalSemesters === 4) ? 2.0 : (($totalSemesters === 3) ? 1.5 : 1.0);
+        } else {
+            $durationYears = 4.0;
+        }
+    } elseif (isset($prog['duration_years']) && (float)$prog['duration_years'] > 0) {
+        $durationYears = (float)$prog['duration_years'];
+    } else {
+        $durationYears = ($totalSemesters === 8 ? 4.0 : ($totalSemesters === 3 ? 1.5 : ($totalSemesters === 4 ? 2.0 : 1.0)));
+    }
+
+    $yearsStr = ($durationYears == floor($durationYears))
+        ? ((int)$durationYears . ((int)$durationYears === 1 ? ' Year' : ' Years'))
+        : (number_format($durationYears, 1) . ' Years');
+
+    $durationLabel = (!empty($prog['duration']) && $overrideSemesters === null)
+        ? trim((string)$prog['duration'])
+        : "{$yearsStr} ({$totalSemesters} Semesters)";
+
+    $semesterCredits = [];
+    if (!empty($prog['semester_credits_json'])) {
+        $decoded = json_decode((string)$prog['semester_credits_json'], true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $k => $v) {
+                $sNum = (int)$k;
+                if ($sNum >= 1 && $sNum <= $totalSemesters && (float)$v > 0) {
+                    $semesterCredits[$sNum] = (float)$v;
+                }
+            }
+        }
+    }
+
+    return [
+        'program'          => $prog,
+        'program_id'       => $programId,
+        'program_title'    => $prog['title_en'] ?? 'Program',
+        'program_slug'     => $slug,
+        'dept_name'        => $prog['dept_name'] ?? '',
+        'degree_level'     => $degreeLevel,
+        'degree_type'      => $degreeType,
+        'duration_years'   => $durationYears,
+        'duration_label'   => $durationLabel,
+        'total_semesters'  => $totalSemesters,
+        'total_credits'    => (int)($prog['total_credits'] ?? ($totalSemesters * 15)),
+        'semester_credits' => $semesterCredits,
+    ];
+}
+
+function get_student_program_structure(array $student, ?int $overrideSemesters = null): array {
+    $programId = (int)($student['program_id'] ?? 1);
+    $struct = get_program_academic_structure($programId, $overrideSemesters);
+
+    if ($overrideSemesters === null && !empty($student['total_semesters'])) {
+        $stSem = (int)$student['total_semesters'];
+        if ($struct['degree_type'] === 'B.Ed' && in_array($stSem, [2, 3], true)) {
+            $struct['total_semesters'] = $stSem;
+            $struct['duration_years'] = ($stSem === 3) ? 1.5 : 1.0;
+        } elseif ($struct['degree_type'] === "Master's" && in_array($stSem, [2, 3, 4], true)) {
+            $struct['total_semesters'] = $stSem;
+            $struct['duration_years'] = ($stSem === 4) ? 2.0 : (($stSem === 3) ? 1.5 : 1.0);
+        } elseif ($struct['degree_type'] === 'Bachelor / Honours') {
+            $struct['total_semesters'] = 8;
+        }
+    }
+
+    if ($programId <= 0 && !empty($student['degree_type'])) {
+        $struct['degree_type'] = $student['degree_type'];
+    }
+    if (!empty($student['program_duration']) && !empty($struct['program']) && $struct['total_semesters'] === (int)($struct['program']['total_semesters'] ?? $struct['total_semesters'])) {
+        $struct['duration_label'] = $student['program_duration'];
+    } else {
+        $yearsVal = $struct['duration_years'];
+        $yearsStr = ($yearsVal == floor($yearsVal))
+            ? ((int)$yearsVal . ((int)$yearsVal === 1 ? ' Year' : ' Years'))
+            : (number_format($yearsVal, 1) . ' Years');
+        $struct['duration_label'] = "{$yearsStr} ({$struct['total_semesters']} Semesters)";
+    }
+
+    return $struct;
+}
+
+/**
+ * Application Acceptance Gate:
+ * Only online applications Accepted by the Admin may proceed to Result Management.
+ * Directly admin-enrolled students without a linked admission record remain permitted.
+ */
+function can_manage_student_results(int $studentId): array {
+    $db = getDb();
+    $stStmt = $db->prepare("SELECT id, student_id, application_number, status FROM students WHERE id = ? LIMIT 1");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['allowed' => false, 'reason' => 'Student record not found.', 'admission' => null];
+    }
+    if ($student['status'] === 'Deleted') {
+        return ['allowed' => false, 'reason' => 'This student account has been permanently deleted.', 'admission' => null];
+    }
+
+    $adm = null;
+    $appNo = trim((string)($student['application_number'] ?? ''));
+    if ($appNo !== '') {
+        $admStmt = $db->prepare("
+            SELECT id, application_ref, application_id, status
+            FROM admissions
+            WHERE student_id = ? OR application_ref = ? OR application_id = ?
+            ORDER BY FIELD(status, 'Accepted', 'Under Review', 'Pending', 'Submitted', 'Additional Information Required', 'Rejected'), id DESC
+            LIMIT 1
+        ");
+        $admStmt->execute([$student['student_id'], $appNo, $appNo]);
+        $adm = $admStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    } else {
+        $admStmt = $db->prepare("
+            SELECT id, application_ref, application_id, status
+            FROM admissions
+            WHERE student_id = ?
+            ORDER BY FIELD(status, 'Accepted', 'Under Review', 'Pending', 'Submitted', 'Additional Information Required', 'Rejected'), id DESC
+            LIMIT 1
+        ");
+        $admStmt->execute([$student['student_id']]);
+        $adm = $admStmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+
+    if ($adm && $adm['status'] !== 'Accepted') {
+        return [
+            'allowed' => false,
+            'reason'  => "Only accepted applications can proceed to Result Management. Linked Application ({$adm['application_ref']}) is currently '{$adm['status']}'.",
+            'admission' => $adm,
+        ];
+    }
+
+    return ['allowed' => true, 'reason' => '', 'admission' => $adm];
+}
+
+/**
+ * Map a valid UGC Grade Point to realistic marks and official letter grade
+ */
+function grade_point_to_sample_marks(float $gp): array {
+    if ($gp >= 4.00) {
+        return ['marks' => round(80.0 + (mt_rand(0, 120) / 10.0), 1), 'letter_grade' => 'A+'];
+    } elseif ($gp >= 3.75) {
+        return ['marks' => round(75.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'A'];
+    } elseif ($gp >= 3.50) {
+        return ['marks' => round(70.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'A-'];
+    } elseif ($gp >= 3.25) {
+        return ['marks' => round(65.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'B+'];
+    } elseif ($gp >= 3.00) {
+        return ['marks' => round(60.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'B'];
+    } elseif ($gp >= 2.75) {
+        return ['marks' => round(55.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'B-'];
+    } elseif ($gp >= 2.50) {
+        return ['marks' => round(50.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'C+'];
+    } elseif ($gp >= 2.25) {
+        return ['marks' => round(45.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'C'];
+    } else {
+        return ['marks' => round(40.0 + (mt_rand(0, 45) / 10.0), 1), 'letter_grade' => 'D'];
+    }
+}
+
+/**
+ * Synchronize student_semester_results & students.result_status for a student without modifying result rows
+ */
+function sync_student_semester_results(int $studentId): void {
+    try {
+        $db = getDb();
+        $stStmt = $db->prepare("SELECT * FROM students WHERE id = ? LIMIT 1");
+        $stStmt->execute([$studentId]);
+        $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$student) {
+            return;
+        }
+
+        $struct = get_student_program_structure($student);
+        $totalSemesters = max(1, (int)$struct['total_semesters']);
+
+        $ordTitles = [
+            1 => '1st Semester', 2 => '2nd Semester', 3 => '3rd Semester', 4 => '4th Semester',
+            5 => '5th Semester', 6 => '6th Semester', 7 => '7th Semester', 8 => '8th Semester',
+        ];
+
+        $resStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY id ASC");
+        $resStmt->execute([$studentId]);
+        $rows = $resStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $bySem = [];
+        $hasPublished = false;
+        $hasEstimated = false;
+        $hasVerified = false;
+        foreach ($rows as $r) {
+            $sNum = get_semester_number((string)$r['semester']);
+            if ($sNum < 1 || $sNum > $totalSemesters) {
+                $sNum = min($totalSemesters, max(1, $sNum));
+            }
+            $bySem[$sNum][] = $r;
+            if (!empty($r['is_published'])) $hasPublished = true;
+            if (!empty($r['is_estimated'])) $hasEstimated = true;
+            else $hasVerified = true;
+        }
+
+        // Remove stale extra semesters if program duration changed
+        $db->prepare("DELETE FROM student_semester_results WHERE student_id = ? AND (semester_number < 1 OR semester_number > ?)")
+           ->execute([$studentId, $totalSemesters]);
+
+        $upStmt = $db->prepare("
+            INSERT INTO student_semester_results (
+                student_id, semester_number, semester_name, academic_session,
+                credit_hours, semester_gpa, completion_status, result_type, is_published, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                semester_name = VALUES(semester_name),
+                academic_session = VALUES(academic_session),
+                credit_hours = VALUES(credit_hours),
+                semester_gpa = VALUES(semester_gpa),
+                completion_status = VALUES(completion_status),
+                result_type = VALUES(result_type),
+                is_published = VALUES(is_published),
+                published_at = VALUES(published_at)
+        ");
+
+        $defaultSession = !empty($student['academic_session']) ? $student['academic_session'] : ($student['batch'] ?? 'Fall 2026');
+
+        for ($s = 1; $s <= $totalSemesters; $s++) {
+            $semRows = $bySem[$s] ?? [];
+            $semTitle = $ordTitles[$s] ?? "Semester {$s}";
+            if (!empty($semRows)) {
+                $crSum = 0.0;
+                $ptSum = 0.0;
+                $semPub = 0;
+                $semEst = false;
+                $semPubAt = null;
+                $semSess = $defaultSession;
+                foreach ($semRows as $sr) {
+                    $cCr = (float)$sr['credit'];
+                    $crSum += $cCr;
+                    $ptSum += ($cCr * (float)$sr['grade_point']);
+                    if (!empty($sr['is_published'])) $semPub = 1;
+                    if (!empty($sr['is_estimated'])) $semEst = true;
+                    if (!empty($sr['published_at'])) $semPubAt = $sr['published_at'];
+                    if (!empty($sr['academic_session'])) $semSess = $sr['academic_session'];
+                }
+                $sgpa = ($crSum > 0) ? round($ptSum / $crSum, 2) : 0.00;
+                $upStmt->execute([
+                    $studentId, $s, $semTitle, $semSess,
+                    round($crSum, 1), $sgpa, 'Completed', ($semEst ? 'Estimated' : 'Verified'), $semPub, $semPubAt
+                ]);
+            } else {
+                $upStmt->execute([
+                    $studentId, $s, $semTitle, $defaultSession,
+                    0.0, 0.00, 'Pending', 'Estimated', 0, null
+                ]);
+            }
+        }
+
+        // Sync summary result_status cleanly
+        $isSuspended = (isset($student['result_access_status']) && $student['result_access_status'] === 'Suspended');
+        if ($isSuspended) {
+            $newStatus = 'Suspended';
+        } elseif ($hasPublished) {
+            $newStatus = 'Published';
+        } elseif ($hasEstimated) {
+            $newStatus = 'Estimated';
+        } elseif ($hasVerified) {
+            $newStatus = 'Verified';
+        } else {
+            $newStatus = 'Pending';
+        }
+        $db->prepare("UPDATE students SET result_status = ? WHERE id = ?")->execute([$newStatus, $studentId]);
+    } catch (Throwable $e) {
+        error_log("sync_student_semester_results error: " . $e->getMessage());
+    }
+}
+
+/**
+ * Get standard semester-wise curriculum for any university program.
+ * Supports Bachelor's (8 Semesters), B.Ed (2 or 3 Semesters), and Master's (2, 3, or 4 Semesters).
+ */
+function get_program_semester_curriculum(int $programId, ?int $semesterCount = null): array {
+    $struct = get_program_academic_structure($programId, $semesterCount);
+    $prog = $struct['program'];
+    $slug = $struct['program_slug'];
+    $degreeType = $struct['degree_type'];
+    $totalSemesters = $struct['total_semesters'];
+    $isMaster = ($degreeType === "Master's" || strtolower((string)($prog['degree_level'] ?? '')) === 'postgraduate');
+    $curriculum = [];
+
+    // 1. CSE
+    if ($slug === 'bsc-in-cse') {
+        $curriculum = [
+            1 => [
+                ['code' => 'CSE 101', 'name' => 'Structured Programming Language (C)', 'credit' => 3.0],
+                ['code' => 'CSE 102', 'name' => 'Structured Programming Laboratory', 'credit' => 1.5],
+                ['code' => 'MAT 101', 'name' => 'Differential and Integral Calculus', 'credit' => 3.0],
+                ['code' => 'ENG 101', 'name' => 'English Reading and Composition Skills', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'CSE 103', 'name' => 'Discrete Mathematics for Computing', 'credit' => 3.0],
+                ['code' => 'CSE 104', 'name' => 'Object Oriented Programming (C++)', 'credit' => 3.0],
+                ['code' => 'CSE 105', 'name' => 'Object Oriented Programming Lab', 'credit' => 1.5],
+                ['code' => 'PHY 101', 'name' => 'Physics for Engineers (Mechanics & Waves)', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'CSE 201', 'name' => 'Data Structures & Algorithms', 'credit' => 3.0],
+                ['code' => 'CSE 202', 'name' => 'Data Structures Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 203', 'name' => 'Digital Logic Design & Circuits', 'credit' => 3.0],
+                ['code' => 'EEE 101', 'name' => 'Basic Electrical Engineering & Circuit Analysis', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'CSE 205', 'name' => 'Design & Analysis of Algorithms', 'credit' => 3.0],
+                ['code' => 'CSE 206', 'name' => 'Database Management Systems (DBMS)', 'credit' => 3.0],
+                ['code' => 'CSE 207', 'name' => 'Database Management Systems Lab', 'credit' => 1.5],
+                ['code' => 'MAT 201', 'name' => 'Linear Algebra & Complex Variables', 'credit' => 3.0]
+            ],
+            5 => [
+                ['code' => 'CSE 301', 'name' => 'Operating Systems & System Programming', 'credit' => 3.0],
+                ['code' => 'CSE 302', 'name' => 'Operating Systems Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 303', 'name' => 'Microprocessors, Microcontrollers & Interfacing', 'credit' => 3.0],
+                ['code' => 'CSE 304', 'name' => 'Software Engineering & System Architecture', 'credit' => 3.0]
+            ],
+            6 => [
+                ['code' => 'CSE 305', 'name' => 'Computer Networks & TCP/IP Protocols', 'credit' => 3.0],
+                ['code' => 'CSE 306', 'name' => 'Computer Networks Laboratory', 'credit' => 1.5],
+                ['code' => 'CSE 307', 'name' => 'Theory of Computation & Automata', 'credit' => 3.0],
+                ['code' => 'CSE 308', 'name' => 'Web Technologies & Distributed Cloud Systems', 'credit' => 3.0]
+            ],
+            7 => [
+                ['code' => 'CSE 401', 'name' => 'Artificial Intelligence & Machine Learning', 'credit' => 3.0],
+                ['code' => 'CSE 402', 'name' => 'Artificial Intelligence Lab', 'credit' => 1.5],
+                ['code' => 'CSE 403', 'name' => 'Compiler Design & Syntax Analysis', 'credit' => 3.0],
+                ['code' => 'CSE 404', 'name' => 'Cyber Security, Cryptography & Network Defense', 'credit' => 3.0]
+            ],
+            8 => [
+                ['code' => 'CSE 405', 'name' => 'Cloud Computing & High Performance Architectures', 'credit' => 3.0],
+                ['code' => 'CSE 406', 'name' => 'Data Science & Big Data Analytics', 'credit' => 3.0],
+                ['code' => 'CSE 407', 'name' => 'Senior Capstone Project & Engineering Thesis', 'credit' => 4.0],
+                ['code' => 'CSE 408', 'name' => 'Comprehensive Academic Defense & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 2. BBA
+    elseif ($slug === 'bba') {
+        $curriculum = [
+            1 => [
+                ['code' => 'BBA 101', 'name' => 'Introduction to Modern Business & Organizations', 'credit' => 3.0],
+                ['code' => 'BBA 102', 'name' => 'Principles of Financial Accounting', 'credit' => 3.0],
+                ['code' => 'BBA 103', 'name' => 'Microeconomic Principles for Decision Making', 'credit' => 3.0],
+                ['code' => 'BBA 104', 'name' => 'Business Mathematics & Commercial Computing', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'BBA 105', 'name' => 'Macroeconomics & Global Monetary Policy', 'credit' => 3.0],
+                ['code' => 'BBA 106', 'name' => 'Managerial Accounting & Cost Estimation', 'credit' => 3.0],
+                ['code' => 'BBA 107', 'name' => 'Principles of Marketing & Consumer Analysis', 'credit' => 3.0],
+                ['code' => 'BBA 108', 'name' => 'Business Communication & Public Relations', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'BBA 201', 'name' => 'Principles of Finance & Capital Budgeting', 'credit' => 3.0],
+                ['code' => 'BBA 202', 'name' => 'Organizational Behavior & Human Resources', 'credit' => 3.0],
+                ['code' => 'BBA 203', 'name' => 'Business Statistics & Probability Analysis', 'credit' => 3.0],
+                ['code' => 'BBA 204', 'name' => 'Commercial Law, Contract Acts & Ethics', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'BBA 205', 'name' => 'Corporate Finance & Working Capital Management', 'credit' => 3.0],
+                ['code' => 'BBA 206', 'name' => 'Consumer Behavior & Market Research', 'credit' => 3.0],
+                ['code' => 'BBA 207', 'name' => 'Operations & Quality Management', 'credit' => 3.0],
+                ['code' => 'BBA 208', 'name' => 'Management Information Systems (MIS)', 'credit' => 3.0]
+            ],
+            5 => [
+                ['code' => 'BBA 301', 'name' => 'International Business & Global Logistics', 'credit' => 3.0],
+                ['code' => 'BBA 302', 'name' => 'Financial Markets, Banking Institutions & Credit', 'credit' => 3.0],
+                ['code' => 'BBA 303', 'name' => 'Strategic Marketing & Brand Management', 'credit' => 3.0],
+                ['code' => 'BBA 304', 'name' => 'Corporate Taxation, Auditing & Compliance', 'credit' => 3.0]
+            ],
+            6 => [
+                ['code' => 'BBA 305', 'name' => 'Supply Chain Management & Procurement', 'credit' => 3.0],
+                ['code' => 'BBA 306', 'name' => 'Investment Analysis & Portfolio Management', 'credit' => 3.0],
+                ['code' => 'BBA 307', 'name' => 'Digital Marketing Analytics & E-Commerce', 'credit' => 3.0],
+                ['code' => 'BBA 308', 'name' => 'Corporate Governance & Social Responsibility', 'credit' => 3.0]
+            ],
+            7 => [
+                ['code' => 'BBA 401', 'name' => 'Entrepreneurship & Startup Venture Incubation', 'credit' => 3.0],
+                ['code' => 'BBA 402', 'name' => 'Strategic Management & Competitive Policy', 'credit' => 3.0],
+                ['code' => 'BBA 403', 'name' => 'Project Appraisal & Feasibility Study', 'credit' => 3.0],
+                ['code' => 'BBA 404', 'name' => 'Business Research Methodology & Seminar', 'credit' => 3.0]
+            ],
+            8 => [
+                ['code' => 'BBA 405', 'name' => 'Corporate Policy & Strategic Simulation', 'credit' => 3.0],
+                ['code' => 'BBA 406', 'name' => 'International Financial Management', 'credit' => 3.0],
+                ['code' => 'BBA 407', 'name' => 'Senior Internship Practicum & Monograph', 'credit' => 4.0],
+                ['code' => 'BBA 408', 'name' => 'Comprehensive Academic Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+    }
+    // 3. B.Ed (Bachelor of Education - 2 Semesters default, 3 Semesters configurable)
+    elseif ($slug === 'b-ed' || $degreeType === 'B.Ed') {
+        $bedSem1 = [
+            ['code' => 'EDU 101', 'name' => 'Foundations & Philosophy of Education', 'credit' => 3.0],
+            ['code' => 'EDU 102', 'name' => 'Educational Psychology & Cognitive Learning', 'credit' => 3.0],
+            ['code' => 'EDU 103', 'name' => 'Curriculum Design, Pedagogy & Lesson Planning', 'credit' => 3.0],
+            ['code' => 'EDU 104', 'name' => 'Instructional Technology & Classroom Management', 'credit' => 3.0]
+        ];
+        if ($totalSemesters === 2) {
+            $curriculum = [
+                1 => $bedSem1,
+                2 => [
+                    ['code' => 'EDU 201', 'name' => 'Measurement, Assessment & Evaluation in Education', 'credit' => 3.0],
+                    ['code' => 'EDU 202', 'name' => 'Inclusive Education & Special Needs Pedagogy', 'credit' => 3.0],
+                    ['code' => 'EDU 203', 'name' => 'Subject Teaching Methodology & School Governance', 'credit' => 3.0],
+                    ['code' => 'EDU 204', 'name' => 'Supervised Teaching Practicum & Action Research', 'credit' => 4.0],
+                    ['code' => 'EDU 205', 'name' => 'Comprehensive Classroom Defense & Viva Voce', 'credit' => 1.0]
+                ]
+            ];
+        } else {
+            $curriculum = [
+                1 => $bedSem1,
+                2 => [
+                    ['code' => 'EDU 201', 'name' => 'Measurement, Assessment & Evaluation in Education', 'credit' => 3.0],
+                    ['code' => 'EDU 202', 'name' => 'Inclusive Education & Special Needs Pedagogy', 'credit' => 3.0],
+                    ['code' => 'EDU 203', 'name' => 'Educational Research Methods & Guidance Counseling', 'credit' => 3.0],
+                    ['code' => 'EDU 204', 'name' => 'Subject Teaching Methodology & Curriculum Inquiry', 'credit' => 3.0]
+                ],
+                3 => [
+                    ['code' => 'EDU 301', 'name' => 'Comparative Education, Ethics & Policy Studies', 'credit' => 3.0],
+                    ['code' => 'EDU 302', 'name' => 'Digital Pedagogy & Blended Classroom Innovation', 'credit' => 3.0],
+                    ['code' => 'EDU 303', 'name' => 'Supervised Teaching Practicum & Action Research', 'credit' => 4.0],
+                    ['code' => 'EDU 304', 'name' => 'Comprehensive Classroom Defense & Viva Voce', 'credit' => 1.0]
+                ]
+            ];
+        }
+    }
+    // 4. MBA (Master of Business Administration - 2, 3, or 4 Semesters)
+    elseif ($slug === 'mba' || ($isMaster && strpos(strtolower($slug), 'business') !== false)) {
+        $base = [
+            1 => [
+                ['code' => 'MBA 501', 'name' => 'Advanced Managerial Economics & Quantitative Methods', 'credit' => 3.0],
+                ['code' => 'MBA 502', 'name' => 'Strategic Financial Accounting & Reporting', 'credit' => 3.0],
+                ['code' => 'MBA 503', 'name' => 'Organizational Leadership & Strategic HRM', 'credit' => 3.0],
+                ['code' => 'MBA 504', 'name' => 'Corporate Governance, Law & Ethical Leadership', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MBA 505', 'name' => 'Advanced Corporate Finance & Valuation Analysis', 'credit' => 3.0],
+                ['code' => 'MBA 506', 'name' => 'Strategic Marketing & Consumer Analytics', 'credit' => 3.0],
+                ['code' => 'MBA 507', 'name' => 'Global Supply Chain & Operations Excellence', 'credit' => 3.0],
+                ['code' => 'MBA 508', 'name' => 'Enterprise Analytics, Big Data & Digital Transformation', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MBA 601', 'name' => 'Global Competitive Strategy & M&A Policy', 'credit' => 3.0],
+                ['code' => 'MBA 602', 'name' => 'Venture Capital, Innovation & Private Equity', 'credit' => 3.0],
+                ['code' => 'MBA 603', 'name' => 'Applied Business Research Methods & Econometrics', 'credit' => 3.0],
+                ['code' => 'MBA 604', 'name' => 'International Financial Markets & Risk Hedging', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MBA 605', 'name' => 'Corporate Strategy Simulation & Case Analysis', 'credit' => 3.0],
+                ['code' => 'MBA 606', 'name' => 'Executive Leadership & Sustainable Enterprise', 'credit' => 3.0],
+                ['code' => 'MBA 607', 'name' => 'Master\'s Graduate Thesis / Capstone Applied Project', 'credit' => 4.0],
+                ['code' => 'MBA 608', 'name' => 'Comprehensive Oral Examination & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+        if ($totalSemesters === 2) {
+            $curriculum = [1 => $base[1], 2 => $base[4]];
+        } elseif ($totalSemesters === 3) {
+            $curriculum = [1 => $base[1], 2 => $base[2], 3 => $base[4]];
+        } else {
+            $curriculum = $base;
+        }
+    }
+    // 5. MA in English (2, 3, or 4 Semesters)
+    elseif ($slug === 'ma-in-english') {
+        $base = [
+            1 => [
+                ['code' => 'MAE 501', 'name' => 'Advanced Critical Theory & Cultural Studies', 'credit' => 3.0],
+                ['code' => 'MAE 502', 'name' => 'Modernist & Postmodern Fiction and Poetry', 'credit' => 3.0],
+                ['code' => 'MAE 503', 'name' => 'Postcolonial Discourse & World Literatures', 'credit' => 3.0],
+                ['code' => 'MAE 504', 'name' => 'Advanced Stylistics, Discourse Analysis & Pragmatics', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MAE 505', 'name' => 'Shakespeare in Performance, Adaptation & Critique', 'credit' => 3.0],
+                ['code' => 'MAE 506', 'name' => 'Diaspora Writings & Transnational Narratives', 'credit' => 3.0],
+                ['code' => 'MAE 507', 'name' => 'Applied Linguistics & Second Language Acquisition', 'credit' => 3.0],
+                ['code' => 'MAE 508', 'name' => 'Advanced Literary Research Methodology & Bibliography', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MAE 601', 'name' => 'Feminist Poetics, Gender Studies & Queer Theory', 'credit' => 3.0],
+                ['code' => 'MAE 602', 'name' => 'South Asian English Literature & Partition Studies', 'credit' => 3.0],
+                ['code' => 'MAE 603', 'name' => 'Translation Studies: Hermeneutics & Practicum', 'credit' => 3.0],
+                ['code' => 'MAE 604', 'name' => 'ELT Testing, Curriculum Design & Pedagogy', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MAE 605', 'name' => 'Environmental Humanities & Ecocritical Literatures', 'credit' => 3.0],
+                ['code' => 'MAE 606', 'name' => 'Contemporary World Poetry & Cultural Resistance', 'credit' => 3.0],
+                ['code' => 'MAE 607', 'name' => 'Master of Arts Graduate Dissertation & Defense', 'credit' => 4.0],
+                ['code' => 'MAE 608', 'name' => 'Graduate Comprehensive Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+        if ($totalSemesters === 2) {
+            $curriculum = [1 => $base[1], 2 => $base[4]];
+        } elseif ($totalSemesters === 3) {
+            $curriculum = [1 => $base[1], 2 => $base[2], 3 => $base[4]];
+        } else {
+            $curriculum = $base;
+        }
+    }
+    // 6. MA in Bangla (2, 3, or 4 Semesters)
+    elseif ($slug === 'ma-in-bangla') {
+        $base = [
+            1 => [
+                ['code' => 'MAB 501', 'name' => 'Comparative Literary Theory & Aesthetics', 'credit' => 3.0],
+                ['code' => 'MAB 502', 'name' => 'Ancient & Medieval Bangla Poetics and Manuscript Studies', 'credit' => 3.0],
+                ['code' => 'MAB 503', 'name' => 'Modern Bangla Poetry: Rabindranath, Nazrul & Jibanananda', 'credit' => 3.0],
+                ['code' => 'MAB 504', 'name' => 'Bangla Sociolinguistics & Historical Dialectology', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MAB 505', 'name' => 'Literature of the Liberation War & Post-Colonial Bangladesh', 'credit' => 3.0],
+                ['code' => 'MAB 506', 'name' => 'Evolution of Bangla Drama, Theatre & Folk Performances', 'credit' => 3.0],
+                ['code' => 'MAB 507', 'name' => 'Modern Bangla Prose, Periodicals & Intellectual History', 'credit' => 3.0],
+                ['code' => 'MAB 508', 'name' => 'Research Methodology in Bangla Literary Studies', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MAB 601', 'name' => 'Tagore Studies: Philosophy, Aesthetics & Cultural Impact', 'credit' => 3.0],
+                ['code' => 'MAB 602', 'name' => 'Folklore of Kushtia & Lalon Shahi Mystical Heritage', 'credit' => 3.0],
+                ['code' => 'MAB 603', 'name' => 'Contemporary Bangla Fiction & Novelistic Traditions', 'credit' => 3.0],
+                ['code' => 'MAB 604', 'name' => 'Comparative South Asian Literature in Translation', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MAB 605', 'name' => 'Semiotics & Modern Literary Hermeneutics', 'credit' => 3.0],
+                ['code' => 'MAB 606', 'name' => 'Bangla Lexicography, Orthography & Digital Linguistics', 'credit' => 3.0],
+                ['code' => 'MAB 607', 'name' => 'Master\'s Research Dissertation & Public Defense', 'credit' => 4.0],
+                ['code' => 'MAB 608', 'name' => 'Comprehensive Academic Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+        if ($totalSemesters === 2) {
+            $curriculum = [1 => $base[1], 2 => $base[4]];
+        } elseif ($totalSemesters === 3) {
+            $curriculum = [1 => $base[1], 2 => $base[2], 3 => $base[4]];
+        } else {
+            $curriculum = $base;
+        }
+    }
+    // 7. Master of Physical Education (MPEd - 2, 3, or 4 Semesters)
+    elseif ($slug === 'mped') {
+        $base = [
+            1 => [
+                ['code' => 'MPE 501', 'name' => 'Advanced Exercise Physiology & Cardiorespiratory Testing', 'credit' => 3.0],
+                ['code' => 'MPE 502', 'name' => 'Advanced Sports Biomechanics & Cinematographic Analysis', 'credit' => 3.0],
+                ['code' => 'MPE 503', 'name' => 'Sports Psychology, Peak Performance & Mental Conditioning', 'credit' => 3.0],
+                ['code' => 'MPE 504', 'name' => 'Advanced Research Methodology & Sports Statistics', 'credit' => 3.0]
+            ],
+            2 => [
+                ['code' => 'MPE 505', 'name' => 'High Performance Athletic Training & Periodization', 'credit' => 3.0],
+                ['code' => 'MPE 506', 'name' => 'Sports Medicine, Rehabilitation & Therapeutic Modalities', 'credit' => 3.0],
+                ['code' => 'MPE 507', 'name' => 'Sports Nutrition, Ergogenic Aids & Metabolic Testing', 'credit' => 3.0],
+                ['code' => 'MPE 508', 'name' => 'Sports Law, Ethics & Anti-Doping Regulations', 'credit' => 3.0]
+            ],
+            3 => [
+                ['code' => 'MPE 601', 'name' => 'Strategic Sports Management & Global Governance', 'credit' => 3.0],
+                ['code' => 'MPE 602', 'name' => 'Motor Learning, Neural Control & Skill Acquisition', 'credit' => 3.0],
+                ['code' => 'MPE 603', 'name' => 'Fitness Technology, Wearable Sensors & Sports Analytics', 'credit' => 3.0],
+                ['code' => 'MPE 604', 'name' => 'Adapted Physical Activities & Paralympic Sports Science', 'credit' => 3.0]
+            ],
+            4 => [
+                ['code' => 'MPE 605', 'name' => 'Olympic Movement, Elite Coaching Practicum & Supervision', 'credit' => 3.0],
+                ['code' => 'MPE 606', 'name' => 'Facility Design, Event Management & Sports Marketing', 'credit' => 3.0],
+                ['code' => 'MPE 607', 'name' => 'Master\'s Research Thesis & Scientific Defense', 'credit' => 4.0],
+                ['code' => 'MPE 608', 'name' => 'Comprehensive Oral Defense & Viva Voce', 'credit' => 1.0]
+            ]
+        ];
+        if ($totalSemesters === 2) {
+            $curriculum = [1 => $base[1], 2 => $base[4]];
+        } elseif ($totalSemesters === 3) {
+            $curriculum = [1 => $base[1], 2 => $base[2], 3 => $base[4]];
+        } else {
+            $curriculum = $base;
+        }
+    }
+    // 8. General fallback for any other program (e.g. EEE, ICT, English, Bangla, Music, Fine Arts, PES, Agriculture, Microbiology)
+    else {
+        $prefix = strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $slug), 0, 3));
+        if (empty($prefix) || strlen($prefix) < 2) $prefix = 'GEN';
+
+        for ($s = 1; $s <= $totalSemesters; $s++) {
+            $curriculum[$s] = [
+                ['code' => "{$prefix} {$s}01", 'name' => "Core Subject {$s}.1 for " . ($prog['title_en'] ?? 'Program'), 'credit' => 3.0],
+                ['code' => "{$prefix} {$s}02", 'name' => "Core Subject {$s}.2 for " . ($prog['title_en'] ?? 'Program'), 'credit' => 3.0],
+                ['code' => "{$prefix} {$s}03", 'name' => "Applied Subject / Laboratory {$s}.3", 'credit' => ($s % 2 === 0 ? 1.5 : 3.0)],
+                ['code' => "{$prefix} {$s}04", 'name' => ($s === $totalSemesters ? 'Senior Monograph & Comprehensive Viva' : "Academic Subject {$s}.4"), 'credit' => 3.0]
+            ];
+        }
+    }
+
+    // Slice cleanly to configured semester count
+    $sliced = [];
+    for ($s = 1; $s <= $totalSemesters; $s++) {
+        if (isset($curriculum[$s])) {
+            $sliced[$s] = $curriculum[$s];
+        }
+    }
+
+    // Apply optional Admin per-semester credit configuration cleanly (distributing evenly across courses in multiples of 0.5)
+    if (!empty($struct['semester_credits'])) {
+        foreach ($struct['semester_credits'] as $sNum => $targetSemCr) {
+            if (!isset($sliced[$sNum]) || empty($sliced[$sNum]) || $targetSemCr < 3.0) {
+                continue;
+            }
+            $sumCr = 0.0;
+            foreach ($sliced[$sNum] as $cc) {
+                $sumCr += (float)$cc['credit'];
+            }
+            $diff = round($targetSemCr - $sumCr, 1);
+            if (abs($diff) >= 0.5) {
+                $cnt = count($sliced[$sNum]);
+                $perCourse = round($targetSemCr / $cnt * 2) / 2;
+                $perCourse = max(1.0, min(6.0, $perCourse));
+                $running = 0.0;
+                for ($ci = 0; $ci < $cnt - 1; $ci++) {
+                    $sliced[$sNum][$ci]['credit'] = $perCourse;
+                    $running += $perCourse;
+                }
+                $lastCr = round(($targetSemCr - $running) * 2) / 2;
+                if ($lastCr >= 1.0 && $lastCr <= 8.0) {
+                    $sliced[$sNum][$cnt - 1]['credit'] = $lastCr;
+                }
+            }
+        }
+    }
+
+    return $sliced;
+}
+
+/**
+ * Generate Estimated Academic Results for a student to mathematically match target CGPA.
+ * Supports Bachelor / Honours (8 Semesters), B.Ed (2 or 3 Semesters), and Master's (2, 3, or 4 Semesters).
+ * Safely replaces previous estimated results without duplicates and preserves any Verified official results.
+ */
+function generate_estimated_student_results(int $studentId, float $targetCgpa, bool $publishToPortal = true, int $adminId = 1, array $options = []): array {
+    $db = getDb();
+
+    // Validate target CGPA range
+    $targetCgpa = max(2.00, min(4.00, round($targetCgpa, 2)));
+
+    // Fetch student and program
+    $stStmt = $db->prepare("
+        SELECT s.*, p.title_en AS program_name, p.degree_level, p.degree_type AS prog_degree_type,
+               p.duration AS prog_duration, p.duration_years AS prog_duration_years,
+               p.total_semesters AS prog_total_semesters, p.slug AS program_slug
+        FROM students s
+        LEFT JOIN programs p ON s.program_id = p.id
+        WHERE s.id = ?
+        LIMIT 1
+    ");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $gate = can_manage_student_results($studentId);
+    if (empty($gate['allowed'])) {
+        return ['success' => false, 'error' => $gate['reason']];
+    }
+
+    $overrideSemesters = isset($options['total_semesters']) && (int)$options['total_semesters'] > 0
+        ? (int)$options['total_semesters']
+        : null;
+    $struct = get_student_program_structure($student, $overrideSemesters);
+    $programId = (int)($student['program_id'] ?? 1);
+    $totalSemesters = (int)$struct['total_semesters'];
+
+    $academicSession = trim((string)($options['academic_session'] ?? ''));
+    if ($academicSession === '') {
+        $academicSession = !empty($student['academic_session']) ? trim((string)$student['academic_session']) : (!empty($student['batch']) ? trim((string)$student['batch']) : 'Fall 2026');
+    }
+
+    $pubDateRaw = trim((string)($options['publication_date'] ?? ''));
+    if ($pubDateRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $pubDateRaw)) {
+        $publicationDate = $pubDateRaw;
+    } elseif (!empty($student['result_publication_date'])) {
+        $publicationDate = $student['result_publication_date'];
+    } else {
+        $publicationDate = date('Y-m-d');
+    }
+
+    $standardSemesterTitles = [
+        1 => '1st Semester',
+        2 => '2nd Semester',
+        3 => '3rd Semester',
+        4 => '4th Semester',
+        5 => '5th Semester',
+        6 => '6th Semester',
+        7 => '7th Semester',
+        8 => '8th Semester'
+    ];
+
+    // Load curriculum for this program and configured semester count
+    $curriculum = get_program_semester_curriculum($programId, $totalSemesters);
+
+    // Check existing verified results (is_estimated = 0) so we preserve them & include their points in target balance
+    $evStmt = $db->prepare("SELECT semester, course_code, credit, grade_point FROM student_results WHERE student_id = ? AND is_estimated = 0");
+    $evStmt->execute([$studentId]);
+    $verifiedRows = $evStmt->fetchAll(PDO::FETCH_ASSOC);
+    $verifiedKeys = [];
+    $fixedCredits = 0.0;
+    $fixedPoints = 0.0;
+    foreach ($verifiedRows as $vr) {
+        $key = trim((string)$vr['semester']) . ':' . trim((string)$vr['course_code']);
+        $verifiedKeys[$key] = true;
+        $cr = (float)$vr['credit'];
+        $fixedCredits += $cr;
+        $fixedPoints += ($cr * (float)$vr['grade_point']);
+    }
+
+    // Collect estimated courses to generate
+    $allCourses = [];
+    foreach ($curriculum as $semNum => $courses) {
+        if ($semNum > $totalSemesters) continue;
+        $semName = $standardSemesterTitles[$semNum] ?? "Semester {$semNum}";
+        foreach ($courses as $c) {
+            $key = $semName . ':' . trim((string)$c['code']);
+            if (isset($verifiedKeys[$key])) {
+                continue;
+            }
+            $allCourses[] = [
+                'semester_num'  => $semNum,
+                'semester_name' => $semName,
+                'course_code'   => $c['code'],
+                'course_name'   => $c['name'],
+                'credit'        => (float)($c['credit'] ?? 3.0),
+                'full_marks'    => 100
+            ];
+        }
+    }
+
+    if (empty($allCourses)) {
+        return ['success' => false, 'error' => 'No unverified curriculum courses remain to estimate (all subjects are already verified Official).'];
+    }
+
+    // UGC Scale valid Grade Points
+    $validGps = [4.00, 3.75, 3.50, 3.25, 3.00, 2.75, 2.50, 2.25, 2.00];
+
+    $estCredits = 0.0;
+    foreach ($allCourses as $c) {
+        $estCredits += $c['credit'];
+    }
+    $totalCredits = $fixedCredits + $estCredits;
+    $targetPoints = $targetCgpa * $totalCredits;
+    $neededEstGpa = $estCredits > 0 ? max(2.00, min(4.00, ($targetPoints - $fixedPoints) / $estCredits)) : $targetCgpa;
+
+    // Closest baseline Grade Point
+    $baseGp = 4.00;
+    foreach ($validGps as $gp) {
+        if ($neededEstGpa >= ($gp - 0.125)) {
+            $baseGp = $gp;
+            break;
+        }
+    }
+    $baseIdx = array_search($baseGp, $validGps);
+    if ($baseIdx === false) $baseIdx = 0;
+
+    // 1. Seed plausible per-semester & per-subject distribution within grading ladder
+    $semShiftPattern = [-1, 0, 1, 0, -1, 1, 0, 1];
+    $coursePattern = [0, 1, 0, -1, 0, 1, -1, 0];
+
+    foreach ($allCourses as $idx => &$c) {
+        $semShift = $semShiftPattern[($c['semester_num'] - 1) % count($semShiftPattern)];
+        $subShift = $coursePattern[$idx % count($coursePattern)];
+        // Bias moderately so semester SGPAs show realistic variation while hovering near target
+        $offset = (int)round(($semShift + $subShift) / 2);
+        if ($offset === 0 && ($idx % 3 === 1)) {
+            $offset = ($c['semester_num'] % 2 === 0) ? -1 : 1;
+        }
+        $chosenIdx = max(0, min(count($validGps) - 1, $baseIdx + $offset));
+        $c['gp'] = $validGps[$chosenIdx];
+    }
+    unset($c);
+
+    // 2. Iterative credit-weighted optimization across all estimated courses until cumulative CGPA matches target
+    $courseCount = count($allCourses);
+    $maxIter = max(600, $courseCount * 20);
+    for ($iter = 0; $iter < $maxIter; $iter++) {
+        $estPoints = 0.0;
+        foreach ($allCourses as $c) {
+            $estPoints += ($c['credit'] * $c['gp']);
+        }
+        $currentPoints = $fixedPoints + $estPoints;
+        $diff = $targetPoints - $currentPoints;
+        $currentCgpa = round($currentPoints / $totalCredits, 2);
+
+        if (abs($currentCgpa - $targetCgpa) < 0.005) {
+            break;
+        }
+
+        if ($diff > 0) {
+            $candidates = [];
+            foreach ($allCourses as $i => $c) {
+                if ($c['gp'] < 4.00) $candidates[] = $i;
+            }
+            if (empty($candidates)) break;
+            // Pick spread evenly across courses & semesters
+            $pick = $candidates[($iter * 7) % count($candidates)];
+            $curIdx = array_search($allCourses[$pick]['gp'], $validGps);
+            if ($curIdx > 0) {
+                $allCourses[$pick]['gp'] = $validGps[$curIdx - 1];
+            }
+        } else {
+            $candidates = [];
+            foreach ($allCourses as $i => $c) {
+                if ($c['gp'] > 2.00) $candidates[] = $i;
+            }
+            if (empty($candidates)) break;
+            $pick = $candidates[($iter * 7) % count($candidates)];
+            $curIdx = array_search($allCourses[$pick]['gp'], $validGps);
+            if ($curIdx < count($validGps) - 1) {
+                $allCourses[$pick]['gp'] = $validGps[$curIdx + 1];
+            }
+        }
+    }
+
+    // 3. Assign plausible marks & letter grades strictly inside UGC grading scale
+    foreach ($allCourses as &$c) {
+        $mapped = grade_point_to_sample_marks((float)$c['gp']);
+        $c['marks'] = $mapped['marks'];
+        $c['letter_grade'] = $mapped['letter_grade'];
+    }
+    unset($c);
+
+    // Compute actual realized CGPA & semester SGPAs
+    $finalEstPoints = 0.0;
+    foreach ($allCourses as $c) {
+        $finalEstPoints += ($c['credit'] * $c['gp']);
+    }
+    $actualCgpa = ($totalCredits > 0) ? round(($fixedPoints + $finalEstPoints) / $totalCredits, 2) : 0.00;
+
+    // 4. Persist atomically without duplicating rows
+    $delStmt = $db->prepare("DELETE FROM student_results WHERE student_id = ? AND is_estimated = 1");
+    $delStmt->execute([$studentId]);
+
+    $pubVal = $publishToPortal ? 1 : 0;
+    $pubStatus = $publishToPortal ? 'Published' : 'Draft';
+    $pubTimestamp = $publishToPortal ? ($publicationDate . ' ' . date('H:i:s')) : null;
+    $reason = "ESTIMATED / GENERATED — ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT. Auto-generated to match target CGPA " . number_format($targetCgpa, 2);
+
+    $insStmt = $db->prepare("
+        INSERT INTO student_results 
+        (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, academic_session, is_published, is_estimated, result_type, publish_status, published_at, publication_date, published_by, correction_reason)
+        VALUES (?, ?, ?, ?, ?, 100, ?, ?, ?, 'Semester Final Exam', ?, ?, 1, 'Estimated', ?, ?, ?, ?, ?)
+    ");
+
+    $insertedCount = 0;
+    foreach ($allCourses as $c) {
+        $insStmt->execute([
+            $studentId,
+            $c['semester_name'],
+            $c['course_code'],
+            $c['course_name'],
+            $c['credit'],
+            $c['marks'],
+            $c['letter_grade'],
+            $c['gp'],
+            $academicSession,
+            $pubVal,
+            $pubStatus,
+            $pubTimestamp,
+            $publicationDate,
+            $adminId,
+            $reason
+        ]);
+        $insertedCount++;
+    }
+
+    // Update student's structural & result metadata first
+    $updSt = $db->prepare("
+        UPDATE students
+        SET degree_type = ?,
+            academic_session = ?,
+            program_duration = ?,
+            total_semesters = ?,
+            total_credits_required = ?,
+            result_publication_date = ?
+        WHERE id = ?
+    ");
+    $updSt->execute([
+        $struct['degree_type'],
+        $academicSession,
+        $struct['duration_label'],
+        $totalSemesters,
+        (int)round($totalCredits),
+        $publicationDate,
+        $studentId
+    ]);
+
+    // Recalculate official student CGPA + sync student_semester_results & result_status
+    $metrics = recalculate_student_cgpa($studentId);
+
+    // Keep exact realized CGPA when published, and preserve 0.00 published CGPA when kept in Draft
+    if ($publishToPortal && abs((float)$metrics['cgpa'] - $targetCgpa) > 0.01 && abs($actualCgpa - $targetCgpa) <= 0.01) {
+        $db->prepare("UPDATE students SET cgpa = ?, credits_completed = ? WHERE id = ?")
+           ->execute([$actualCgpa, (int)round($totalCredits), $studentId]);
+    }
+
+    // Dispatch clear student in-app notification with mandatory disclaimer
+    create_student_notification(
+        $studentId,
+        "Academic Results Projected (Estimated)",
+        "Your {$totalSemesters}-semester estimated results ({$academicSession}) have been generated for cumulative CGPA " . number_format($actualCgpa, 2) . ". IMPORTANT: ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT.",
+        'result'
+    );
+
+    log_audit('ESTIMATED_RESULTS_GENERATED', "Generated {$totalSemesters}-semester estimated results for student #{$studentId} ({$student['full_name']}) [Session: {$academicSession}, PubDate: {$publicationDate}, Target CGPA: {$targetCgpa}, Realized CGPA: {$actualCgpa}]", $adminId);
+
+    $summaryAfter = get_student_academic_summary($studentId, false);
+
+    return [
+        'success'            => true,
+        'student_id'         => $student['student_id'],
+        'student_name'       => $student['full_name'],
+        'target_cgpa'        => $targetCgpa,
+        'realized_cgpa'      => $actualCgpa,
+        'degree_level'       => $struct['degree_level'],
+        'degree_type'        => $struct['degree_type'],
+        'academic_session'   => $academicSession,
+        'publication_date'   => $publicationDate,
+        'total_semesters'    => $totalSemesters,
+        'total_credits'      => $totalCredits,
+        'inserted_courses'   => $insertedCount,
+        'semester_gpas'      => $summaryAfter['semester_gpas'] ?? [],
+    ];
+}
+
+/**
+ * Edit an individual semester's GPA target by rebalancing its course marks/grades cleanly
+ * and recalculating cumulative CGPA without recreating other semesters.
+ */
+function update_semester_cgpa_target(int $studentId, int $semesterNumber, float $newSemesterGpa, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $gate = can_manage_student_results($studentId);
+    if (empty($gate['allowed'])) {
+        return ['success' => false, 'error' => $gate['reason']];
+    }
+
+    $stStmt = $db->prepare("SELECT * FROM students WHERE id = ? LIMIT 1");
+    $stStmt->execute([$studentId]);
+    $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $struct = get_student_program_structure($student);
+    $totalSemesters = (int)$struct['total_semesters'];
+    if ($semesterNumber < 1 || $semesterNumber > $totalSemesters) {
+        return ['success' => false, 'error' => "Invalid semester number {$semesterNumber} for {$totalSemesters}-semester program."];
+    }
+
+    $newSemesterGpa = max(2.00, min(4.00, round($newSemesterGpa, 2)));
+    $ordTitles = [
+        1 => '1st Semester', 2 => '2nd Semester', 3 => '3rd Semester', 4 => '4th Semester',
+        5 => '5th Semester', 6 => '6th Semester', 7 => '7th Semester', 8 => '8th Semester',
+    ];
+    $semTitle = $ordTitles[$semesterNumber] ?? "Semester {$semesterNumber}";
+
+    // Fetch existing rows for this semester
+    $rStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY id ASC");
+    $rStmt->execute([$studentId]);
+    $allRows = $rStmt->fetchAll(PDO::FETCH_ASSOC);
+    $semRows = [];
+    foreach ($allRows as $r) {
+        if (get_semester_number((string)$r['semester']) === $semesterNumber) {
+            $semRows[] = $r;
+        }
+    }
+
+    // If this semester had no rows yet, seed its standard curriculum courses first
+    if (empty($semRows)) {
+        $curr = get_program_semester_curriculum((int)$student['program_id'], $totalSemesters);
+        $semCurr = $curr[$semesterNumber] ?? [];
+        if (empty($semCurr)) {
+            return ['success' => false, 'error' => "No curriculum found for {$semTitle}."];
+        }
+        $pubVal = (isset($student['result_status']) && $student['result_status'] === 'Published') ? 1 : 0;
+        $pubStat = $pubVal ? 'Published' : 'Draft';
+        $sess = !empty($student['academic_session']) ? $student['academic_session'] : ($student['batch'] ?? 'Fall 2026');
+        $insStmt = $db->prepare("
+            INSERT INTO student_results
+            (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, academic_session, is_published, is_estimated, result_type, publish_status, published_at, publication_date, published_by, correction_reason)
+            VALUES (?, ?, ?, ?, ?, 100, 70.0, 'A-', 3.50, 'Semester Final Exam', ?, ?, 1, 'Estimated', ?, ?, ?, ?, 'ESTIMATED / GENERATED')
+        ");
+        $pubAt = $pubVal ? date('Y-m-d H:i:s') : null;
+        $pubDt = !empty($student['result_publication_date']) ? $student['result_publication_date'] : date('Y-m-d');
+        foreach ($semCurr as $sc) {
+            $insStmt->execute([$studentId, $semTitle, $sc['code'], $sc['name'], (float)$sc['credit'], $sess, $pubVal, $pubStat, $pubAt, $pubDt, $adminId]);
+        }
+        $rStmt->execute([$studentId]);
+        foreach ($rStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            if (get_semester_number((string)$r['semester']) === $semesterNumber) {
+                $semRows[] = $r;
+            }
+        }
+    }
+
+    $validGps = [4.00, 3.75, 3.50, 3.25, 3.00, 2.75, 2.50, 2.25, 2.00];
+    $baseGp = 4.00;
+    foreach ($validGps as $gp) {
+        if ($newSemesterGpa >= ($gp - 0.125)) {
+            $baseGp = $gp;
+            break;
+        }
+    }
+    $baseIdx = array_search($baseGp, $validGps);
+    if ($baseIdx === false) $baseIdx = 0;
+
+    $totalSemCredits = 0.0;
+    foreach ($semRows as $idx => &$sr) {
+        $totalSemCredits += (float)$sr['credit'];
+        $offset = ($idx % 2 === 0) ? 0 : (($idx % 4 === 1) ? 1 : -1);
+        $sr['new_gp'] = $validGps[max(0, min(count($validGps) - 1, $baseIdx + $offset))];
+    }
+    unset($sr);
+
+    $targetSemPts = $newSemesterGpa * $totalSemCredits;
+    for ($iter = 0; $iter < 300; $iter++) {
+        $curPts = 0.0;
+        foreach ($semRows as $sr) {
+            $curPts += ((float)$sr['credit'] * $sr['new_gp']);
+        }
+        $curGpa = ($totalSemCredits > 0) ? round($curPts / $totalSemCredits, 2) : 0.00;
+        if (abs($curGpa - $newSemesterGpa) < 0.005) {
+            break;
+        }
+        $diff = $targetSemPts - $curPts;
+        if ($diff > 0) {
+            $cands = [];
+            foreach ($semRows as $i => $sr) if ($sr['new_gp'] < 4.00) $cands[] = $i;
+            if (empty($cands)) break;
+            $p = $cands[$iter % count($cands)];
+            $ci = array_search($semRows[$p]['new_gp'], $validGps);
+            if ($ci > 0) $semRows[$p]['new_gp'] = $validGps[$ci - 1];
+        } else {
+            $cands = [];
+            foreach ($semRows as $i => $sr) if ($sr['new_gp'] > 2.00) $cands[] = $i;
+            if (empty($cands)) break;
+            $p = $cands[$iter % count($cands)];
+            $ci = array_search($semRows[$p]['new_gp'], $validGps);
+            if ($ci < count($validGps) - 1) $semRows[$p]['new_gp'] = $validGps[$ci + 1];
+        }
+    }
+
+    $note = trim($reason) !== '' ? trim($reason) : "Semester {$semesterNumber} GPA adjusted to " . number_format($newSemesterGpa, 2);
+    $updRow = $db->prepare("
+        UPDATE student_results
+        SET marks = ?, letter_grade = ?, grade_point = ?, correction_reason = ?
+        WHERE id = ? AND student_id = ?
+    ");
+
+    foreach ($semRows as $sr) {
+        $mapped = grade_point_to_sample_marks((float)$sr['new_gp']);
+        $oldVal = "{$sr['marks']} ({$sr['letter_grade']}, {$sr['grade_point']})";
+        $newVal = "{$mapped['marks']} ({$mapped['letter_grade']}, {$sr['new_gp']})";
+        $fullReason = (!empty($sr['is_estimated']) ? "ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT. " : '') . $note;
+        $updRow->execute([$mapped['marks'], $mapped['letter_grade'], $sr['new_gp'], $fullReason, (int)$sr['id'], $studentId]);
+        log_result_modification((int)$sr['id'], $studentId, $adminId, (string)$sr['course_code'], (string)$sr['semester'], 'Semester GPA Adjustment', $oldVal, $newVal, $note);
+    }
+
+    $metrics = recalculate_student_cgpa($studentId);
+    log_audit('SEMESTER_GPA_UPDATED', "Admin #{$adminId} adjusted Semester {$semesterNumber} GPA target to {$newSemesterGpa} for student #{$studentId} ({$student['student_id']}). New CGPA: {$metrics['cgpa']}", $adminId);
+
+    return [
+        'success' => true,
+        'semester_number' => $semesterNumber,
+        'semester_name' => $semTitle,
+        'new_cgpa' => $metrics['cgpa'],
+    ];
+}
+
+/**
+ * Verify all estimated results across all semesters of a student as Official Examination Records
+ */
+function verify_all_student_results_official(int $studentId, int $adminId = 1): array {
+    $db = getDb();
+    $stmt = $db->prepare("
+        UPDATE student_results
+        SET is_estimated = 0,
+            result_type = 'Verified',
+            publish_status = 'Published',
+            is_published = 1,
+            published_by = ?,
+            published_at = COALESCE(published_at, NOW()),
+            correction_reason = 'Verified by administrator as official examination record'
+        WHERE student_id = ? AND is_estimated = 1
+    ");
+    $stmt->execute([$adminId, $studentId]);
+    $affected = $stmt->rowCount();
+
+    if ($affected > 0) {
+        $db->prepare("DELETE FROM student_notifications WHERE student_id = ? AND title = 'Academic Results Projected (Estimated)'")->execute([$studentId]);
+        log_audit('ALL_RESULTS_VERIFIED_OFFICIAL', "Admin #{$adminId} verified {$affected} estimated result(s) as official for student #{$studentId}", $adminId);
+        create_student_notification(
+            $studentId,
+            "All Academic Results Officially Verified",
+            "Your academic examination transcript has been verified as an official university record by the Office of the Controller of Examinations.",
+            'result_published'
+        );
+    }
+    $metrics = recalculate_student_cgpa($studentId);
+
+    return ['success' => true, 'verified_count' => $affected, 'cgpa' => $metrics['cgpa']];
+}
+
+/**
+ * Suspend a student's access to view results/transcript while keeping account login and Profile accessible
+ */
+function suspend_student_result_access(int $studentId, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $cleanReason = trim($reason) !== '' ? trim($reason) : 'Result access temporarily suspended by university administration';
+    $db->prepare("
+        UPDATE students
+        SET result_access_status = 'Suspended',
+            result_suspended_reason = ?,
+            result_status = 'Suspended'
+        WHERE id = ?
+    ")->execute([$cleanReason, $studentId]);
+
+    log_audit('STUDENT_RESULT_ACCESS_SUSPENDED', "Admin #{$adminId} suspended result access for student #{$studentId} ({$student['student_id']} - {$student['full_name']}). Reason: {$cleanReason}", $adminId);
+
+    return ['success' => true, 'student_id' => $student['student_id'], 'full_name' => $student['full_name']];
+}
+
+/**
+ * Restore a student's suspended result access cleanly
+ */
+function restore_student_result_access(int $studentId, int $adminId = 1): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $db->prepare("
+        UPDATE students
+        SET result_access_status = 'Active',
+            result_suspended_reason = NULL
+        WHERE id = ?
+    ")->execute([$studentId]);
+
+    sync_student_semester_results($studentId);
+
+    log_audit('STUDENT_RESULT_ACCESS_RESTORED', "Admin #{$adminId} restored result access for student #{$studentId} ({$student['student_id']} - {$student['full_name']}).", $adminId);
+    if ($student['status'] !== 'Deleted') {
+        create_student_notification(
+            $studentId,
+            'Result Portal Access Restored',
+            'Your access to view academic results and semester transcripts has been restored by university administration.',
+            'account_status'
+        );
+    }
+
+    return ['success' => true, 'student_id' => $student['student_id'], 'full_name' => $student['full_name']];
+}
+
+/**
+ * Delete ALL academic results for a student while strictly keeping the student's account, login credentials, and profile intact
+ */
+function delete_student_all_results(int $studentId, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $cleanReason = trim($reason) !== '' ? trim($reason) : 'All academic results cleared by administrator (student account preserved)';
+
+    try {
+        $db->beginTransaction();
+
+        $stStmt = $db->prepare("SELECT id, student_id, full_name, status, result_access_status FROM students WHERE id = ? LIMIT 1 FOR UPDATE");
+        $stStmt->execute([$studentId]);
+        $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$student) {
+            $db->rollBack();
+            return ['success' => false, 'error' => 'Student record not found.'];
+        }
+
+        $cntStmt = $db->prepare("SELECT COUNT(*) FROM student_results WHERE student_id = ?");
+        $cntStmt->execute([$studentId]);
+        $deletedCount = (int)$cntStmt->fetchColumn();
+
+        $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$studentId]);
+        $db->prepare("DELETE FROM student_semester_results WHERE student_id = ?")->execute([$studentId]);
+
+        $nextResultStatus = ($student['result_access_status'] === 'Suspended') ? 'Suspended' : 'Pending';
+        $db->prepare("
+            UPDATE students
+            SET cgpa = 0.00,
+                credits_completed = 0,
+                result_publication_date = NULL,
+                result_status = ?
+            WHERE id = ?
+        ")->execute([$nextResultStatus, $studentId]);
+
+        $db->commit();
+
+        log_result_modification(null, $studentId, $adminId, 'ALL', 'All Semesters', 'Delete All Results', "{$deletedCount} records", '0 records', $cleanReason);
+        log_audit('STUDENT_ALL_RESULTS_DELETED', "Admin #{$adminId} deleted {$deletedCount} result record(s) for student #{$studentId} ({$student['student_id']} - {$student['full_name']}). Account kept intact. Reason: {$cleanReason}", $adminId);
+
+        sync_student_semester_results($studentId);
+
+        return [
+            'success' => true,
+            'deleted_count' => $deletedCount,
+            'student_id' => $student['student_id'],
+            'full_name' => $student['full_name'],
+        ];
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['success' => false, 'error' => 'Failed to delete results: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Administrator Verification Workflow: Verify an estimated semester or result as official
+ */
+function verify_semester_results_as_official(int $studentId, string $semester, int $adminId = 1): int {
+    $db = getDb();
+    $stmt = $db->prepare("
+        UPDATE student_results 
+        SET is_estimated = 0, 
+            result_type = 'Verified', 
+            publish_status = 'Published',
+            is_published = 1,
+            published_by = ?, 
+            published_at = COALESCE(published_at, NOW()),
+            correction_reason = 'Verified by administrator as official examination record'
+        WHERE student_id = ? AND semester = ? AND is_estimated = 1
+    ");
+    $stmt->execute([$adminId, $studentId, $semester]);
+    $affected = $stmt->rowCount();
+
+    if ($affected > 0) {
+        $remEst = $db->prepare("SELECT COUNT(*) FROM student_results WHERE student_id = ? AND is_estimated = 1");
+        $remEst->execute([$studentId]);
+        if ((int)$remEst->fetchColumn() === 0) {
+            $db->prepare("DELETE FROM student_notifications WHERE student_id = ? AND title = 'Academic Results Projected (Estimated)'")->execute([$studentId]);
+        }
+        log_audit('RESULTS_VERIFIED_OFFICIAL', "Admin verified {$affected} estimated course result(s) in {$semester} as official for student #{$studentId}", $adminId);
+        create_student_notification(
+            $studentId,
+            "Official Results Verified",
+            "Your academic results for {$semester} have been officially verified and confirmed by the Office of the Controller of Examinations.",
+            'result'
+        );
+        recalculate_student_cgpa($studentId);
+    }
+    return $affected;
+}
+
+/**
+ * ========================================================
+ * STUDENT ACCOUNT CONTROL & RESULT VISIBILITY HELPERS
+ * ========================================================
+ */
+
+/**
+ * Build consistent badge descriptors for Student Account & Result Visibility statuses
+ */
+function get_student_status_badges(array $student, ?int $totalResultsCount = null, ?int $publishedResultsCount = null): array {
+    $status = trim((string)($student['status'] ?? 'Active'));
+    $resultsVisible = !isset($student['results_visible']) || (int)$student['results_visible'] === 1;
+    $resultsSuspended = isset($student['result_access_status']) && $student['result_access_status'] === 'Suspended';
+
+    $estimatedCount = 0;
+    if ($totalResultsCount === null || $publishedResultsCount === null) {
+        try {
+            $db = getDb();
+            $stId = (int)($student['id'] ?? 0);
+            if ($stId > 0) {
+                $q = $db->prepare("SELECT COUNT(*) AS total_cnt, SUM(CASE WHEN is_published = 1 THEN 1 ELSE 0 END) AS pub_cnt, SUM(CASE WHEN is_estimated = 1 THEN 1 ELSE 0 END) AS est_cnt FROM student_results WHERE student_id = ?");
+                $q->execute([$stId]);
+                $counts = $q->fetch(PDO::FETCH_ASSOC);
+                $totalResultsCount = (int)($counts['total_cnt'] ?? 0);
+                $publishedResultsCount = (int)($counts['pub_cnt'] ?? 0);
+                $estimatedCount = (int)($counts['est_cnt'] ?? 0);
+            } else {
+                $totalResultsCount = 0;
+                $publishedResultsCount = 0;
+            }
+        } catch (Throwable $e) {
+            $totalResultsCount = 0;
+            $publishedResultsCount = 0;
+        }
+    }
+
+    $accountMap = [
+        'Active'      => ['label' => 'Active',      'bg' => '#dcfce7', 'color' => '#15803d', 'border' => '#86efac', 'icon' => 'fa-check-circle'],
+        'Graduated'   => ['label' => 'Graduated',   'bg' => '#dbeafe', 'color' => '#1d4ed8', 'border' => '#93c5fd', 'icon' => 'fa-user-graduate'],
+        'Deactivated' => ['label' => 'Deactivated', 'bg' => '#fef3c7', 'color' => '#b45309', 'border' => '#fcd34d', 'icon' => 'fa-user-slash'],
+        'Suspended'   => ['label' => 'Suspended',   'bg' => '#ffedd5', 'color' => '#c2410c', 'border' => '#fdba74', 'icon' => 'fa-ban'],
+        'Deleted'     => ['label' => 'Deleted',     'bg' => '#fee2e2', 'color' => '#b91c1c', 'border' => '#fca5a5', 'icon' => 'fa-trash-alt'],
+    ];
+    $accBadge = $accountMap[$status] ?? $accountMap['Active'];
+
+    if ($resultsSuspended) {
+        $resBadge = ['label' => 'Result Access Suspended', 'key' => 'suspended', 'bg' => '#ffedd5', 'color' => '#9a3412', 'border' => '#fdba74', 'icon' => 'fa-user-lock'];
+    } elseif (!$resultsVisible) {
+        $resBadge = ['label' => 'Result Hidden', 'key' => 'hidden', 'bg' => '#fee2e2', 'color' => '#991b1b', 'border' => '#fca5a5', 'icon' => 'fa-eye-slash'];
+    } elseif ($publishedResultsCount > 0) {
+        $resBadge = ['label' => 'Result Published', 'key' => 'published', 'bg' => '#dcfce7', 'color' => '#166534', 'border' => '#86efac', 'icon' => 'fa-globe'];
+    } else {
+        $resBadge = ['label' => 'Pending', 'key' => 'pending', 'bg' => '#f1f5f9', 'color' => '#475569', 'border' => '#cbd5e1', 'icon' => 'fa-clock'];
+    }
+
+    return [
+        'account' => $accBadge,
+        'result' => $resBadge,
+        'total_results' => (int)$totalResultsCount,
+        'published_results' => (int)$publishedResultsCount,
+        'estimated_results' => (int)$estimatedCount,
+        'draft_results' => max(0, (int)$totalResultsCount - (int)$publishedResultsCount),
+        'results_visible' => $resultsVisible,
+        'results_suspended' => $resultsSuspended,
+    ];
+}
+
+/**
+ * Activate or Reactivate a student account cleanly
+ */
+function activate_student_account(int $studentId, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+    if ($student['status'] === 'Deleted') {
+        return ['success' => false, 'error' => 'This student account was permanently deleted and its credentials were revoked under university data retention policy.'];
+    }
+
+    $wasDeactivated = in_array($student['status'], ['Deactivated', 'Suspended'], true);
+    $upd = $db->prepare("
+        UPDATE students
+        SET status = 'Active',
+            session_version = session_version + 1,
+            deactivated_at = NULL,
+            deactivated_by = NULL,
+            deactivation_reason = NULL
+        WHERE id = ?
+    ");
+    $upd->execute([$studentId]);
+
+    $note = $reason !== '' ? $reason : 'Account activated / reactivated by administrator';
+    $actionName = $wasDeactivated ? 'STUDENT_ACCOUNT_REACTIVATED' : 'STUDENT_ACCOUNT_ACTIVATED';
+    log_audit($actionName, "Admin #{$adminId} set student #{$studentId} ({$student['student_id']} - {$student['full_name']}) status to Active. Note: {$note}", $adminId);
+
+    create_student_notification(
+        $studentId,
+        'Student Account Activated',
+        'Your university portal account is active. You may log in to view your academic profile and published examination results.',
+        'account_status'
+    );
+
+    return [
+        'success' => true,
+        'student_id' => $student['student_id'],
+        'full_name' => $student['full_name'],
+        'status' => 'Active',
+    ];
+}
+
+/**
+ * Deactivate a student account while preserving all academic records & invalidating sessions immediately
+ */
+function deactivate_student_account(int $studentId, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+    if ($student['status'] === 'Deleted') {
+        return ['success' => false, 'error' => 'Cannot deactivate an account that has already been permanently deleted.'];
+    }
+
+    $cleanReason = trim($reason) !== '' ? trim($reason) : 'Temporarily deactivated by university administration';
+    $upd = $db->prepare("
+        UPDATE students
+        SET status = 'Deactivated',
+            session_version = session_version + 1,
+            deactivated_at = NOW(),
+            deactivated_by = ?,
+            deactivation_reason = ?
+        WHERE id = ?
+    ");
+    $upd->execute([$adminId, $cleanReason, $studentId]);
+
+    log_audit('STUDENT_ACCOUNT_DEACTIVATED', "Admin #{$adminId} deactivated student #{$studentId} ({$student['student_id']} - {$student['full_name']}). Sessions invalidated & academic records preserved. Reason: {$cleanReason}", $adminId);
+
+    return [
+        'success' => true,
+        'student_id' => $student['student_id'],
+        'full_name' => $student['full_name'],
+        'status' => 'Deactivated',
+    ];
+}
+
+/**
+ * Permanently Delete Student Account Safely:
+ * - Preserves retention snapshot in student_retention_archives & preserves relational audit/academic rows
+ * - Revokes student login password, linked admission password & active session version immediately
+ * - Never affects any other student record
+ */
+function delete_student_account_safely(int $studentId, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $cleanReason = trim($reason) !== '' ? trim($reason) : 'Permanent account deletion authorized by administrator';
+
+    try {
+        $db->beginTransaction();
+
+        $stStmt = $db->prepare("
+            SELECT s.*, p.title_en AS program_title, d.name_en AS department_name
+            FROM students s
+            LEFT JOIN programs p ON s.program_id = p.id
+            LEFT JOIN departments d ON s.department_id = d.id
+            WHERE s.id = ?
+            LIMIT 1
+            FOR UPDATE
+        ");
+        $stStmt->execute([$studentId]);
+        $student = $stStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$student) {
+            $db->rollBack();
+            return ['success' => false, 'error' => 'Student account not found.'];
+        }
+        if ($student['status'] === 'Deleted') {
+            $db->rollBack();
+            return ['success' => false, 'error' => 'This student account has already been permanently deleted.'];
+        }
+
+        // Collect all student-scoped related academic & audit data prior to revocation
+        $resStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ? ORDER BY id ASC");
+        $resStmt->execute([$studentId]);
+        $results = $resStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $histStmt = $db->prepare("SELECT * FROM result_modification_history WHERE student_id = ? ORDER BY id ASC");
+        $histStmt->execute([$studentId]);
+        $history = $histStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $courseStmt = $db->prepare("SELECT * FROM student_courses WHERE student_id = ? ORDER BY id ASC");
+        $courseStmt->execute([$studentId]);
+        $courses = $courseStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $feeStmt = $db->prepare("SELECT * FROM student_fees WHERE student_id = ? ORDER BY id ASC");
+        $feeStmt->execute([$studentId]);
+        $fees = $feeStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $reqStmt = $db->prepare("SELECT * FROM result_requests WHERE student_id = ? ORDER BY id ASC");
+        $reqStmt->execute([$studentId]);
+        $requests = $reqStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $studentProfileCopy = $student;
+        unset($studentProfileCopy['password_hash']);
+
+        $snapshot = [
+            'archived_at' => date('Y-m-d H:i:s'),
+            'archived_by_admin_id' => $adminId,
+            'deletion_reason' => $cleanReason,
+            'student' => $studentProfileCopy,
+            'results' => $results,
+            'result_modification_history' => $history,
+            'courses' => $courses,
+            'fees' => $fees,
+            'result_requests' => $requests,
+        ];
+        $snapshotJson = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        // Store immutable retention snapshot
+        $archStmt = $db->prepare("
+            INSERT INTO student_retention_archives (
+                student_pk_id, student_id, roll_number, application_number, username,
+                full_name, email, phone, program_title, department_name, batch,
+                final_cgpa, credits_completed, results_count, snapshot_json,
+                deleted_by, deletion_reason, deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+        $archStmt->execute([
+            $studentId,
+            $student['student_id'],
+            $student['roll_number'] ?? null,
+            $student['application_number'] ?? null,
+            $student['username'] ?? $student['student_id'],
+            $student['full_name'],
+            $student['email'],
+            $student['phone'],
+            $student['program_title'] ?? null,
+            $student['department_name'] ?? null,
+            $student['batch'],
+            (float)($student['cgpa'] ?? 0.00),
+            (int)($student['credits_completed'] ?? 0),
+            count($results),
+            $snapshotJson ?: '{}',
+            $adminId,
+            $cleanReason
+        ]);
+        $archiveId = (int)$db->lastInsertId();
+
+        // Revoke login credentials & access immediately while preserving relational history row
+        $revokedSecret = '!DELETED_REVOKED_' . bin2hex(random_bytes(8)) . '!';
+        $delUpd = $db->prepare("
+            UPDATE students
+            SET status = 'Deleted',
+                password_hash = ?,
+                results_visible = 0,
+                results_hidden_reason = 'Account permanently deleted',
+                session_version = session_version + 1,
+                deleted_at = NOW(),
+                deleted_by = ?,
+                deletion_reason = ?
+            WHERE id = ?
+        ");
+        $delUpd->execute([$revokedSecret, $adminId, $cleanReason, $studentId]);
+
+        // Also revoke plain portal password on admissions record if linked
+        if (!empty($student['student_id'])) {
+            $admRev = $db->prepare("UPDATE admissions SET portal_password = NULL WHERE student_id = ?");
+            $admRev->execute([$student['student_id']]);
+        }
+
+        // Clear unread alerts cleanly
+        $db->prepare("UPDATE student_notifications SET is_read = 1 WHERE student_id = ?")->execute([$studentId]);
+
+        $db->commit();
+
+        log_audit(
+            'STUDENT_ACCOUNT_DELETED',
+            "Admin #{$adminId} permanently deleted student account #{$studentId} ({$student['student_id']} - {$student['full_name']}). Archive #{$archiveId} created with " . count($results) . " retained academic records. Reason: {$cleanReason}",
+            $adminId
+        );
+
+        return [
+            'success' => true,
+            'archive_id' => $archiveId,
+            'student_id' => $student['student_id'],
+            'full_name' => $student['full_name'],
+            'results_retained' => count($results),
+        ];
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        return ['success' => false, 'error' => 'Failed to delete student account: ' . $e->getMessage()];
+    }
+}
+
+/**
+ * Show or Hide published academic results from Student Portal view WITHOUT modifying underlying academic data
+ */
+function set_student_result_visibility(int $studentId, bool $visible, int $adminId = 1, string $reason = ''): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $visVal = $visible ? 1 : 0;
+    $hiddenReason = $visible ? null : (trim($reason) !== '' ? trim($reason) : 'Results temporarily hidden by Controller of Examinations');
+
+    $upd = $db->prepare("UPDATE students SET results_visible = ?, results_hidden_reason = ? WHERE id = ?");
+    $upd->execute([$visVal, $hiddenReason, $studentId]);
+
+    $action = $visible ? 'RESULTS_SHOWN' : 'RESULTS_HIDDEN';
+    $detail = $visible
+        ? "Admin #{$adminId} enabled Student Portal result visibility (Show Result) for student #{$studentId} ({$student['student_id']} - {$student['full_name']})."
+        : "Admin #{$adminId} hid Student Portal results (Hide Result) for student #{$studentId} ({$student['student_id']} - {$student['full_name']}). Academic records preserved. Note: {$hiddenReason}";
+    log_audit($action, $detail, $adminId);
+
+    if ($visible && $student['status'] !== 'Deleted') {
+        create_student_notification(
+            $studentId,
+            'Academic Results Visible',
+            'Your academic results and grade transcripts are now visible in your Student Portal.',
+            'result_published'
+        );
+    }
+
+    return [
+        'success' => true,
+        'results_visible' => $visVal,
+        'student_id' => $student['student_id'],
+        'full_name' => $student['full_name'],
+    ];
+}
+
+/**
+ * Publish or Unpublish a student's results (all semesters or a specific semester)
+ */
+function set_student_results_publication(int $studentId, bool $publish, ?string $semesterName = null, int $adminId = 1): array {
+    $db = getDb();
+    $stmt = $db->prepare("SELECT id, student_id, full_name, status FROM students WHERE id = ? LIMIT 1");
+    $stmt->execute([$studentId]);
+    $student = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$student) {
+        return ['success' => false, 'error' => 'Student record not found.'];
+    }
+
+    $params = [];
+    if ($publish) {
+        $sql = "UPDATE student_results SET is_published = 1, publish_status = 'Published', published_at = NOW(), published_by = ? WHERE student_id = ?";
+        $params[] = $adminId;
+        $params[] = $studentId;
+    } else {
+        $sql = "UPDATE student_results SET is_published = 0, publish_status = 'Draft', published_at = NULL WHERE student_id = ?";
+        $params[] = $studentId;
+    }
+
+    if ($semesterName !== null && trim($semesterName) !== '') {
+        $sql .= " AND semester = ?";
+        $params[] = trim($semesterName);
+    }
+
+    $upd = $db->prepare($sql);
+    $upd->execute($params);
+    $affected = $upd->rowCount();
+
+    $metrics = recalculate_student_cgpa($studentId);
+    $scopeLabel = ($semesterName !== null && trim($semesterName) !== '') ? trim($semesterName) : 'all semesters';
+
+    if ($publish) {
+        log_audit('RESULTS_PUBLISHED', "Admin #{$adminId} published {$affected} result record(s) ({$scopeLabel}) for student #{$studentId} ({$student['student_id']}). CGPA: {$metrics['cgpa']}", $adminId);
+        if ($affected > 0 && $student['status'] !== 'Deleted') {
+            create_student_notification(
+                $studentId,
+                'Academic Results Published',
+                "Examination results for {$scopeLabel} have been published to your Student Portal. Current CGPA: " . number_format((float)$metrics['cgpa'], 2),
+                'result_published'
+            );
+        }
+    } else {
+        log_audit('RESULTS_UNPUBLISHED', "Admin #{$adminId} unpublished {$affected} result record(s) ({$scopeLabel}) back to Draft for student #{$studentId} ({$student['student_id']}).", $adminId);
+    }
+
+    return [
+        'success' => true,
+        'affected' => $affected,
+        'published' => $publish,
+        'cgpa' => $metrics['cgpa'],
+    ];
+}
+
+
+
+
+

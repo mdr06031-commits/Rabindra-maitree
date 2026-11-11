@@ -22,10 +22,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT full_name FROM faculty_members WHERE id = ?");
                 $st->execute([$id]);
                 $tData = $st->fetch();
-                $del = $db->prepare("DELETE FROM faculty_members WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('FACULTY_MEMBER_DELETED', "Deleted faculty member: {$tData['full_name']}");
-                flash_set('success', "Faculty member removed successfully.");
+                if (!$tData) {
+                    flash_set('error', 'Selected faculty member could not be found.');
+                } else {
+                    $del = $db->prepare("DELETE FROM faculty_members WHERE id = ?");
+                    $del->execute([$id]);
+                    log_audit('FACULTY_MEMBER_DELETED', "Deleted faculty member: {$tData['full_name']}");
+                    flash_set('success', "Faculty member removed successfully.");
+                }
             }
         } else {
             $deptId = (int)($_POST['department_id'] ?? 0);
@@ -94,7 +98,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -130,7 +134,7 @@ include __DIR__ . '/includes/admin-header.php';
         <input type="text" name="designation" value="<?= e($editTeacher['designation'] ?? '') ?>" class="form-control" placeholder="e.g. Associate Professor & Head" required>
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
         <div class="form-group">
           <label class="form-label">Email</label>
           <input type="email" name="email" value="<?= e($editTeacher['email'] ?? '') ?>" class="form-control" placeholder="tariqul@rmu.ac.bd">
@@ -191,7 +195,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/faculty-members.php?edit=<?= (int)$t['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/faculty-members.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete teacher profile <?= addslashes(e($t['full_name'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/faculty-members.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete teacher profile ' . $t['full_name'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">

@@ -5,6 +5,7 @@
 require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
 
+$activeAdmissionTerm = get_setting('admission_active_term', 'Fall 2026');
 $pageTitle = 'Tuition & Fees Structure';
 $breadcrumbTitle = 'Tuition Fees &amp; Academic Expenses';
 $breadcrumbs = [['title' => 'Admission', 'url' => APP_URL . '/admissions.php'], ['title' => 'Tuition Fees']];
@@ -27,7 +28,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
   <div class="container" style="max-width: 1050px;">
     <div class="section-header">
       <span class="section-subtitle">Academic Expenses Schedule</span>
-      <h2 class="section-title">Tuition &amp; Fees Schedule (Fall 2026)</h2>
+      <h2 class="section-title">Tuition &amp; Fees Schedule (<?= e($activeAdmissionTerm) ?>)</h2>
       <div class="section-line"></div>
       <p style="color: var(--rmu-muted); margin-top: 0.8rem;">
         Rabindra Maitree University adheres to a transparent and affordable fee structure in accordance with UGC guidelines. Flexible installment plans are available for all semesters.

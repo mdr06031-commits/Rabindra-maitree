@@ -22,16 +22,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT title_en, file_path FROM notices WHERE id = ?");
                 $st->execute([$id]);
                 $nData = $st->fetch();
-                if ($nData && !empty($nData['file_path'])) {
-                    $fullPath = __DIR__ . '/../' . $nData['file_path'];
-                    if (file_exists($fullPath)) {
-                        @unlink($fullPath);
+                if (!$nData) {
+                    flash_set('error', 'Selected notice could not be found.');
+                } else {
+                    $del = $db->prepare("DELETE FROM notices WHERE id = ?");
+                    $del->execute([$id]);
+                    if (!empty($nData['file_path'])) {
+                        $relPath = trim((string)$nData['file_path']);
+                        $baseName = basename($relPath);
+                        if ($baseName !== '' && strpos($relPath, 'storage/uploads/notice_') === 0) {
+                            $refChk = $db->prepare("SELECT COUNT(*) FROM notices WHERE file_path = ?");
+                            $refChk->execute([$relPath]);
+                            if ((int)$refChk->fetchColumn() === 0) {
+                                $fullPath = STORAGE_PATH . '/uploads/' . $baseName;
+                                if (is_file($fullPath)) {
+                                    @unlink($fullPath);
+                                }
+                            }
+                        }
                     }
+                    log_audit('NOTICE_DELETED', "Deleted notice: {$nData['title_en']}");
+                    flash_set('success', "Notice deleted successfully.");
                 }
-                $del = $db->prepare("DELETE FROM notices WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('NOTICE_DELETED', "Deleted notice: {$nData['title_en']}");
-                flash_set('success', "Notice deleted successfully.");
             }
         } else {
             $titleEn = trim($_POST['title_en'] ?? '');
@@ -43,13 +55,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $filePath = null;
 
             // Handle File Upload
-            if (!empty($_FILES['attachment']['name'])) {
+            if (!empty($_FILES['attachment']['name']) || (isset($_FILES['attachment']['error']) && $_FILES['attachment']['error'] !== UPLOAD_ERR_NO_FILE)) {
+                $errCode = (int)($_FILES['attachment']['error'] ?? UPLOAD_ERR_NO_FILE);
+                if ($errCode !== UPLOAD_ERR_OK) {
+                    flash_set('error', 'Notice attachment upload failed (error code ' . $errCode . ').');
+                    header("Location: " . APP_URL . "/admin/notices.php");
+                    exit;
+                }
+
                 $allowedExts = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+                $allowedMimesByExt = [
+                    'pdf'  => ['application/pdf'],
+                    'doc'  => ['application/msword', 'application/CDFV2', 'application/octet-stream'],
+                    'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+                    'jpg'  => ['image/jpeg'],
+                    'jpeg' => ['image/jpeg'],
+                    'png'  => ['image/png'],
+                ];
                 $fileInfo = pathinfo($_FILES['attachment']['name']);
                 $ext = strtolower($fileInfo['extension'] ?? '');
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $mime = (string)$finfo->file($_FILES['attachment']['tmp_name']);
 
-                if (!in_array($ext, $allowedExts, true)) {
-                    flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, JPG, PNG.');
+                if (!in_array($ext, $allowedExts, true) || !in_array($mime, $allowedMimesByExt[$ext] ?? [], true)) {
+                    flash_set('error', 'Invalid file type or content signature. Allowed formats: PDF, DOC, DOCX, JPG, PNG.');
                     header("Location: " . APP_URL . "/admin/notices.php");
                     exit;
                 } elseif ($_FILES['attachment']['size'] > 10 * 1024 * 1024) {
@@ -59,9 +88,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $newFilename = 'notice_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
                     $targetDir = STORAGE_PATH . '/uploads';
-                    if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
+                    if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
                     if (move_uploaded_file($_FILES['attachment']['tmp_name'], $targetDir . '/' . $newFilename)) {
                         $filePath = 'storage/uploads/' . $newFilename;
+                    } else {
+                        flash_set('error', 'Failed to store uploaded attachment on disk.');
+                        header("Location: " . APP_URL . "/admin/notices.php");
+                        exit;
                     }
                 }
             }
@@ -81,12 +114,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif ($action === 'edit') {
                     $id = (int)($_POST['id'] ?? 0);
                     if ($filePath) {
+                        $prevStmt = $db->prepare("SELECT file_path FROM notices WHERE id = ?");
+                        $prevStmt->execute([$id]);
+                        $prevFilePath = (string)$prevStmt->fetchColumn();
+
                         $stmt = $db->prepare("
                             UPDATE notices 
                             SET title_en = ?, title_bn = ?, category = ?, content = ?, file_path = ?, published_date = ?, is_pinned = ?
                             WHERE id = ?
                         ");
                         $stmt->execute([$titleEn, $titleBn, $category, $content, $filePath, $pubDate, $isPinned, $id]);
+
+                        if ($prevFilePath !== '' && $prevFilePath !== $filePath && strpos($prevFilePath, 'storage/uploads/notice_') === 0) {
+                            $refChk = $db->prepare("SELECT COUNT(*) FROM notices WHERE file_path = ?");
+                            $refChk->execute([$prevFilePath]);
+                            if ((int)$refChk->fetchColumn() === 0) {
+                                $oldFull = STORAGE_PATH . '/uploads/' . basename($prevFilePath);
+                                if (is_file($oldFull)) {
+                                    @unlink($oldFull);
+                                }
+                            }
+                        }
                     } else {
                         $stmt = $db->prepare("
                             UPDATE notices 
@@ -127,7 +175,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -238,7 +286,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/notices.php?edit=<?= (int)$n['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/notices.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete notice <?= addslashes(e($n['title_en'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/notices.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete notice ' . $n['title_en'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$n['id'] ?>">

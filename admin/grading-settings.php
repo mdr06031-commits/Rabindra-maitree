@@ -6,7 +6,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../includes/functions.php';
 
-require_login();
+require_admin_manager_role();
 $adminPageTitle = 'GPA & CGPA Settings';
 $db = getDb();
 
@@ -143,7 +143,7 @@ include __DIR__ . '/includes/admin-header.php';
 </div>
 
 <!-- 2-Column Layout: Grading Table (Left) + Calculation Policies (Right) -->
-<div style="display:grid; grid-template-columns:2fr 1fr; gap:1.75rem; align-items:start;">
+<div class="admin-split-2col" style="display:grid; grid-template-columns:2fr 1fr; gap:1.75rem; align-items:start;">
 
   <!-- Left: Grading Rules Table -->
   <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
@@ -279,7 +279,7 @@ include __DIR__ . '/includes/admin-header.php';
       <input type="hidden" name="action" id="tierAction" value="add_rule">
       <input type="hidden" name="id" id="tierId" value="">
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+      <div class="admin-form-2col" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
         <div class="form-group">
           <label class="form-label">Min Marks (%) *</label>
           <input type="number" step="0.5" min="0" max="100" name="min_marks" id="tierMin" class="form-control" required>
@@ -290,7 +290,7 @@ include __DIR__ . '/includes/admin-header.php';
         </div>
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
+      <div class="admin-form-2col" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem;">
         <div class="form-group">
           <label class="form-label">Letter Grade *</label>
           <input type="text" name="letter_grade" id="tierGrade" placeholder="e.g. A+" class="form-control" required style="text-transform:uppercase; font-weight:800;">
@@ -306,7 +306,7 @@ include __DIR__ . '/includes/admin-header.php';
         <input type="text" name="remarks" id="tierRemarks" placeholder="e.g. Outstanding" class="form-control">
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; align-items:center; margin-bottom:1.25rem;">
+      <div class="admin-form-2col" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; align-items:center; margin-bottom:1.25rem;">
         <div>
           <label class="form-label">Sort Order</label>
           <input type="number" name="sort_order" id="tierSort" value="10" class="form-control">

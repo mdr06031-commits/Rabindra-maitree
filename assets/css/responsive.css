@@ -34,8 +34,9 @@
   }
 
   .nav-toggle-btn {
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
     font-size: 1.15rem;
   }
 
@@ -58,12 +59,14 @@
     width: 340px !important;
     max-width: 90vw !important;
     height: 100vh !important;
+    height: 100dvh !important;
     background-color: #ffffff !important;
     box-shadow: -6px 0 25px rgba(0,0,0,0.15) !important;
     border-left: 1px solid #cbd5e1 !important;
     z-index: 999999 !important;
     overflow-y: auto !important;
-    padding: 1.25rem 1rem 3rem !important;
+    overscroll-behavior: contain !important;
+    padding: max(1.25rem, env(safe-area-inset-top, 0px)) 1rem max(3rem, env(safe-area-inset-bottom, 0px)) !important;
     gap: 0 !important;
     opacity: 1 !important;
     filter: none !important;
@@ -153,7 +156,8 @@
     left: 0 !important;
     width: 100vw !important;
     height: 100vh !important;
-    background: transparent !important;
+    height: 100dvh !important;
+    background: rgba(15, 23, 42, 0.32) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     z-index: 999990 !important;
@@ -178,6 +182,61 @@
 
   .slider-container {
     height: 400px;
+  }
+
+  .sp-profile-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rmu-gpa-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .admin-split-2col {
+    grid-template-columns: 1fr !important;
+    gap: 1.25rem !important;
+  }
+}
+
+@media screen and (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+    max-width: 100%;
+  }
+
+  .nav-search-form button,
+  .nav-drawer-close-btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-header-apply,
+  .btn-header-student,
+  .program-tab-btn,
+  .page-item .page-link {
+    min-height: 44px;
+  }
+
+  .header-actions {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .footer-bottom {
+    flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
+    gap: 0.75rem;
+  }
+
+  .form-card,
+  .card,
+  .notice-card,
+  .faculty-card,
+  .admin-form-2col > *,
+  .admin-form-3col > * {
+    min-width: 0;
+    max-width: 100%;
   }
 }
 
@@ -235,7 +294,7 @@
   }
 
   .grid-3, .grid-2, .grid-4 {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
   }
 
   .footer-grid {
@@ -284,6 +343,107 @@
   .radio-group {
     flex-direction: column;
     gap: 0.6rem;
+  }
+
+  .sp-dash-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .sp-sem-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .admin-cgpa-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rmu-prog-split-grid {
+    grid-template-columns: 1fr !important;
+    gap: 1.25rem !important;
+  }
+
+  .rmu-prog-3col {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rmu-prog-4col {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .pay-filter-grid,
+  .admissions-dossier-decision-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  #printableTranscript {
+    padding: 1.15rem !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-form-2col,
+  .admin-form-3col {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .sp-pw-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rmu-prog-2col {
+    grid-template-columns: 1fr !important;
+  }
+
+  .rmu-prog-form-card {
+    padding: 1.15rem !important;
+  }
+
+  .adm-dossier-overlay {
+    padding: 0.65rem !important;
+  }
+
+  .adm-dossier-header {
+    padding: 0.95rem 1.05rem !important;
+  }
+
+  .adm-dossier-body {
+    padding: 1rem !important;
+    gap: 1rem !important;
+  }
+
+  .sp-admit-card {
+    padding: 1rem !important;
+  }
+
+  .rmu-tab-btn {
+    padding: 0.55rem 0.75rem !important;
+    font-size: 0.8rem !important;
+  }
+
+  .container {
+    padding: 0 0.75rem;
+  }
+
+  .form-container {
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .sp-sem-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .sp-profile-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sp-btn-back-website {
+    font-size: 0.78rem;
+    padding: 0.45rem 0.75rem;
   }
 }
 

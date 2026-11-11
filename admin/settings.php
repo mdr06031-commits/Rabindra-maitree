@@ -56,7 +56,7 @@ include __DIR__ . '/includes/admin-header.php';
       <i class="fas fa-university"></i> University Branding
     </h3>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
       <div class="form-group">
         <label class="form-label">University Name (English)</label>
         <input type="text" name="site_name_en" value="<?= e($settings['site_name_en'] ?? '') ?>" class="form-control" required>
@@ -77,7 +77,7 @@ include __DIR__ . '/includes/admin-header.php';
       <input type="text" name="campus_address" value="<?= e($settings['campus_address'] ?? '') ?>" class="form-control" required>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
       <div class="form-group">
         <label class="form-label">Primary Hotline Telephone</label>
         <input type="text" name="contact_phone" value="<?= e($settings['contact_phone'] ?? '') ?>" class="form-control" required>
@@ -98,7 +98,7 @@ include __DIR__ . '/includes/admin-header.php';
       <i class="fas fa-graduation-cap"></i> Admission Intake Configuration
     </h3>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
       <div class="form-group">
         <label class="form-label">Active Admission Term</label>
         <input type="text" name="admission_active_term" value="<?= e($settings['admission_active_term'] ?? 'Fall 2026') ?>" class="form-control" required>
@@ -114,7 +114,7 @@ include __DIR__ . '/includes/admin-header.php';
       <i class="fas fa-share-alt"></i> Verified Social Media Profiles
     </h3>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+    <div class="admin-form-3col" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
       <div class="form-group">
         <label class="form-label">Facebook URL</label>
         <input type="url" name="facebook_url" value="<?= e($settings['facebook_url'] ?? '') ?>" class="form-control">

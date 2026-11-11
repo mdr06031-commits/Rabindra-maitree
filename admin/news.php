@@ -22,10 +22,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT title_en FROM news WHERE id = ?");
                 $st->execute([$id]);
                 $nData = $st->fetch();
-                $del = $db->prepare("DELETE FROM news WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('NEWS_DELETED', "Deleted news article: {$nData['title_en']}");
-                flash_set('success', "News article deleted successfully.");
+                if (!$nData) {
+                    flash_set('error', 'Selected news article could not be found.');
+                } else {
+                    $del = $db->prepare("DELETE FROM news WHERE id = ?");
+                    $del->execute([$id]);
+                    log_audit('NEWS_DELETED', "Deleted news article: {$nData['title_en']}");
+                    flash_set('success', "News article deleted successfully.");
+                }
             }
         } else {
             $titleEn = trim($_POST['title_en'] ?? '');
@@ -85,7 +89,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -164,7 +168,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/news.php?edit=<?= (int)$item['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/news.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete news <?= addslashes(e($item['title_en'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/news.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete news ' . $item['title_en'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$item['id'] ?>">

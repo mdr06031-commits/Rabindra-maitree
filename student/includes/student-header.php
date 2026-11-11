@@ -24,7 +24,7 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title><?= e($portalTitle) ?> | Student Portal — <?= APP_NAME ?></title>
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
   
@@ -37,8 +37,8 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
   
   <!-- Student Portal Styles -->
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/style.css?v=<?= time() ?>">
-  <link rel="stylesheet" href="<?= APP_URL ?>/assets/css/responsive.css?v=<?= time() ?>">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/style.css')) ?>">
+  <link rel="stylesheet" href="<?= e(rmu_asset_url('assets/css/responsive.css')) ?>">
   
   <style>
     :root {
@@ -298,9 +298,17 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
 
     /* Main Container */
     .sp-main-container {
+      width: 100%;
       max-width: 1300px;
+      min-width: 0;
       margin: 2rem auto 4rem;
       padding: 0 1.25rem;
+    }
+
+    .sp-main-container > *,
+    .sp-profile-layout > * {
+      min-width: 0;
+      max-width: 100%;
     }
 
     /* Profile Card Banner */
@@ -423,7 +431,9 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
       border-radius: 10px;
       margin-bottom: 2rem;
       box-shadow: 0 2px 6px rgba(0,0,0,0.03);
-      overflow: hidden;
+      overflow-x: clip;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .sp-card-header {
@@ -432,7 +442,11 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
       background: #ffffff;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .sp-card-header h3 {
@@ -443,10 +457,13 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
       display: flex;
       align-items: center;
       gap: 0.5rem;
+      min-width: 0;
     }
 
     .sp-card-body {
       padding: 1.4rem;
+      min-width: 0;
+      max-width: 100%;
     }
 
     /* Tables */
@@ -491,6 +508,101 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
       padding: 3px 10px;
       border-radius: 12px;
       font-size: 0.76rem;
+    }
+
+    /* Responsive Student Portal Adjustments */
+    @media (max-width: 900px) {
+      .sp-dash-grid {
+        grid-template-columns: 1fr !important;
+      }
+    }
+
+    @media screen and (max-width: 767px) {
+      .sp-nav-container {
+        height: auto;
+        min-height: 60px;
+        padding: 0.65rem 0.85rem;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+      .sp-brand {
+        min-width: 0;
+        max-width: 100%;
+      }
+      .sp-brand-text h1 {
+        font-size: 0.94rem;
+      }
+      .sp-user-menu {
+        width: 100%;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        min-width: 0;
+      }
+      .sp-navbar .sp-btn-back-website,
+      .sp-navbar .sp-btn-logout {
+        display: inline-flex;
+        min-height: 44px;
+        padding: 0.45rem 0.75rem;
+        font-size: 0.82rem;
+      }
+      .sp-notif-btn {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+      }
+      .sp-user-badge {
+        min-height: 44px;
+        min-width: 0;
+        max-width: 100%;
+        padding: 0.35rem 0.75rem;
+      }
+      .sp-notif-dropdown {
+        position: fixed;
+        left: 0.75rem;
+        right: 0.75rem;
+        top: 68px;
+        width: auto;
+        max-width: calc(100vw - 1.5rem);
+        max-height: 75dvh;
+        overflow-y: auto;
+      }
+      .sp-tab-link {
+        min-height: 44px;
+        padding: 0.75rem 0.95rem;
+      }
+      .sp-profile-banner {
+        padding: 1.25rem;
+      }
+      .sp-profile-meta {
+        flex-wrap: wrap;
+        gap: 0.9rem;
+      }
+      .sp-kpi-grid {
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+        gap: 0.85rem;
+      }
+      .sp-main-container {
+        padding: 0 0.85rem;
+        margin: 1.25rem auto 2.5rem;
+      }
+      .sp-card-header,
+      .sp-card-body {
+        padding: 1rem;
+      }
+      .sp-main-container input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]),
+      .sp-main-container select,
+      .sp-main-container textarea {
+        font-size: 16px !important;
+        max-width: 100%;
+      }
+      .sp-main-container button,
+      .sp-main-container input[type="submit"],
+      .sp-main-container .btn-primary,
+      .sp-main-container .btn-secondary {
+        min-height: 44px;
+      }
     }
 
     /* Print Styles */
@@ -634,13 +746,34 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
         <i class="fas fa-exclamation-circle" style="font-size:1.1rem;"></i> <?= e($error) ?>
       </div>
     <?php endif; ?>
+    <?php if ($info = flash_get('info')): ?>
+      <div style="background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1.5rem; display:flex; align-items:center; gap:0.6rem; font-weight:600; font-size:0.9rem;">
+        <i class="fas fa-info-circle" style="font-size:1.1rem;"></i> <?= e($info) ?>
+      </div>
+    <?php endif; ?>
+    <?php if ($warning = flash_get('warning')): ?>
+      <div style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; padding:0.85rem 1.25rem; border-radius:8px; margin-bottom:1.5rem; display:flex; align-items:center; gap:0.6rem; font-weight:600; font-size:0.9rem;">
+        <i class="fas fa-exclamation-triangle" style="font-size:1.1rem;"></i> <?= e($warning) ?>
+      </div>
+    <?php endif; ?>
   </div>
 
   <script>
   function toggleNotificationMenu(e) {
     if (e) e.stopPropagation();
     var menu = document.getElementById('notifDropdown');
-    if (menu) menu.classList.toggle('show');
+    var btn = document.getElementById('notifBellBtn');
+    if (!menu) return;
+    var opening = !menu.classList.contains('show');
+    if (opening && window.innerWidth <= 767 && btn) {
+      var rect = btn.getBoundingClientRect();
+      var topPos = Math.max(12, Math.min(window.innerHeight - 160, Math.round(rect.bottom + 8)));
+      menu.style.top = topPos + 'px';
+    } else if (!opening || window.innerWidth > 767) {
+      menu.style.removeProperty('top');
+    }
+    menu.classList.toggle('show', opening);
+    if (btn) btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
   }
   document.addEventListener('click', function(e) {
     var menu = document.getElementById('notifDropdown');
@@ -648,6 +781,17 @@ $recentNotifications = $studentPkId > 0 ? get_student_notifications($studentPkId
     if (menu && menu.classList.contains('show')) {
       if (!menu.contains(e.target) && (!btn || !btn.contains(e.target))) {
         menu.classList.remove('show');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+      }
+    }
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var menu = document.getElementById('notifDropdown');
+      var btn = document.getElementById('notifBellBtn');
+      if (menu && menu.classList.contains('show')) {
+        menu.classList.remove('show');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
       }
     }
   });

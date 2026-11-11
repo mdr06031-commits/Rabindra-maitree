@@ -77,8 +77,9 @@ $academicPrograms = array_map(function($p) {
         </a>
         <ul class="desktop-simple-dropdown">
           <li><a href="<?= APP_URL ?>/notices.php"><i class="fas fa-list"></i> All Notices</a></li>
-          <li><a href="<?= APP_URL ?>/notices.php"><i class="fas fa-book"></i> Academic Notices</a></li>
-          <li><a href="<?= APP_URL ?>/notices.php"><i class="fas fa-user-plus"></i> Admission Notices</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Academic"><i class="fas fa-book"></i> Academic Notices</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Admission"><i class="fas fa-user-plus"></i> Admission Notices</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Exam"><i class="fas fa-pen-alt"></i> Exam Notices</a></li>
         </ul>
       </li>
 
@@ -250,9 +251,9 @@ $academicPrograms = array_map(function($p) {
         </a>
         <ul class="dropdown-menu">
           <li><a href="<?= APP_URL ?>/notices.php" class="dropdown-item"><strong>All University Notices &amp; Circulars</strong></a></li>
-          <li><a href="<?= APP_URL ?>/notices.php" class="dropdown-item"><i class="fas fa-book"></i> Academic Notices</a></li>
-          <li><a href="<?= APP_URL ?>/notices.php" class="dropdown-item"><i class="fas fa-user-plus"></i> Admission Circulars</a></li>
-          <li><a href="<?= APP_URL ?>/notices.php" class="dropdown-item"><i class="fas fa-pen-alt"></i> Exam &amp; Routine Notices</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Academic" class="dropdown-item"><i class="fas fa-book"></i> Academic Notices</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Admission" class="dropdown-item"><i class="fas fa-user-plus"></i> Admission Circulars</a></li>
+          <li><a href="<?= APP_URL ?>/notices.php?cat=Exam" class="dropdown-item"><i class="fas fa-pen-alt"></i> Exam &amp; Routine Notices</a></li>
         </ul>
       </li>
 
@@ -278,6 +279,13 @@ $academicPrograms = array_map(function($p) {
           <li><a href="<?= APP_URL ?>/contact.php" class="dropdown-item"><i class="fas fa-map-marker-alt"></i> Campus Location &amp; Visit</a></li>
         </ul>
       </li>
+
+      <!-- 7. Install PWA Trigger (Shown only when browser fires beforeinstallprompt) -->
+      <li class="nav-item" data-pwa-install-wrap hidden style="display:none; padding: 0.75rem 0.25rem 0;">
+        <button type="button" data-pwa-install-btn style="width:100%; min-height:44px; display:inline-flex; align-items:center; justify-content:center; gap:0.45rem; background:#0f2c59; color:#ffffff; border:none; border-radius:6px; font-weight:700; font-size:0.9rem; cursor:pointer;">
+          <i class="fas fa-download" aria-hidden="true"></i> Install RMU App
+        </button>
+      </li>
     </ul>
   </div>
 </nav>
@@ -302,6 +310,18 @@ $academicPrograms = array_map(function($p) {
     transition: all 0.2s ease !important;
     box-shadow: 0 2px 6px rgba(30, 115, 190, 0.35) !important;
     margin-left: 0.4rem !important;
+  }
+
+  @media screen and (max-width: 767px) {
+    .nav-toggle-btn {
+      width: 44px !important;
+      min-width: 44px !important;
+      height: 44px !important;
+    }
+    .nav-drawer-close-btn {
+      min-width: 44px !important;
+      min-height: 44px !important;
+    }
   }
   
   .nav-toggle-btn:hover,
@@ -621,212 +641,3 @@ $academicPrograms = array_map(function($p) {
     color: #1e73be !important;
   }
 </style>
-
-<!-- Self-Contained JavaScript for Instant, Cache-Proof Drawer and Programs Multi-Level Accordion -->
-<script>
-(function() {
-  // Toggle Program Subjects Accordion (Level 2: Program -> 4 Academic Years & Subjects)
-  window.toggleProgramSubjects = function(slug, e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }
-    var item = document.querySelector('.program-accordion-item[data-program-slug="' + slug + '"]');
-    if (!item) return;
-    var header = document.getElementById('programHeader-' + slug);
-    var subjects = document.getElementById('programSubjects-' + slug);
-    var isExpanded = item.classList.contains('active');
-
-    if (isExpanded) {
-      item.classList.remove('active');
-      if (header) header.setAttribute('aria-expanded', 'false');
-      if (subjects) {
-        subjects.style.setProperty('display', 'none', 'important');
-      }
-    } else {
-      // Close other program accordions for clean single-program view
-      document.querySelectorAll('.program-accordion-item').forEach(function(other) {
-        if (other !== item) {
-          other.classList.remove('active');
-          var otherHeader = other.querySelector('.program-accordion-header');
-          if (otherHeader) otherHeader.setAttribute('aria-expanded', 'false');
-          var otherSubjects = other.querySelector('.program-subjects-collapse');
-          if (otherSubjects) {
-            otherSubjects.style.setProperty('display', 'none', 'important');
-          }
-        }
-      });
-      item.classList.add('active');
-      if (header) header.setAttribute('aria-expanded', 'true');
-      if (subjects) {
-        subjects.style.setProperty('display', 'block', 'important');
-        subjects.style.setProperty('visibility', 'visible', 'important');
-        subjects.style.setProperty('opacity', '1', 'important');
-      }
-    }
-  };
-
-  // Expand All Program Subjects
-  window.expandAllProgramSubjects = function(e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-    }
-    document.querySelectorAll('.program-accordion-item').forEach(function(item) {
-      item.classList.add('active');
-      var h = item.querySelector('.program-accordion-header');
-      if (h) h.setAttribute('aria-expanded', 'true');
-      var s = item.querySelector('.program-subjects-collapse');
-      if (s) {
-        s.style.setProperty('display', 'block', 'important');
-        s.style.setProperty('visibility', 'visible', 'important');
-        s.style.setProperty('opacity', '1', 'important');
-      }
-    });
-  };
-
-  // Collapse All Program Subjects
-  window.collapseAllProgramSubjects = function(e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-    }
-    document.querySelectorAll('.program-accordion-item').forEach(function(item) {
-      item.classList.remove('active');
-      var h = item.querySelector('.program-accordion-header');
-      if (h) h.setAttribute('aria-expanded', 'false');
-      var s = item.querySelector('.program-subjects-collapse');
-      if (s) {
-        s.style.setProperty('display', 'none', 'important');
-      }
-    });
-  };
-
-  // Toggle Programs Dropdown Menu (Level 1: Menu -> 8 Programs)
-  window.toggleProgramsDropdown = function(e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }
-
-    var menu = document.getElementById('programsDropdownMenu');
-    var parent = document.querySelector('.programs-nav-item');
-    var link = document.getElementById('programsMenuLink');
-    if (!menu) return;
-
-    var isOpen = (menu.style.display === 'block') || menu.classList.contains('show') || (parent && parent.classList.contains('dropdown-show'));
-
-    // Close any other open submenus first
-    document.querySelectorAll('.rmu-navbar .nav-item.has-dropdown').forEach(function(el) {
-      if (el !== parent) {
-        el.classList.remove('dropdown-show');
-        var d = el.querySelector('.dropdown-menu');
-        if (d) {
-          d.classList.remove('show');
-          d.style.setProperty('display', 'none', 'important');
-        }
-        var l = el.querySelector('.dropdown-toggle');
-        if (l) l.setAttribute('aria-expanded', 'false');
-      }
-    });
-
-    if (isOpen) {
-      if (parent) parent.classList.remove('dropdown-show');
-      if (link) link.setAttribute('aria-expanded', 'false');
-      menu.classList.remove('show');
-      menu.style.setProperty('display', 'none', 'important');
-    } else {
-      if (parent) parent.classList.add('dropdown-show');
-      if (link) link.setAttribute('aria-expanded', 'true');
-      menu.classList.add('show');
-      menu.style.setProperty('display', 'block', 'important');
-      menu.style.setProperty('visibility', 'visible', 'important');
-      menu.style.setProperty('opacity', '1', 'important');
-      menu.style.setProperty('position', 'static', 'important');
-      menu.style.setProperty('max-height', '460px', 'important');
-      menu.style.setProperty('overflow-y', 'auto', 'important');
-    }
-  };
-  window.toggleProgramsSubmenu = window.toggleProgramsDropdown;
-
-  // Generic Submenu Toggle (Admission, Notice Board, Campus)
-  window.toggleSubmenu = function(toggleEl, e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }
-    if (!toggleEl) return;
-    var parent = toggleEl.closest('.nav-item.has-dropdown');
-    if (!parent) return;
-    if (parent.classList.contains('programs-nav-item')) {
-      window.toggleProgramsDropdown(e);
-      return;
-    }
-
-    var menu = parent.querySelector('.dropdown-menu');
-    if (!menu) return;
-    var isOpen = parent.classList.contains('dropdown-show') || menu.classList.contains('show') || (menu.style.display === 'block');
-    document.querySelectorAll('.rmu-navbar .nav-item.has-dropdown').forEach(function(el) {
-      if (el !== parent) {
-        el.classList.remove('dropdown-show');
-        var d = el.querySelector('.dropdown-menu');
-        if (d) {
-          d.classList.remove('show');
-          d.style.setProperty('display', 'none', 'important');
-        }
-        var l = el.querySelector('.dropdown-toggle');
-        if (l) l.setAttribute('aria-expanded', 'false');
-      }
-    });
-    if (!isOpen) {
-      parent.classList.add('dropdown-show');
-      var l = parent.querySelector('.dropdown-toggle');
-      if (l) l.setAttribute('aria-expanded', 'true');
-      menu.classList.add('show');
-      menu.style.setProperty('display', 'block', 'important');
-      menu.style.setProperty('visibility', 'visible', 'important');
-      menu.style.setProperty('opacity', '1', 'important');
-      menu.style.setProperty('position', 'static', 'important');
-    } else {
-      parent.classList.remove('dropdown-show');
-      var l = parent.querySelector('.dropdown-toggle');
-      if (l) l.setAttribute('aria-expanded', 'false');
-      menu.classList.remove('show');
-      menu.style.setProperty('display', 'none', 'important');
-    }
-  };
-
-  // Drawer Toggle (Three-Dot Menu Button)
-  window.toggleDrawerMenu = function(e) {
-    if (e) {
-      if (typeof e.preventDefault === 'function') e.preventDefault();
-      if (typeof e.stopPropagation === 'function') e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-    }
-
-    var nav = document.getElementById('primaryNav');
-    var btn = document.getElementById('navToggleBtn');
-    var backdrop = document.querySelector('.mobile-backdrop');
-    if (!nav) return;
-    var isOpen = nav.classList.contains('mobile-open');
-    if (!isOpen) {
-      nav.classList.add('mobile-open');
-      if (btn) {
-        btn.classList.add('active');
-        btn.setAttribute('aria-expanded', 'true');
-      }
-      if (backdrop) backdrop.classList.add('show');
-    } else {
-      nav.classList.remove('mobile-open');
-      if (btn) {
-        btn.classList.remove('active');
-        btn.setAttribute('aria-expanded', 'false');
-      }
-      if (backdrop) backdrop.classList.remove('show');
-    }
-  };
-})();
-</script>

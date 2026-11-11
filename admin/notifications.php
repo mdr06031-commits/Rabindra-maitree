@@ -34,9 +34,15 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
                     flash_set('success', "Notification broadcasted successfully to all " . count($studentIds) . " active students.");
                 } else {
                     $stId = (int)$target;
-                    create_student_notification($stId, $title, $message, $type);
-                    log_audit('NOTIFICATION_SENT', "Sent notification '{$title}' to Student #{$stId}");
-                    flash_set('success', "Notification dispatched successfully to student.");
+                    $stChk = $db->prepare("SELECT id FROM students WHERE id = ? LIMIT 1");
+                    $stChk->execute([$stId]);
+                    if (!$stChk->fetchColumn()) {
+                        flash_set('error', 'Selected recipient student account was not found.');
+                    } else {
+                        create_student_notification($stId, $title, $message, $type);
+                        log_audit('NOTIFICATION_SENT', "Sent notification '{$title}' to Student #{$stId}");
+                        flash_set('success', "Notification dispatched successfully to student.");
+                    }
                 }
             } else {
                 flash_set('error', 'Title and message are required.');

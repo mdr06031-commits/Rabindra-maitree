@@ -22,16 +22,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("SELECT title, file_path FROM downloads WHERE id = ?");
                 $st->execute([$id]);
                 $dData = $st->fetch();
-                if ($dData && !empty($dData['file_path'])) {
-                    $fullPath = __DIR__ . '/../' . $dData['file_path'];
-                    if (file_exists($fullPath)) {
-                        @unlink($fullPath);
+                if (!$dData) {
+                    flash_set('error', 'Selected document could not be found.');
+                } else {
+                    $del = $db->prepare("DELETE FROM downloads WHERE id = ?");
+                    $del->execute([$id]);
+                    if (!empty($dData['file_path'])) {
+                        $relPath = trim((string)$dData['file_path']);
+                        $baseName = basename($relPath);
+                        if ($baseName !== '' && strpos($relPath, 'storage/downloads/doc_') === 0) {
+                            $refChk = $db->prepare("SELECT COUNT(*) FROM downloads WHERE file_path = ?");
+                            $refChk->execute([$relPath]);
+                            if ((int)$refChk->fetchColumn() === 0) {
+                                $fullPath = STORAGE_PATH . '/downloads/' . $baseName;
+                                if (is_file($fullPath)) {
+                                    @unlink($fullPath);
+                                }
+                            }
+                        }
                     }
+                    log_audit('DOWNLOAD_DELETED', "Deleted download: {$dData['title']}");
+                    flash_set('success', "Document deleted successfully.");
                 }
-                $del = $db->prepare("DELETE FROM downloads WHERE id = ?");
-                $del->execute([$id]);
-                log_audit('DOWNLOAD_DELETED', "Deleted download: {$dData['title']}");
-                flash_set('success', "Document deleted successfully.");
             }
         } else {
             $title = trim($_POST['title'] ?? '');
@@ -41,13 +53,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $fileName = '';
 
             // Handle File Upload if provided
-            if (!empty($_FILES['file']['name'])) {
+            if (!empty($_FILES['file']['name']) || (isset($_FILES['file']['error']) && $_FILES['file']['error'] !== UPLOAD_ERR_NO_FILE)) {
+                $errCode = (int)($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE);
+                if ($errCode !== UPLOAD_ERR_OK) {
+                    flash_set('error', 'File upload failed (error code ' . $errCode . '). Please choose a valid file under 15 MB.');
+                    header("Location: " . APP_URL . "/admin/downloads.php");
+                    exit;
+                }
+
                 $allowedExts = ['pdf', 'doc', 'docx', 'zip', 'xls', 'xlsx'];
+                $allowedMimesByExt = [
+                    'pdf'  => ['application/pdf'],
+                    'doc'  => ['application/msword', 'application/CDFV2', 'application/octet-stream'],
+                    'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+                    'xls'  => ['application/vnd.ms-excel', 'application/CDFV2', 'application/octet-stream'],
+                    'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+                    'zip'  => ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip'],
+                ];
                 $fileInfo = pathinfo($_FILES['file']['name']);
                 $ext = strtolower($fileInfo['extension'] ?? '');
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $mime = (string)$finfo->file($_FILES['file']['tmp_name']);
 
-                if (!in_array($ext, $allowedExts, true)) {
-                    flash_set('error', 'Invalid file type. Allowed formats: PDF, DOC, DOCX, XLS, XLSX, ZIP.');
+                if (!in_array($ext, $allowedExts, true) || !in_array($mime, $allowedMimesByExt[$ext] ?? [], true)) {
+                    flash_set('error', 'Invalid file type or content signature. Allowed formats: PDF, DOC, DOCX, XLS, XLSX, ZIP.');
                     header("Location: " . APP_URL . "/admin/downloads.php");
                     exit;
                 } elseif ($_FILES['file']['size'] > 15 * 1024 * 1024) {
@@ -57,11 +86,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $newFilename = 'doc_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
                     $targetDir = STORAGE_PATH . '/downloads';
-                    if (!is_dir($targetDir)) mkdir($targetDir, 0777, true);
+                    if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
                     if (move_uploaded_file($_FILES['file']['tmp_name'], $targetDir . '/' . $newFilename)) {
                         $filePath = 'storage/downloads/' . $newFilename;
-                        $fileName = $_FILES['file']['name'];
+                        $fileName = basename((string)$_FILES['file']['name']);
                         $fileSize = round($_FILES['file']['size'] / 1024) . ' KB';
+                    } else {
+                        flash_set('error', 'Failed to store uploaded document on disk.');
+                        header("Location: " . APP_URL . "/admin/downloads.php");
+                        exit;
                     }
                 }
             }
@@ -84,12 +117,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif ($action === 'edit') {
                     $id = (int)($_POST['id'] ?? 0);
                     if ($filePath) {
+                        $prevStmt = $db->prepare("SELECT file_path FROM downloads WHERE id = ?");
+                        $prevStmt->execute([$id]);
+                        $prevFilePath = (string)$prevStmt->fetchColumn();
+
                         $stmt = $db->prepare("
                             UPDATE downloads 
                             SET title = ?, category = ?, file_name = ?, file_path = ?, file_size = ?
                             WHERE id = ?
                         ");
                         $stmt->execute([$title, $category, $fileName, $filePath, $fileSize, $id]);
+
+                        if ($prevFilePath !== '' && $prevFilePath !== $filePath && strpos($prevFilePath, 'storage/downloads/doc_') === 0) {
+                            $refChk = $db->prepare("SELECT COUNT(*) FROM downloads WHERE file_path = ?");
+                            $refChk->execute([$prevFilePath]);
+                            if ((int)$refChk->fetchColumn() === 0) {
+                                $oldFull = STORAGE_PATH . '/downloads/' . basename($prevFilePath);
+                                if (is_file($oldFull)) {
+                                    @unlink($oldFull);
+                                }
+                            }
+                        }
                     } else {
                         $stmt = $db->prepare("UPDATE downloads SET title = ?, category = ? WHERE id = ?");
                         $stmt->execute([$title, $category, $id]);
@@ -125,7 +173,7 @@ include __DIR__ . '/includes/admin-header.php';
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
+<div class="admin-split-2col" style="display: grid; grid-template-columns: 1.2fr 2fr; gap: 2rem; align-items: start;">
   <!-- Form -->
   <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1.75rem;">
     <h3 style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin-bottom: 1.25rem;">
@@ -201,7 +249,7 @@ include __DIR__ . '/includes/admin-header.php';
                 <a href="<?= APP_URL ?>/admin/downloads.php?edit=<?= (int)$d['id'] ?>" style="color: var(--rmu-primary); font-weight: 600; font-size: 0.85rem; margin-right: 6px;">
                   <i class="fas fa-edit"></i> Edit
                 </a>
-                <form action="<?= APP_URL ?>/admin/downloads.php" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete document <?= addslashes(e($d['title'])) ?>?');">
+                <form action="<?= APP_URL ?>/admin/downloads.php" method="POST" style="display: inline;" onsubmit="return confirm(<?= htmlspecialchars(json_encode('Are you sure you want to delete document ' . $d['title'] . '?'), ENT_QUOTES, 'UTF-8') ?>);">
                   <?= csrf_field() ?>
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="<?= (int)$d['id'] ?>">

@@ -5,13 +5,16 @@
 $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
 ?>
 <aside class="admin-sidebar">
-  <a href="<?= APP_URL ?>/admin/dashboard.php" class="admin-brand">
-    <img src="<?= APP_URL ?>/assets/images/logo.jpg" alt="RMU Logo" onerror="this.src='<?= APP_URL ?>/assets/images/logo.svg'">
-    <div>
-      <strong style="display: block; font-size: 0.95rem; line-height: 1.2;">RMU Admin</strong>
-      <small style="color: #64748b; font-size: 0.75rem;">Master Control Panel</small>
-    </div>
-  </a>
+  <div class="admin-brand-row">
+    <a href="<?= APP_URL ?>/admin/dashboard.php" class="admin-brand">
+      <img src="<?= APP_URL ?>/assets/images/logo.jpg" alt="RMU Logo" onerror="this.src='<?= APP_URL ?>/assets/images/logo.svg'">
+      <div>
+        <strong style="display: block; font-size: 0.95rem; line-height: 1.2;">RMU Admin</strong>
+        <small style="color: #64748b; font-size: 0.75rem;">Master Control Panel</small>
+      </div>
+    </a>
+    <button type="button" class="admin-sidebar-close" onclick="toggleAdminSidebar(false)" aria-label="Close Admin Menu">&times;</button>
+  </div>
 
   <ul class="admin-nav">
     <!-- 1. Dashboard -->
@@ -26,9 +29,23 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     </li>
 
     <!-- 2. Admission Management -->
-    <li class="admin-nav-item <?= ($adminCurrentPage === 'admissions.php') ? 'active' : '' ?>">
+    <?php
+      $pendingAdmBadge = function_exists('get_pending_admissions_count') ? get_pending_admissions_count() : 0;
+      $isPendingQueueView = ($adminCurrentPage === 'admissions.php' && ($_GET['status'] ?? '') === 'PendingQueue');
+    ?>
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'admissions.php' && !$isPendingQueueView) ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/admissions.php" class="admin-nav-link">
         <i class="fas fa-user-graduate"></i> Admission Management
+      </a>
+    </li>
+
+    <!-- 2b. Pending Applications Queue -->
+    <li class="admin-nav-item <?= $isPendingQueueView ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/admissions.php?status=PendingQueue" class="admin-nav-link" style="display:flex; justify-content:space-between; align-items:center; padding-left:2.2rem; font-size:0.84rem;">
+        <span><i class="fas fa-hourglass-half"></i> Pending Applications</span>
+        <?php if ($pendingAdmBadge > 0): ?>
+          <span style="background:#f59e0b; color:#0f172a; font-size:0.68rem; font-weight:800; padding:1px 6px; border-radius:10px; margin-left:6px;"><?= $pendingAdmBadge ?></span>
+        <?php endif; ?>
       </a>
     </li>
 
@@ -65,6 +82,13 @@ $adminCurrentPage = basename($_SERVER['PHP_SELF'] ?? 'dashboard.php');
     <li class="admin-nav-item <?= ($adminCurrentPage === 'semesters.php') ? 'active' : '' ?>">
       <a href="<?= APP_URL ?>/admin/semesters.php" class="admin-nav-link">
         <i class="fas fa-calendar-alt"></i> Semester Management
+      </a>
+    </li>
+
+    <!-- 6b. Academic Sessions & Passing Years -->
+    <li class="admin-nav-item <?= ($adminCurrentPage === 'academic-sessions.php') ? 'active' : '' ?>">
+      <a href="<?= APP_URL ?>/admin/academic-sessions.php" class="admin-nav-link">
+        <i class="fas fa-calendar-check"></i> Sessions &amp; Passing Years
       </a>
     </li>
 

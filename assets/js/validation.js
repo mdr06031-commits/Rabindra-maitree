@@ -67,52 +67,60 @@ document.addEventListener('DOMContentLoaded', function () {
       let firstErrorField = null;
 
       // Full Name
-      if (!fullNameInput.value.trim() || fullNameInput.value.trim().length < 3) {
-        showError(fullNameInput, 'Please provide applicant\'s full name (minimum 3 characters)');
-        if (!firstErrorField) firstErrorField = fullNameInput;
-        isValid = false;
-      } else {
-        clearError(fullNameInput);
+      if (fullNameInput) {
+        if (!fullNameInput.value.trim() || fullNameInput.value.trim().length < 3) {
+          showError(fullNameInput, 'Please provide applicant\'s full name (minimum 3 characters)');
+          if (!firstErrorField) firstErrorField = fullNameInput;
+          isValid = false;
+        } else {
+          clearError(fullNameInput);
+        }
       }
 
       // Mobile
-      const cleanMobile = mobileInput.value.replace(/[^0-9]/g, '');
-      if (!/^01[3-9]\d{8}$/.test(cleanMobile)) {
-        showError(mobileInput, 'Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678)');
-        if (!firstErrorField) firstErrorField = mobileInput;
-        isValid = false;
-      } else {
-        clearError(mobileInput);
+      if (mobileInput) {
+        const cleanMobile = mobileInput.value.replace(/[^0-9]/g, '');
+        if (!/^01[3-9]\d{8}$/.test(cleanMobile)) {
+          showError(mobileInput, 'Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678)');
+          if (!firstErrorField) firstErrorField = mobileInput;
+          isValid = false;
+        } else {
+          clearError(mobileInput);
+        }
       }
 
       // Last College
-      if (!collegeInput.value.trim()) {
-        showError(collegeInput, 'Previous college name is required');
-        if (!firstErrorField) firstErrorField = collegeInput;
-        isValid = false;
-      } else {
-        clearError(collegeInput);
+      if (collegeInput) {
+        if (!collegeInput.value.trim()) {
+          showError(collegeInput, 'Previous college name is required');
+          if (!firstErrorField) firstErrorField = collegeInput;
+          isValid = false;
+        } else {
+          clearError(collegeInput);
+        }
       }
 
       // SSC GPA
-      if (!checkGpa(sscGpaInput)) {
+      if (sscGpaInput && !sscGpaInput.disabled && !checkGpa(sscGpaInput)) {
         if (!firstErrorField) firstErrorField = sscGpaInput;
         isValid = false;
       }
 
       // HSC GPA
-      if (!checkGpa(hscGpaInput)) {
+      if (hscGpaInput && !hscGpaInput.disabled && !checkGpa(hscGpaInput)) {
         if (!firstErrorField) firstErrorField = hscGpaInput;
         isValid = false;
       }
 
       // Home District
-      if (!districtInput.value.trim()) {
-        showError(districtInput, 'Home district is required');
-        if (!firstErrorField) firstErrorField = districtInput;
-        isValid = false;
-      } else {
-        clearError(districtInput);
+      if (districtInput) {
+        if (!districtInput.value.trim()) {
+          showError(districtInput, 'Home district is required');
+          if (!firstErrorField) firstErrorField = districtInput;
+          isValid = false;
+        } else {
+          clearError(districtInput);
+        }
       }
 
       // Subject
@@ -124,22 +132,24 @@ document.addEventListener('DOMContentLoaded', function () {
         clearError(subjectSelect);
       }
 
-      // HSC Group radio check
-      const hscGroupChecked = admissionForm.querySelector('input[name="hsc_group"]:checked');
+      // Legacy HSC Group radio container (only if present)
       const hscGroupContainer = admissionForm.querySelector('.hsc-group-wrap');
-      if (!hscGroupChecked && hscGroupContainer) {
-        let err = hscGroupContainer.querySelector('.form-error-msg');
-        if (!err) {
-          err = document.createElement('div');
-          err.className = 'form-error-msg';
-          hscGroupContainer.appendChild(err);
+      if (hscGroupContainer) {
+        const hscGroupChecked = admissionForm.querySelector('input[name="hsc_group"]:checked');
+        if (!hscGroupChecked) {
+          let err = hscGroupContainer.querySelector('.form-error-msg');
+          if (!err) {
+            err = document.createElement('div');
+            err.className = 'form-error-msg';
+            hscGroupContainer.appendChild(err);
+          }
+          err.textContent = 'Please select your HSC group stream';
+          err.style.display = 'block';
+          isValid = false;
+        } else {
+          const err = hscGroupContainer.querySelector('.form-error-msg');
+          if (err) err.style.display = 'none';
         }
-        err.textContent = 'Please select your HSC group stream';
-        err.style.display = 'block';
-        isValid = false;
-      } else if (hscGroupContainer) {
-        const err = hscGroupContainer.querySelector('.form-error-msg');
-        if (err) err.style.display = 'none';
       }
 
       if (!isValid) {
@@ -147,16 +157,29 @@ document.addEventListener('DOMContentLoaded', function () {
         if (firstErrorField) {
           firstErrorField.focus();
         }
-      } else {
-        // Prevent double submit
+      } else if (!e.defaultPrevented && admissionForm.checkValidity()) {
+        // Only lock submit button once ALL handlers and required checks pass
         const submitBtn = admissionForm.querySelector('button[type="submit"]');
         if (submitBtn) {
+          if (!submitBtn.dataset.origHtml) {
+            submitBtn.dataset.origHtml = submitBtn.innerHTML;
+          }
           submitBtn.disabled = true;
           submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting Application...';
         }
       }
     });
   }
+
+  // Restore disabled submit buttons when navigating back via bfcache
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('#rmuAdmissionForm button[type="submit"], #rmuContactForm button[type="submit"]').forEach(function (btn) {
+      if (btn.dataset.origHtml !== undefined) {
+        btn.disabled = false;
+        btn.innerHTML = btn.dataset.origHtml;
+      }
+    });
+  });
 
   // 2. Contact Form Validation
   const contactForm = document.getElementById('rmuContactForm');
@@ -193,6 +216,9 @@ document.addEventListener('DOMContentLoaded', function () {
       } else {
         const submitBtn = contactForm.querySelector('button[type="submit"]');
         if (submitBtn) {
+          if (!submitBtn.dataset.origHtml) {
+            submitBtn.dataset.origHtml = submitBtn.innerHTML;
+          }
           submitBtn.disabled = true;
           submitBtn.innerHTML = 'Sending...';
         }

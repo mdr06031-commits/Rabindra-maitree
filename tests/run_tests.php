@@ -116,6 +116,12 @@ run_test("English-Only Language Enforcement & Character Set Verification", funct
     return true;
 });
 
+// Snapshot admission ID sequences & reservation high-water mark so CLI tests leave zero leftover state
+$__rmuDb = getDb();
+ensure_admission_id_generation_schema($__rmuDb);
+$__seqSnapshot = $__rmuDb->query("SELECT seq_year, last_app_seq, last_roll_seq FROM admission_sequences")->fetchAll(PDO::FETCH_ASSOC);
+$__maxResIdBefore = (int)$__rmuDb->query("SELECT COALESCE(MAX(id), 0) FROM admission_id_reservations")->fetchColumn();
+
 // 5. Test Key Public Routes Execution
 $publicPages = [
     'index.php',
@@ -237,6 +243,9 @@ run_test("Online Admission Prototype Submission & Duplicate Prevention", functio
         return "Duplicate detection logic failed to identify existing pending application.";
     }
 
+    // Clean up test record before exiting test
+    $db->prepare("DELETE FROM admissions WHERE application_ref = ?")->execute([$testRef]);
+
     return true;
 });
 
@@ -253,7 +262,9 @@ run_test("Contact Form Message Persistence & Sanitization", function() {
 
     $verify = $db->prepare("SELECT subject FROM contact_messages WHERE id = ?");
     $verify->execute([$id]);
-    if ($verify->fetchColumn() !== 'Test Unit Inquiry') return "Subject mismatch in contact message.";
+    $subj = $verify->fetchColumn();
+    $db->prepare("DELETE FROM contact_messages WHERE id = ?")->execute([$id]);
+    if ($subj !== 'Test Unit Inquiry') return "Subject mismatch in contact message.";
 
     return true;
 });
@@ -366,8 +377,20 @@ run_test("Student Record & Authentication Integrity", function() {
     if (!$student) {
         return "Demonstration student RMU2601001 not found in database.";
     }
-    if (!password_verify('student123', $student['password_hash'])) {
-        return "Student password verification failed for RMU2601001.";
+    if (empty($student['password_hash']) || strpos((string)$student['password_hash'], '$2') !== 0) {
+        return "Seeded student RMU2601001 password hash is missing or malformed.";
+    }
+
+    // Verify password hashing & authentication flow on an isolated temporary student
+    $tmpCode = 'RMU-TEST-AUTH-45';
+    $tmpPass = 'TmpVerify!2026';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpCode]);
+    $db->prepare("INSERT INTO students (student_id, full_name, email, password_hash, status) VALUES (?, 'Auth Test Student', 'authtest45@rmu.test', ?, 'Active')")
+       ->execute([$tmpCode, password_hash($tmpPass, PASSWORD_DEFAULT)]);
+    $tmpHash = (string)$db->query("SELECT password_hash FROM students WHERE student_id = '{$tmpCode}'")->fetchColumn();
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpCode]);
+    if (!password_verify($tmpPass, $tmpHash) || password_verify('wrongpass', $tmpHash)) {
+        return "Student password_hash/password_verify check failed.";
     }
 
     $courseCount = (int)$db->query("SELECT COUNT(*) FROM student_courses WHERE student_id = {$student['id']}")->fetchColumn();
@@ -545,66 +568,62 @@ run_test("Homepage Fast Facts Statistics Integrity (5 Metrics)", function() {
 // 50. Test Per-Semester Academic Transcript Generation & Verification
 run_test("Per-Semester Academic Transcript Generation & Download Verification", function() {
     $db = getDb();
-    
-    // Find or seed a demo student with results
-    $student = $db->query("SELECT s.* FROM students s JOIN student_results r ON s.id = r.student_id LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-    if (!$student) {
-        return "No student with academic results found in database.";
+    $tmpCode = 'RMU-TMP-T50';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpCode]);
+    $progRow = $db->query("SELECT id, department_id FROM programs WHERE slug = 'bsc-in-cse' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $db->prepare("
+        INSERT INTO students (student_id, full_name, email, phone, password_hash, program_id, degree_type, department_id, academic_session, batch, duration_years, program_duration, total_semesters, total_credits_required, status, results_visible, result_access_status, current_semester)
+        VALUES (?, 'Transcript 50 Test Student', 'tmp50@rmu.test', '01711005050', 'hash', ?, 'Bachelor / Honours', ?, 'Fall 2026', 'Fall 2026', 4.0, '4 Years (8 Semesters)', 8, 140, 'Active', 1, 'Active', '1st Semester')
+    ")->execute([$tmpCode, (int)($progRow['id'] ?? 1), (int)($progRow['department_id'] ?? 6)]);
+    $studentId = (int)$db->lastInsertId();
+
+    try {
+        $insR50 = $db->prepare("
+            INSERT INTO student_results
+            (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, publish_status, is_estimated, result_type, correction_reason)
+            VALUES (?, '1st Semester', 'CSE 101', 'Structured Programming', 3.0, 100, 84, 'A+', 4.00, 'Semester Final Examination', 1, 'Published', 0, 'Verified', 'Official transcript verification test')
+        ");
+        $insR50->execute([$studentId]);
+        recalculate_student_cgpa($studentId);
+
+        $_SESSION['student_pk_id'] = $studentId;
+        $_SESSION['student_id'] = $tmpCode;
+        $_SESSION['student_name'] = 'Transcript 50 Test Student';
+        $_GET['semester'] = '1st Semester';
+
+        ob_start();
+        require BASE_PATH . '/student/semester-transcript.php';
+        $output = ob_get_clean();
+        unset($_GET['semester']);
+
+        if (empty($output)) {
+            return "Transcript page produced empty output.";
+        }
+        if (strpos($output, 'Rabindra Maitree University') === false) {
+            return "Transcript missing university title.";
+        }
+        if (strpos($output, 'Official Semester Grade Sheet &amp; Transcript') === false && strpos($output, 'Official Semester Grade Sheet & Transcript') === false) {
+            return "Transcript missing official grade sheet heading.";
+        }
+        if (strpos($output, $tmpCode) === false) {
+            return "Transcript missing student ID.";
+        }
+        if (strpos($output, 'Semester GPA (SGPA)') === false) {
+            return "Transcript missing SGPA performance metric.";
+        }
+        if (strpos($output, 'UGC Uniform Grading Scale') === false) {
+            return "Transcript missing UGC grading scale reference.";
+        }
+        if (strpos($output, 'Controller of Examinations') === false) {
+            return "Transcript missing Controller of Examinations signature block.";
+        }
+        return true;
+    } finally {
+        unset($_GET['semester']);
+        $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$studentId]);
+        $db->prepare("DELETE FROM student_notifications WHERE student_id = ?")->execute([$studentId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$studentId]);
     }
-
-    $studentId = (int)$student['id'];
-
-    // Verify student results exist
-    $resStmt = $db->prepare("SELECT * FROM student_results WHERE student_id = ?");
-    $resStmt->execute([$studentId]);
-    $results = $resStmt->fetchAll(PDO::FETCH_ASSOC);
-    if (empty($results)) {
-        return "Failed to load student results.";
-    }
-
-    $firstSem = $results[0]['semester'];
-
-    // Test rendering semester-transcript.php in buffer
-    $_SESSION['student_pk_id'] = $studentId;
-    $_SESSION['student_id'] = $student['student_id'];
-    $_SESSION['student_name'] = $student['full_name'];
-    $_GET['semester'] = $firstSem;
-
-    ob_start();
-    require BASE_PATH . '/student/semester-transcript.php';
-    $output = ob_get_clean();
-
-    unset($_GET['semester']);
-
-    if (empty($output)) {
-        return "Transcript page produced empty output.";
-    }
-
-    if (strpos($output, 'Rabindra Maitree University') === false) {
-        return "Transcript missing university title.";
-    }
-
-    if (strpos($output, 'Official Semester Grade Sheet &amp; Transcript') === false && strpos($output, 'Official Semester Grade Sheet & Transcript') === false) {
-        return "Transcript missing official grade sheet heading.";
-    }
-
-    if (strpos($output, $student['student_id']) === false) {
-        return "Transcript missing student ID.";
-    }
-
-    if (strpos($output, 'Semester GPA (SGPA)') === false) {
-        return "Transcript missing SGPA performance metric.";
-    }
-
-    if (strpos($output, 'UGC Uniform Grading Scale') === false) {
-        return "Transcript missing UGC grading scale reference.";
-    }
-
-    if (strpos($output, 'Controller of Examinations') === false) {
-        return "Transcript missing Controller of Examinations signature block.";
-    }
-
-    return true;
 });
 
 // 51. UGC Uniform Grading Scale Auto-Calculation Function Verification
@@ -687,43 +706,81 @@ run_test("Credit-Weighted CGPA Formula vs Simple Average Integrity", function() 
 // 53. Render Student Results Page with 8 Semesters, Marks & Transcript Summary
 run_test("Render student/results.php: Full Marks, Obtained Marks, 8-Semester Strip & Summary", function() {
     $db = getDb();
-    $student = $db->query("SELECT * FROM students WHERE id = 4 OR student_id = 'RMU2601001' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $tmpCode = 'RMU-TMP-T53';
+    $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpCode]);
+    $progRow = $db->query("SELECT id, department_id FROM programs WHERE slug = 'bsc-in-cse' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $db->prepare("
+        INSERT INTO students (student_id, full_name, email, phone, password_hash, program_id, degree_type, department_id, academic_session, batch, duration_years, program_duration, total_semesters, total_credits_required, status, results_visible, result_access_status, current_semester)
+        VALUES (?, 'Transcript 53 Test Student', 'tmp53@rmu.test', '01711005353', 'hash', ?, 'Bachelor / Honours', ?, 'Fall 2026', 'Fall 2026', 4.0, '4 Years (8 Semesters)', 8, 140, 'Graduated', 1, 'Active', '8th Semester')
+    ")->execute([$tmpCode, (int)($progRow['id'] ?? 1), (int)($progRow['department_id'] ?? 6)]);
+    $tmpId = (int)$db->lastInsertId();
 
-    $_SESSION['student_pk_id'] = $student['id'];
-    $_SESSION['student_id'] = $student['student_id'];
-    $_SESSION['student_name'] = $student['full_name'];
-
-    ob_start();
-    require BASE_PATH . '/student/results.php';
-    $output = ob_get_clean();
-
-    if (empty($output)) {
-        return "student/results.php generated empty output.";
-    }
-
-    $expectedSnippets = [
-        'Rabindra Maitree University',
-        'OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD',
-        'Subject Code',
-        'Subject Name',
-        'Credit',
-        'Full Marks',
-        'Obtained',
-        'Grade Point',
-        'Eight-Semester GPA Progression',
-        'Academic Transcript Summary &amp; Degree Status',
-        'Office of Registrar',
-        'Controller of Examinations',
-        'RMU SEAL'
-    ];
-
-    foreach ($expectedSnippets as $snip) {
-        if (strpos($output, $snip) === false) {
-            return "student/results.php missing required snippet: '$snip'";
+    try {
+        $insR53 = $db->prepare("
+            INSERT INTO student_results
+            (student_id, semester, course_code, course_name, credit, full_marks, marks, letter_grade, grade_point, exam_term, is_published, publish_status, is_estimated, result_type, correction_reason)
+            VALUES (?, ?, ?, ?, 3.0, 100, 82, 'A+', 4.00, 'Semester Final Examination', 1, 'Published', 0, 'Verified', 'Official 8-sem render verification')
+        ");
+        for ($semNo = 1; $semNo <= 8; $semNo++) {
+            $semName = get_semester_ordinal_title($semNo);
+            $insR53->execute([$tmpId, $semName, 'CSE ' . (100 * $semNo + 1), "Core Course Sem {$semNo}"]);
         }
-    }
+        recalculate_student_cgpa($tmpId);
 
-    return true;
+        $_SESSION['student_pk_id'] = $tmpId;
+        $_SESSION['student_id'] = $tmpCode;
+        $_SESSION['student_name'] = 'Transcript 53 Test Student';
+
+        ob_start();
+        require BASE_PATH . '/student/results.php';
+        $output = ob_get_clean();
+
+        if (empty($output)) {
+            return "student/results.php generated empty output.";
+        }
+
+        $expectedSnippets = [
+            'Rabindra Maitree University',
+            'OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD',
+            'Subject Code',
+            'Subject Name',
+            'Credit',
+            'Full Marks',
+            'Obtained',
+            'Grade Point',
+            'Eight-Semester GPA Progression',
+            'Academic Transcript Summary &amp; Degree Status',
+            'Office of Registrar',
+            'Controller of Examinations',
+            'RMU SEAL'
+        ];
+
+        foreach ($expectedSnippets as $snip) {
+            if (strpos($output, $snip) === false) {
+                return "student/results.php missing required snippet: '$snip'";
+            }
+        }
+
+        // Also ensure seeded Student #4 results page renders non-empty HTML without errors
+        $seedStudent = $db->query("SELECT * FROM students WHERE id = 4 OR student_id = 'RMU2601001' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if ($seedStudent) {
+            $_SESSION['student_pk_id'] = $seedStudent['id'];
+            $_SESSION['student_id'] = $seedStudent['student_id'];
+            $_SESSION['student_name'] = $seedStudent['full_name'];
+            ob_start();
+            require BASE_PATH . '/student/results.php';
+            $seedOutput = ob_get_clean();
+            if (empty($seedOutput) || strpos($seedOutput, $seedStudent['student_id']) === false) {
+                return "Seed student RMU2601001 results view failed to render.";
+            }
+        }
+
+        return true;
+    } finally {
+        $db->prepare("DELETE FROM student_results WHERE student_id = ?")->execute([$tmpId]);
+        $db->prepare("DELETE FROM student_notifications WHERE student_id = ?")->execute([$tmpId]);
+        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$tmpId]);
+    }
 });
 
 // 54. Render Consolidated 8-Semester Transcript (PDF Printable)
@@ -778,21 +835,35 @@ run_test("Render student/semester-transcript.php (Consolidated 8-Semester Mode)"
 // 55. Zero Published Results Handling: No Dummy 3.33 CGPA Displayed
 run_test("Zero Published Results: Displays 'No academic results published yet' and Zero/NA CGPA", function() {
     $db = getDb();
-    // Find or test with student that has 0 published results (e.g. Student 2 RMU2601002)
+    // Find an active student without published results, or create a temporary one cleanly
+    $createdTemp = false;
     $studentZero = $db->query("
         SELECT s.* FROM students s 
         LEFT JOIN student_results r ON s.id = r.student_id AND r.is_published = 1 
-        WHERE r.id IS NULL 
+        WHERE r.id IS NULL AND s.status = 'Active'
         LIMIT 1
     ")->fetch(PDO::FETCH_ASSOC);
 
     if (!$studentZero) {
-        return "No student without results found to test zero-results behavior.";
+        $tmpZeroCode = 'RMU-TEST-ZERO-RES';
+        $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$tmpZeroCode]);
+        $db->prepare("INSERT INTO students (student_id, full_name, email, password_hash, status, current_year, current_semester, cgpa, credits_completed, total_credits_required) VALUES (?, 'Zero Result Test Student', 'zerores@rmu.edu', 'hash', 'Active', '1st Year', '1st Semester', 0.00, 0, 140)")->execute([$tmpZeroCode]);
+        $tmpZeroId = (int)$db->lastInsertId();
+        $stmtZ = $db->prepare("SELECT * FROM students WHERE id = ?");
+        $stmtZ->execute([$tmpZeroId]);
+        $studentZero = $stmtZ->fetch(PDO::FETCH_ASSOC);
+        $createdTemp = true;
     }
 
     $_SESSION['student_pk_id'] = $studentZero['id'];
     $_SESSION['student_id'] = $studentZero['student_id'];
     $_SESSION['student_name'] = $studentZero['full_name'];
+
+    $cleanupTemp = function() use ($db, $createdTemp, $studentZero) {
+        if ($createdTemp && !empty($studentZero['id'])) {
+            $db->prepare("DELETE FROM students WHERE id = ?")->execute([(int)$studentZero['id']]);
+        }
+    };
 
     // Test dashboard
     ob_start();
@@ -800,9 +871,11 @@ run_test("Zero Published Results: Displays 'No academic results published yet' a
     $dashOut = ob_get_clean();
 
     if (strpos($dashOut, '3.33') !== false) {
+        $cleanupTemp();
         return "Dashboard still displays fake 3.33 CGPA for student without published results.";
     }
     if (strpos($dashOut, 'No published results yet') === false) {
+        $cleanupTemp();
         return "Dashboard missing 'No published results yet' indicator for student without results.";
     }
 
@@ -810,6 +883,8 @@ run_test("Zero Published Results: Displays 'No academic results published yet' a
     ob_start();
     require BASE_PATH . '/student/results.php';
     $resultsOut = ob_get_clean();
+
+    $cleanupTemp();
 
     if (strpos($resultsOut, 'No academic results published yet') === false) {
         return "Results page missing 'No academic results published yet' banner.";
@@ -941,84 +1016,78 @@ run_test("Student Dashboard Course Enrollment Section & Admin Assignment", funct
 run_test("Student Dashboard Tuition & Fee History & Payment Tracking", function() {
     $db = getDb();
 
-    // 1. Ensure Student 4 has Paid, Pending, and Failed fee records for comprehensive test
-    $hasPending = $db->query("SELECT COUNT(*) FROM student_fees WHERE student_id = 4 AND status = 'Pending'")->fetchColumn();
-    if (!$hasPending) {
-        $db->prepare("INSERT INTO student_fees (student_id, fee_title, amount, due_date, status, transaction_id, paid_at) VALUES (4, 'Mid-Term Examination & Lab Fee', 12500.00, CURDATE(), 'Pending', 'RMU-TXN-PENDING1', NULL)")->execute();
-    }
-    $hasFailed = $db->query("SELECT COUNT(*) FROM student_fees WHERE student_id = 4 AND status = 'Failed'")->fetchColumn();
-    if (!$hasFailed) {
-        $db->prepare("INSERT INTO student_fees (student_id, fee_title, amount, due_date, status, transaction_id, paid_at) VALUES (4, 'Library & Activity Fee', 3500.00, CURDATE(), 'Failed', 'RMU-FAIL-999', NULL)")->execute();
-    }
-
+    // 1. Render seeded Student #4 dashboard without mutating Student #4 fees
     $_SESSION['student_pk_id'] = 4;
     $_SESSION['student_id'] = 'RMU2601001';
     $_SESSION['student_name'] = 'Tanvir Hasan';
 
     ob_start();
     require BASE_PATH . '/student/dashboard.php';
-    $dashOut = ob_get_clean();
-
-    $requiredFeeFields = [
-        'Tuition &amp; Semester Fee History',
-        'Fee Description',
-        'Amount',
-        'Payment Status',
-        'Transaction ID',
-        'Paid Date',
-        'All Payments',
-        'Paid',
-        'Pending',
-        'Failed'
-    ];
-
-    foreach ($requiredFeeFields as $f) {
-        if (strpos($dashOut, $f) === false && strpos($dashOut, html_entity_decode($f)) === false) {
-            return "Student dashboard missing fee field / status: '$f'";
-        }
+    $seedDashOut = ob_get_clean();
+    if (empty($seedDashOut) || strpos($seedDashOut, 'Tuition &amp; Semester Fee History') === false) {
+        return "Seeded Student #4 dashboard missing Tuition & Semester Fee History section.";
     }
 
-    // 2. Test empty-state for student without fees
+    // 2. Test empty-state and all fee statuses (Paid, Pending, Failed) on isolated temporary student
     $testCode = 'RMU-TEST-F-EMPTY';
     $db->prepare("DELETE FROM students WHERE student_id = ?")->execute([$testCode]);
     $db->prepare("INSERT INTO students (student_id, full_name, email, password_hash, status, current_year, current_semester, cgpa, credits_completed, total_credits_required) VALUES (?, 'Fee Empty Student', 'fempty@rmu.edu', 'hash', 'Active', '1st Year', '1st Semester', 0.0, 0, 140)")->execute([$testCode]);
     $emptyId = (int)$db->lastInsertId();
 
-    $_SESSION['student_pk_id'] = $emptyId;
-    $_SESSION['student_id'] = $testCode;
-    $_SESSION['student_name'] = 'Fee Empty Student';
+    try {
+        $_SESSION['student_pk_id'] = $emptyId;
+        $_SESSION['student_id'] = $testCode;
+        $_SESSION['student_name'] = 'Fee Empty Student';
 
-    ob_start();
-    require BASE_PATH . '/student/dashboard.php';
-    $emptyDash = ob_get_clean();
+        ob_start();
+        require BASE_PATH . '/student/dashboard.php';
+        $emptyDash = ob_get_clean();
 
-    if (strpos($emptyDash, 'No Fee Records Found') === false) {
-        $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
-        return "Student dashboard missing clean empty-state message when 0 fees exist.";
-    }
+        if (strpos($emptyDash, 'No Fee Records Found') === false) {
+            return "Student dashboard missing clean empty-state message when 0 fees exist.";
+        }
 
-    // 3. Add fee and verify dynamic appearance on student dashboard
-    $db->prepare("
-        INSERT INTO student_fees 
-        (student_id, fee_title, amount, due_date, status, transaction_id, paid_at)
-        VALUES (?, 'Fall 2026 Tuition Fee Voucher', 32000.00, CURDATE(), 'Paid', 'RMU-TXN-OK889', NOW())
-    ")->execute([$emptyId]);
+        // 3. Add Paid, Pending, and Failed fees to temp student and verify dynamic appearance
+        $db->prepare("
+            INSERT INTO student_fees (student_id, fee_title, amount, due_date, status, transaction_id, paid_at)
+            VALUES
+              (?, 'Fall 2026 Tuition Fee Voucher', 32000.00, CURDATE(), 'Paid', 'RMU-TXN-OK889', NOW()),
+              (?, 'Mid-Term Examination & Lab Fee', 12500.00, CURDATE(), 'Pending', 'RMU-TXN-PENDING1', NULL),
+              (?, 'Library & Activity Fee', 3500.00, CURDATE(), 'Failed', 'RMU-FAIL-999', NULL)
+        ")->execute([$emptyId, $emptyId, $emptyId]);
 
-    ob_start();
-    require BASE_PATH . '/student/dashboard.php';
-    $afterFee = ob_get_clean();
+        ob_start();
+        require BASE_PATH . '/student/dashboard.php';
+        $afterFee = ob_get_clean();
 
-    if (strpos($afterFee, 'Fall 2026 Tuition Fee Voucher') === false || strpos($afterFee, '32,000.00') === false || strpos($afterFee, 'RMU-TXN-OK889') === false) {
+        if (strpos($afterFee, 'Fall 2026 Tuition Fee Voucher') === false || strpos($afterFee, '32,000.00') === false || strpos($afterFee, 'RMU-TXN-OK889') === false) {
+            return "Newly added fee failed to appear dynamically on student dashboard.";
+        }
+
+        $requiredFeeFields = [
+            'Tuition &amp; Semester Fee History',
+            'Fee Description',
+            'Amount',
+            'Payment Status',
+            'Transaction ID',
+            'Paid Date',
+            'All Payments',
+            'Paid',
+            'Pending',
+            'Failed'
+        ];
+
+        foreach ($requiredFeeFields as $f) {
+            if (strpos($afterFee, $f) === false && strpos($afterFee, html_entity_decode($f)) === false) {
+                return "Student dashboard missing fee field / status: '$f'";
+            }
+        }
+
+        return true;
+    } finally {
         $db->prepare("DELETE FROM student_fees WHERE student_id = ?")->execute([$emptyId]);
         $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
-        return "Newly added fee failed to appear dynamically on student dashboard.";
     }
-
-    // Cleanup
-    $db->prepare("DELETE FROM student_fees WHERE student_id = ?")->execute([$emptyId]);
-    $db->prepare("DELETE FROM students WHERE id = ?")->execute([$emptyId]);
-
-    return true;
 });
 
 // 59. End-to-End Advanced Admin Result Management System Workflow
@@ -1404,6 +1473,16 @@ run_test("Complete 12-Section Admin Control Panel & 3-State Result Workflow Inte
 
     return true;
 });
+
+// Clean up any synthetic ID reservations and restore admission sequences touched during CLI test run
+try {
+    $__rmuDb->prepare("DELETE FROM admissions WHERE mobile = '01700998877'")->execute();
+    $__rmuDb->prepare("DELETE FROM admission_id_reservations WHERE id > ?")->execute([$__maxResIdBefore]);
+    foreach ($__seqSnapshot as $__sr) {
+        $__rmuDb->prepare("UPDATE admission_sequences SET last_app_seq = ?, last_roll_seq = ?, updated_at = NOW() WHERE seq_year = ?")
+                ->execute([(int)$__sr['last_app_seq'], (int)$__sr['last_roll_seq'], (int)$__sr['seq_year']]);
+    }
+} catch (Throwable $ignored) {}
 
 echo bold("\n-------------------------------------------------------\n");
 echo "TOTAL TESTS: " . bold($totalTests) . " | PASSED: " . green($passedTests) . " | FAILED: " . ($failedTests > 0 ? red($failedTests) : green(0)) . "\n";

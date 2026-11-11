@@ -62,7 +62,7 @@ include __DIR__ . '/includes/breadcrumbs.php';
 
         <!-- Rich Notice Body -->
         <div style="color: var(--rmu-dark); line-height: 1.8; font-size: 1.05rem; margin-bottom: 2.5rem;">
-          <?= $notice['content'] ?>
+          <?= sanitize_rich_html($notice['content']) ?>
         </div>
 
         <?php if (!empty($notice['file_path'])): ?>

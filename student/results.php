@@ -4,14 +4,15 @@
  * Complete 8-Semester Academic Transcript & CGPA Management System
  * Rabindra Maitree University (RMU)
  */
-$portalTitle = 'Academic Results & Grade Sheet';
-require_once __DIR__ . '/includes/student-header.php';
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../includes/functions.php';
 
+require_student_login();
 $student = get_logged_in_student();
 $studentId = (int)($student['id'] ?? ($_SESSION['student_pk_id'] ?? 0));
 $db = getDb();
 
-// Handle Student Result Inquiry / Review Request
+// Handle Student Result Inquiry / Review Request before sending HTML output
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') === 'submit_result_request') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         flash_set('error', 'CSRF verification failed. Please try again.');
@@ -20,7 +21,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') ==
         $courseCode = strtoupper(trim($_POST['course_code'] ?? ''));
         $requestType = trim($_POST['request_type'] ?? 'Result Review');
         $validTypes = ['Result Review', 'Grade Correction', 'Missing Marks', 'Transcript Inquiry', 'General Query'];
-        if (!in_array($requestType, $validTypes)) {
+        if (!in_array($requestType, $validTypes, true)) {
             $requestType = 'Result Review';
         }
         $subject = trim($_POST['subject'] ?? '');
@@ -52,14 +53,31 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') ==
     }
 }
 
-// Retrieve complete academic summary (only published results for students)
+$portalTitle = 'Academic Results & Grade Sheet';
+require_once __DIR__ . '/includes/student-header.php';
+
+// Retrieve complete academic summary (only published & visible results for students)
 $academicSummary = get_student_academic_summary($studentId, true);
 $hasResults = $academicSummary['has_results'];
+$isResultsHidden = !empty($academicSummary['results_hidden']);
+$isResultsSuspended = !empty($academicSummary['results_suspended']);
+$progStruct = $academicSummary['program_structure'] ?? [
+    'degree_type' => $student['degree_type'] ?? 'Bachelor / Honours',
+    'duration_label' => $student['program_duration'] ?? '4 Years (8 Semesters)',
+    'total_semesters' => (int)($student['total_semesters'] ?? 8),
+];
+$totalSemesters = max(1, (int)($progStruct['total_semesters'] ?? 8));
+$semSchedule = $academicSummary['semester_schedule'] ?? [];
+$pubDateDisplay = !empty($student['result_publication_date']) ? format_date($student['result_publication_date']) : '';
 $semesters = $academicSummary['semesters'] ?? [];
+$allSemesters = $academicSummary['all_semesters'] ?? [];
 $semesterGpas = $academicSummary['semester_gpas'] ?? [];
 $finalCgpa = $academicSummary['final_cgpa'] ?? 0.00;
 $totalRegCredits = $academicSummary['total_registered_credits'] ?? 0.0;
 $totalEarnedCredits = $academicSummary['total_earned_credits'] ?? 0.0;
+$totalReqCredits = (int)($academicSummary['total_required_credits'] ?? ($student['total_credits_required'] ?? 140));
+$publishedSemCount = (int)($academicSummary['published_semesters_count'] ?? count($semesters));
+$overallStatus = $academicSummary['overall_academic_status'] ?? ($student['status'] ?? 'Active');
 
 // Retrieve student's result inquiries & requests
 $studentRequestsStmt = $db->prepare("
@@ -70,18 +88,21 @@ $studentRequestsStmt = $db->prepare("
 $studentRequestsStmt->execute([$studentId]);
 $myRequests = $studentRequestsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Retrieve official publication history
-$pubHistoryStmt = $db->prepare("
-    SELECT semester, exam_term, MAX(published_at) as pub_time, COUNT(*) as courses_count,
-           u.full_name as published_by_name
-    FROM student_results sr
-    LEFT JOIN users u ON sr.published_by = u.id
-    WHERE sr.student_id = ? AND sr.is_published = 1 AND sr.published_at IS NOT NULL
-    GROUP BY semester, exam_term, u.full_name
-    ORDER BY pub_time DESC
-");
-$pubHistoryStmt->execute([$studentId]);
-$publicationLogs = $pubHistoryStmt->fetchAll(PDO::FETCH_ASSOC);
+// Retrieve official publication history (hidden if results_visible = 0 or suspended)
+$publicationLogs = [];
+if (!$isResultsHidden && !$isResultsSuspended) {
+    $pubHistoryStmt = $db->prepare("
+        SELECT semester, exam_term, MAX(published_at) as pub_time, COUNT(*) as courses_count,
+               u.full_name as published_by_name
+        FROM student_results sr
+        LEFT JOIN users u ON sr.published_by = u.id
+        WHERE sr.student_id = ? AND sr.is_published = 1 AND sr.published_at IS NOT NULL
+        GROUP BY semester, exam_term, u.full_name
+        ORDER BY pub_time DESC
+    ");
+    $pubHistoryStmt->execute([$studentId]);
+    $publicationLogs = $pubHistoryStmt->fetchAll(PDO::FETCH_ASSOC);
+}
 
 $transcriptSerial = 'RMU-TR-' . date('Y') . '-' . strtoupper(substr(md5($student['student_id'] . 'all'), 0, 8));
 $issueDate = date('d F Y');
@@ -96,9 +117,13 @@ $issueDate = date('d F Y');
         <i class="fas fa-file-invoice" style="color:var(--sp-primary);"></i> Academic Results &amp; Grade Transcript
       </h2>
       <p style="margin:0; font-size:0.88rem; color:#64748b;">
-        Official Semester Final Results • Overall Cumulative CGPA: 
-        <?php if ($hasResults): ?>
+        Official Semester Final Results &bull; Overall Cumulative CGPA: 
+        <?php if ($hasResults && !$isResultsSuspended && !$isResultsHidden): ?>
           <strong style="color:#15803d; font-size:0.95rem;"><?= number_format($finalCgpa, 2) ?></strong> / 4.00
+        <?php elseif ($isResultsSuspended): ?>
+          <span style="color:#c2410c; font-weight:700;">Result Access Suspended</span>
+        <?php elseif ($isResultsHidden): ?>
+          <span style="color:#b91c1c; font-weight:700;">Results Hidden by Administration</span>
         <?php else: ?>
           <span style="color:#94a3b8; font-style:italic;">No published results yet</span>
         <?php endif; ?>
@@ -117,7 +142,10 @@ $issueDate = date('d F Y');
       <?php endif; ?>
 
       <?php if ($hasResults): ?>
-        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" class="sp-btn-back-website" style="background:#16a34a; color:#fff; border-color:#16a34a; cursor:pointer; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" class="sp-btn-back-website" style="background:#0f766e; color:#fff; border-color:#0f766e; cursor:pointer; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-scroll"></i> Full <?= $totalSemesters ?>-Semester Transcript
+        </a>
+        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all&amp;download=pdf" class="sp-btn-back-website" style="background:#16a34a; color:#fff; border-color:#16a34a; cursor:pointer; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
           <i class="fas fa-file-download"></i> Download Full Transcript (PDF)
         </a>
         <button type="button" onclick="window.print()" class="sp-btn-back-website" style="background:#1e73be; color:#fff; border-color:#1e73be; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
@@ -128,22 +156,57 @@ $issueDate = date('d F Y');
   </div>
 
   <?php if (!$hasResults): ?>
-    <!-- Empty State: No published academic results -->
-    <div style="background:#ffffff; border:1.5px dashed #cbd5e1; border-radius:12px; padding:3.5rem 2rem; text-align:center; margin-bottom:2.5rem; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
-      <div style="width:72px; height:72px; border-radius:50%; background:#f1f5f9; color:#94a3b8; display:inline-flex; align-items:center; justify-content:center; font-size:2rem; margin-bottom:1.25rem;">
-        <i class="fas fa-graduation-cap"></i>
+    <?php if ($isResultsSuspended): ?>
+      <!-- Suspended State: Result Access Suspended while student account & profile remain active -->
+      <div style="background:#fff7ed; border:2px solid #fb923c; border-radius:12px; padding:3rem 2rem; text-align:center; margin-bottom:2.5rem; box-shadow:0 2px 8px rgba(234,88,12,0.08);">
+        <div style="width:72px; height:72px; border-radius:50%; background:#ffedd5; color:#c2410c; display:inline-flex; align-items:center; justify-content:center; font-size:2rem; margin-bottom:1.25rem;">
+          <i class="fas fa-user-lock"></i>
+        </div>
+        <h3 style="margin:0 0 0.5rem; font-size:1.35rem; font-weight:800; color:#9a3412;">Result Access Suspended</h3>
+        <p style="margin:0 auto 1.25rem; max-width:560px; font-size:0.92rem; color:#7c2d12; line-height:1.6;">
+          Your Student Portal account and registration profile remain active, while examination results, semester GPAs, and academic transcripts are temporarily suspended.
+          <?php if (!empty($academicSummary['results_suspended_reason'])): ?>
+            <br><strong>Reason:</strong> <?= e($academicSummary['results_suspended_reason']) ?>
+          <?php endif; ?>
+        </p>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:#ffffff; border:1px solid #fed7aa; color:#9a3412; padding:8px 16px; border-radius:6px; font-size:0.85rem; font-weight:600;">
+          <i class="fas fa-info-circle"></i> You may still view your Profile page or contact the Office of the Controller of Examinations.
+        </div>
       </div>
-      <h3 style="margin:0 0 0.5rem; font-size:1.35rem; font-weight:700; color:#0f172a;">No academic results published yet</h3>
-      <p style="margin:0 auto 1.5rem; max-width:540px; font-size:0.92rem; color:#64748b; line-height:1.6;">
-        Your semester final examination results have not been published by the Office of the Controller of Examinations. Once grades are finalized and published, your full semester grade sheets and academic transcripts will appear here.
-      </p>
-      <div style="display:inline-flex; align-items:center; gap:8px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:8px 16px; border-radius:6px; font-size:0.85rem; font-weight:600;">
-        <i class="fas fa-info-circle"></i> For result publication queries, please contact the Registrar Office or Exam Controller.
+    <?php elseif ($isResultsHidden): ?>
+      <!-- Hidden State: Results withheld / hidden by Administrator -->
+      <div style="background:#fff7ed; border:1.5px solid #fdba74; border-radius:12px; padding:3rem 2rem; text-align:center; margin-bottom:2.5rem; box-shadow:0 2px 8px rgba(234,88,12,0.08);">
+        <div style="width:72px; height:72px; border-radius:50%; background:#ffedd5; color:#c2410c; display:inline-flex; align-items:center; justify-content:center; font-size:2rem; margin-bottom:1.25rem;">
+          <i class="fas fa-eye-slash"></i>
+        </div>
+        <h3 style="margin:0 0 0.5rem; font-size:1.35rem; font-weight:800; color:#9a3412;">Academic Results Temporarily Hidden</h3>
+        <p style="margin:0 auto 1.25rem; max-width:560px; font-size:0.92rem; color:#7c2d12; line-height:1.6;">
+          Your academic results are currently hidden from student view by the Office of the Controller of Examinations.
+          <?php if (!empty($academicSummary['results_hidden_reason'])): ?>
+            <br><strong>Notice:</strong> <?= e($academicSummary['results_hidden_reason']) ?>
+          <?php endif; ?>
+        </p>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:#ffffff; border:1px solid #fed7aa; color:#9a3412; padding:8px 16px; border-radius:6px; font-size:0.85rem; font-weight:600;">
+          <i class="fas fa-info-circle"></i> Your underlying academic records remain preserved; contact the Exam Controller for assistance.
+        </div>
       </div>
-    </div>
+    <?php else: ?>
+      <!-- Empty State: No published academic results -->
+      <div style="background:#ffffff; border:1.5px dashed #cbd5e1; border-radius:12px; padding:3.5rem 2rem; text-align:center; margin-bottom:2.5rem; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+        <div style="width:72px; height:72px; border-radius:50%; background:#f1f5f9; color:#94a3b8; display:inline-flex; align-items:center; justify-content:center; font-size:2rem; margin-bottom:1.25rem;">
+          <i class="fas fa-graduation-cap"></i>
+        </div>
+        <h3 style="margin:0 0 0.5rem; font-size:1.35rem; font-weight:700; color:#0f172a;">No academic results published yet</h3>
+        <p style="margin:0 auto 1.5rem; max-width:540px; font-size:0.92rem; color:#64748b; line-height:1.6;">
+          Your semester final examination results have not been published by the Office of the Controller of Examinations. Once grades are finalized and published, your full semester grade sheets and academic transcripts will appear here.
+        </p>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:8px 16px; border-radius:6px; font-size:0.85rem; font-weight:600;">
+          <i class="fas fa-info-circle"></i> For result publication queries, please contact the Registrar Office or Exam Controller.
+        </div>
+      </div>
+    <?php endif; ?>
   <?php else: ?>
 
-    
     <?php if (!empty($academicSummary['has_estimated_results'])): ?>
       <!-- Mandatory Official Disclaimer for Estimated Results -->
       <div style="background:#fffbeb; border:2px solid #f59e0b; border-radius:12px; padding:1.4rem 1.75rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(245,158,11,0.15);" class="no-print">
@@ -153,7 +216,7 @@ $issueDate = date('d F Y');
           </div>
           <div style="flex:1;">
             <div style="display:flex; align-items:center; gap:8px; margin-bottom:0.35rem; flex-wrap:wrap;">
-              <span style="background:#dc2626; color:#ffffff; font-size:0.75rem; font-weight:900; padding:2px 8px; border-radius:4px; letter-spacing:0.5px;">IMPORTANT NOTICE</span>
+              <span style="background:#dc2626; color:#ffffff; font-size:0.75rem; font-weight:900; padding:2px 8px; border-radius:4px; letter-spacing:0.5px;">ESTIMATED / GENERATED</span>
               <h4 style="margin:0; color:#92400e; font-size:1.1rem; font-weight:800; letter-spacing:0.3px;">
                 ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
               </h4>
@@ -169,8 +232,8 @@ $issueDate = date('d F Y');
       </div>
     <?php endif; ?>
 
-    <?php if (count($semesters) >= 8): ?>
-      <!-- 8-Semester Degree Completion & Graduation Showcase (Section 9) -->
+    <?php if (count($semesters) >= $totalSemesters): ?>
+      <!-- Degree Completion & Graduation Showcase (Dynamic N Semesters) -->
       <div style="background: linear-gradient(135deg, #15803d 0%, #166534 100%); color:#ffffff; border-radius:12px; padding:1.5rem 2rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(22,101,52,0.25); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1.25rem;" class="no-print">
         <div style="display:flex; align-items:center; gap:1.25rem;">
           <div style="width:58px; height:58px; border-radius:50%; background:rgba(255,255,255,0.2); display:flex; align-items:center; justify-content:center; font-size:1.8rem; color:#fde047;">
@@ -178,30 +241,30 @@ $issueDate = date('d F Y');
           </div>
           <div>
             <h3 style="margin:0 0 0.25rem; font-size:1.3rem; font-weight:800; color:#ffffff;">
-              Curriculum Completed: All 8 Semesters Published
+              Curriculum Completed: All <?= $totalSemesters ?> Semesters Published
             </h3>
             <p style="margin:0; font-size:0.9rem; color:#dcfce7;">
-              Congratulations! All 8 academic semesters have been evaluated and published. Final Cumulative CGPA: <strong><?= number_format($finalCgpa, 2) ?></strong> / 4.00 (<?= (int)$totalEarnedCredits ?> Credits Earned).
+              Congratulations! All <?= $totalSemesters ?> academic semesters have been evaluated and published. Final Cumulative CGPA: <strong><?= number_format($finalCgpa, 2) ?></strong> / 4.00 (<?= (int)$totalEarnedCredits ?> Credits Earned).
             </p>
           </div>
         </div>
-        <div style="display:flex; gap:0.75rem;">
-          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="background:#ffffff; color:#166534; padding:0.6rem 1.25rem; border-radius:6px; font-weight:800; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 5px rgba(0,0,0,0.12);">
-            <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Official 8-Semester Transcript (PDF)
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all&amp;download=pdf" style="background:#ffffff; color:#166534; padding:0.6rem 1.25rem; border-radius:6px; font-weight:800; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 5px rgba(0,0,0,0.12);">
+            <i class="fas fa-file-pdf" style="color:#dc2626;"></i> Official <?= $totalSemesters ?>-Semester Transcript (PDF)
           </a>
         </div>
       </div>
     <?php endif; ?>
 
-    <!-- 8-Semester GPA Progression Summary Grid (no-print) -->
+    <!-- Semester-Wise GPA Progression Summary Grid (no-print) -->
     <div style="background:linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%); color:#ffffff; border-radius:12px; padding:1.5rem; margin-bottom:2rem; box-shadow:0 4px 15px rgba(15,44,89,0.15);" class="no-print">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem;">
         <div>
           <h3 style="margin:0 0 0.2rem; font-size:1.15rem; font-weight:800; color:#ffffff;">
-            <i class="fas fa-chart-line" style="color:#f59e0b;"></i> Eight-Semester GPA Progression &amp; Cumulative CGPA
+            <i class="fas fa-chart-line" style="color:#f59e0b;"></i> <?= ($totalSemesters === 8) ? 'Eight-Semester' : "{$totalSemesters}-Semester" ?> GPA Progression &amp; Cumulative CGPA
           </h3>
           <span style="font-size:0.84rem; color:#cbd5e1;">
-            Credit-weighted Cumulative CGPA calculated strictly across all 8 academic semesters:
+            Credit-weighted Cumulative CGPA calculated strictly across all <?= $totalSemesters ?> academic semesters:
           </span>
         </div>
         <div style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.25); padding:6px 14px; border-radius:6px; font-size:0.9rem; font-weight:700;">
@@ -209,78 +272,153 @@ $issueDate = date('d F Y');
         </div>
       </div>
 
-      <!-- 8 Semester Cards Strip -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(115px, 1fr)); gap:0.6rem;">
-        <?php for ($semNum = 1; $semNum <= 8; $semNum++): ?>
+      <!-- Dynamic Semester Cards Strip -->
+      <div class="sp-sem-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 115px), 1fr)); gap:0.6rem;">
+        <?php for ($semNum = 1; $semNum <= $totalSemesters; $semNum++): ?>
           <?php 
             $sgpaVal = $semesterGpas[$semNum] ?? null;
             $hasSem = ($sgpaVal !== null);
+            $semEst = !empty($semSchedule[$semNum]['is_estimated']);
           ?>
-          <div style="background:<?= $hasSem ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)' ?>; border:1px solid <?= $hasSem ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)' ?>; border-radius:8px; padding:0.65rem 0.5rem; text-align:center;">
+          <div style="background:<?= $hasSem ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)' ?>; border:1px solid <?= $hasSem ? ($semEst ? '#fbbf24' : 'rgba(255,255,255,0.25)') : 'rgba(255,255,255,0.1)' ?>; border-radius:8px; padding:0.65rem 0.5rem; text-align:center;">
             <div style="font-size:0.75rem; text-transform:uppercase; color:<?= $hasSem ? '#f59e0b' : '#94a3b8' ?>; font-weight:700; margin-bottom:4px;">
-              Sem <?= $semNum ?>
+              Sem <?= $semNum ?><?= ($hasSem && $semEst) ? ' (EST)' : '' ?>
             </div>
             <div style="font-size:1.1rem; font-weight:800; color:<?= $hasSem ? '#ffffff' : '#64748b' ?>;">
               <?= $hasSem ? number_format($sgpaVal, 2) : '—' ?>
             </div>
             <div style="font-size:0.7rem; color:<?= $hasSem ? '#86efac' : '#64748b' ?>; font-weight:600; margin-top:2px;">
-              <?= $hasSem ? 'PASSED' : 'Pending' ?>
+              <?= $hasSem ? 'PUBLISHED' : 'Pending' ?>
             </div>
           </div>
         <?php endfor; ?>
       </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap:0.65rem; margin-top:0.85rem; padding-top:0.85rem; border-top:1px dashed rgba(255,255,255,0.2);">
+        <div style="background:rgba(255,255,255,0.1); border-radius:6px; padding:0.5rem 0.75rem; text-align:center;">
+          <div style="font-size:0.7rem; color:#cbd5e1; text-transform:uppercase;">Total Registered Credits</div>
+          <div style="font-size:1rem; font-weight:800; color:#ffffff;"><?= number_format((float)$totalRegCredits, 1) ?> Cr</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.1); border-radius:6px; padding:0.5rem 0.75rem; text-align:center;">
+          <div style="font-size:0.7rem; color:#cbd5e1; text-transform:uppercase;">Total Earned Credits</div>
+          <div style="font-size:1rem; font-weight:800; color:#86efac;"><?= number_format((float)$totalEarnedCredits, 1) ?> Cr</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.1); border-radius:6px; padding:0.5rem 0.75rem; text-align:center;">
+          <div style="font-size:0.7rem; color:#cbd5e1; text-transform:uppercase;">Completed / Required</div>
+          <div style="font-size:1rem; font-weight:800; color:#ffffff;"><?= (int)$totalEarnedCredits ?> / <?= $totalReqCredits ?> Cr</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.1); border-radius:6px; padding:0.5rem 0.75rem; text-align:center;">
+          <div style="font-size:0.7rem; color:#cbd5e1; text-transform:uppercase;">Published Semesters</div>
+          <div style="font-size:1rem; font-weight:800; color:#fde047;"><?= $publishedSemCount ?> / <?= $totalSemesters ?></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.1); border-radius:6px; padding:0.5rem 0.75rem; text-align:center;">
+          <div style="font-size:0.7rem; color:#cbd5e1; text-transform:uppercase;">Final Academic Status</div>
+          <div style="font-size:0.86rem; font-weight:800; color:#ffffff; margin-top:2px;"><?= e($overallStatus) ?></div>
+        </div>
+      </div>
     </div>
 
-    <!-- 8-Semester Interactive Navigation Matrix (no-print) -->
+    <?php
+      $orderedSemRenderList = [];
+      for ($sIdx = 1; $sIdx <= $totalSemesters; $sIdx++) {
+          $slot = $allSemesters[$sIdx] ?? null;
+          $orderedSemRenderList[] = [
+              'num'   => $sIdx,
+              'title' => $slot['semester_name'] ?? get_semester_ordinal_title($sIdx),
+              'data'  => $slot,
+          ];
+      }
+      foreach ($semesters as $extraSemTitle => $extraSemData) {
+          $exNum = (int)($extraSemData['semester_number'] ?? 99);
+          if ($exNum < 1 || $exNum > $totalSemesters) {
+              $orderedSemRenderList[] = [
+                  'num'   => $exNum,
+                  'title' => $extraSemTitle,
+                  'data'  => $extraSemData,
+              ];
+          }
+      }
+    ?>
+
+    <!-- Semester Interactive Navigation Matrix (no-print) -->
     <div style="background:linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%); border:1.5px solid #bfdbfe; border-radius:12px; padding:1.5rem; margin-bottom:2.5rem; box-shadow:0 3px 8px rgba(0,0,0,0.04);" class="no-print">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; margin-bottom:1.25rem;">
         <div>
           <h3 style="margin:0 0 0.2rem; font-size:1.15rem; font-weight:800; color:#0f2c59;">
-            <i class="fas fa-th-large" style="color:#1e73be;"></i> সেমিস্টার অগ্রগতি ও ট্রান্সক্রিপ্ট গ্রিড (1st to 8th Semester)
+            <i class="fas fa-th-large" style="color:#1e73be;"></i> Semester Progress &amp; Transcript Navigation (1 to <?= $totalSemesters ?> Semesters)
           </h3>
           <span style="font-size:0.84rem; color:#475569;">
-            প্রতিটি সেমিস্টারের বিস্তারিত বিষয়ভিত্তিক প্রাপ্ত নম্বর, লেটার গ্রেড, SGPA ও PDF ডাউনলোড লিঙ্ক:
+            Subject-wise obtained marks, letter grades, SGPA &amp; PDF download links for each configured semester:
           </span>
         </div>
-        <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="font-size:0.85rem; font-weight:700; color:#16a34a; background:#ffffff; border:1.5px solid #86efac; padding:6px 14px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-          <i class="fas fa-graduation-cap"></i> সম্পূর্ণ ৮ সেমিস্টার ট্রান্সক্রিপ্ট (PDF) &rarr;
-        </a>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all" target="_blank" style="font-size:0.85rem; font-weight:700; color:#0f2c59; background:#ffffff; border:1.5px solid #cbd5e1; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            <i class="fas fa-scroll"></i> View Full Transcript
+          </a>
+          <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=all&amp;download=pdf" style="font-size:0.85rem; font-weight:700; color:#16a34a; background:#ffffff; border:1.5px solid #86efac; padding:6px 14px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+            <i class="fas fa-file-pdf"></i> Full <?= $totalSemesters ?>-Semester Transcript (PDF) &rarr;
+          </a>
+        </div>
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:0.85rem;">
-        <?php foreach ($semesters as $sTitle => $semData): ?>
-          <?php 
-            $sNum = $semData['semester_number'];
-            $cCount = count($semData['courses']);
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap:0.85rem;">
+        <?php foreach ($orderedSemRenderList as $semEntry): ?>
+          <?php
+            $sNum = (int)$semEntry['num'];
+            $sTitle = (string)$semEntry['title'];
+            $semData = $semEntry['data'];
+            $hasCourses = ($semData !== null && !empty($semData['courses']));
+            $cCount = $hasCourses ? count($semData['courses']) : 0;
           ?>
-          <div style="background:#ffffff; border:1.5px solid #cbd5e1; border-radius:8px; padding:0.85rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between; gap:0.5rem; transition:transform 0.15s, border-color 0.15s;" onmouseover="this.style.borderColor='#1e73be'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.transform='translateY(0)';" id="nav-sem-<?= $sNum ?>">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="background:#0f2c59; color:#ffffff; font-weight:800; font-size:0.8rem; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:4px;">
-                <i class="fas fa-bookmark" style="color:#f59e0b; font-size:0.7rem;"></i> <?= $sNum ?>. Semester <?= $sNum ?>
-              </span>
-              <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>" target="_blank" style="color:#dc2626; font-size:0.8rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:3px; background:#fef2f2; border:1px solid #fecaca; padding:2px 7px; border-radius:4px;" title="Download PDF Transcript">
-                <i class="fas fa-file-pdf"></i> PDF
-              </a>
-            </div>
-            
-            <div>
-              <a href="#sem-block-<?= $sNum ?>" style="font-size:0.9rem; font-weight:700; color:#0f172a; text-decoration:none; display:block; margin-bottom:2px;">
-                <?= e($sTitle) ?>
-              </a>
-              <small style="color:#64748b; font-size:0.75rem;"><?= $cCount ?> Subjects &bull; <?= number_format($semData['registered_credits'], 1) ?> Credits</small>
-            </div>
+          <?php if ($hasCourses): ?>
+            <div style="background:#ffffff; border:1.5px solid #cbd5e1; border-radius:8px; padding:0.85rem 1rem; box-shadow:0 1px 4px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between; gap:0.5rem; min-width:0; transition:transform 0.15s, border-color 0.15s;" onmouseover="this.style.borderColor='#1e73be'; this.style.transform='translateY(-2px)';" onmouseout="this.style.borderColor='#cbd5e1'; this.style.transform='translateY(0)';" id="nav-sem-<?= $sNum ?>">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="background:#0f2c59; color:#ffffff; font-weight:800; font-size:0.8rem; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:4px;">
+                  <i class="fas fa-bookmark" style="color:#f59e0b; font-size:0.7rem;"></i> <?= $sNum ?>. Semester <?= $sNum ?>
+                </span>
+                <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($sTitle) ?>&amp;download=pdf" style="color:#dc2626; font-size:0.8rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:3px; background:#fef2f2; border:1px solid #fecaca; padding:2px 7px; border-radius:4px;" title="Download PDF Transcript">
+                  <i class="fas fa-file-pdf"></i> PDF
+                </a>
+              </div>
+              
+              <div>
+                <a href="#sem-block-<?= $sNum ?>" style="font-size:0.9rem; font-weight:700; color:#0f172a; text-decoration:none; display:block; margin-bottom:2px;">
+                  <?= e($sTitle) ?>
+                </a>
+                <small style="color:#64748b; font-size:0.75rem;"><?= $cCount ?> Subjects &bull; <?= number_format((float)$semData['registered_credits'], 1) ?> Credits</small>
+              </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px dashed #e2e8f0; padding-top:6px; font-size:0.8rem;">
-              <span style="color:#475569;">SGPA: <strong style="color:#1e3a8a;"><?= number_format($semData['sgpa'], 2) ?></strong></span>
-              <span style="color:#15803d; font-weight:800; background:#f0fdf4; border:1px solid #bbf7d0; padding:1px 6px; border-radius:4px;">CGPA: <?= number_format($semData['cumulative_cgpa'], 2) ?></span>
+              <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px dashed #e2e8f0; padding-top:6px; font-size:0.8rem;">
+                <span style="color:#475569;">SGPA: <strong style="color:#1e3a8a;"><?= number_format((float)$semData['sgpa'], 2) ?></strong></span>
+                <span style="color:#15803d; font-weight:800; background:#f0fdf4; border:1px solid #bbf7d0; padding:1px 6px; border-radius:4px;">CGPA: <?= number_format((float)$semData['cumulative_cgpa'], 2) ?></span>
+              </div>
             </div>
-          </div>
+          <?php else: ?>
+            <div style="background:#f8fafc; border:1.5px dashed #cbd5e1; border-radius:8px; padding:0.85rem 1rem; display:flex; flex-direction:column; justify-content:space-between; gap:0.5rem; min-width:0;" id="nav-sem-<?= $sNum ?>">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="background:#64748b; color:#ffffff; font-weight:800; font-size:0.8rem; padding:2px 8px; border-radius:4px; display:inline-flex; align-items:center; gap:4px;">
+                  <i class="fas fa-clock" style="font-size:0.7rem;"></i> <?= $sNum ?>. Semester <?= $sNum ?>
+                </span>
+                <span style="color:#64748b; font-size:0.74rem; font-weight:700; background:#e2e8f0; padding:2px 7px; border-radius:4px;">Not Published Yet</span>
+              </div>
+              <div>
+                <a href="#sem-block-<?= $sNum ?>" style="font-size:0.9rem; font-weight:700; color:#475569; text-decoration:none; display:block; margin-bottom:2px;">
+                  <?= e($sTitle) ?>
+                </a>
+                <small style="color:#94a3b8; font-size:0.75rem;">0 Subjects &bull; 0.0 Credits</small>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px dashed #cbd5e1; padding-top:6px; font-size:0.8rem; color:#64748b;">
+                <span>SGPA: <strong>—</strong></span>
+                <span>Pending</span>
+              </div>
+            </div>
+          <?php endif; ?>
         <?php endforeach; ?>
       </div>
     </div>
 
     <!-- Official Printable Transcript Box -->
-    <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:2.5rem; box-shadow:0 4px 15px rgba(0,0,0,0.04); margin-bottom:2.5rem;" id="printableTranscript">
+    <div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:2.5rem; box-shadow:0 4px 15px rgba(0,0,0,0.04); margin-bottom:2.5rem; min-width:0; max-width:100%;" id="printableTranscript">
       
       <!-- University Seal Header -->
       <div style="text-align:center; padding-bottom:1.5rem; margin-bottom:1.5rem; border-bottom:2px solid #0f172a;">
@@ -290,117 +428,173 @@ $issueDate = date('d F Y');
         <div style="font-size:0.84rem; color:#1e293b; font-weight:700; margin-top:2px; text-transform:uppercase; letter-spacing:0.5px;">Office of the Controller of Examinations</div>
         <?php if (!empty($academicSummary['has_estimated_results'])): ?>
           <div style="display:inline-block; margin-top:0.75rem; padding:6px 20px; background:#fef3c7; border:2px solid #f59e0b; border-radius:20px; font-weight:900; font-size:0.86rem; color:#92400e; text-transform:uppercase; letter-spacing:0.5px;">
-            <i class="fas fa-exclamation-triangle"></i> ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+            <i class="fas fa-exclamation-triangle"></i> ESTIMATED / GENERATED &mdash; ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
           </div>
         <?php else: ?>
           <div style="display:inline-block; margin-top:0.75rem; padding:5px 20px; background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:20px; font-weight:800; font-size:0.92rem; color:#1e73be; text-transform:uppercase; letter-spacing:0.5px;">
-            OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD
+            <?= ($totalSemesters === 8) ? 'OFFICIAL ACADEMIC TRANSCRIPT &amp; EIGHT-SEMESTER GRADE RECORD' : "OFFICIAL ACADEMIC TRANSCRIPT &amp; {$totalSemesters}-SEMESTER GRADE RECORD" ?>
           </div>
         <?php endif; ?>
       </div>
 
-      <!-- Student Information Block (All 9 Mandatory Fields) -->
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:0.75rem 2rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1.25rem 1.5rem; margin-bottom:2rem; font-size:0.88rem;">
+      <!-- Student Information Block (All 9 Mandatory Fields + Dynamic Degree Metadata) -->
+      <?php
+        $lastSemOrd = preg_replace('/\s+Semester$/', '', get_semester_ordinal_title($totalSemesters));
+        $resSessVal = !empty($student['academic_session']) ? $student['academic_session'] : ($student['batch'] ?? '');
+        $resDurY = (float)($student['duration_years'] ?? ($progStruct['duration_years'] ?? ($totalSemesters / 2.0)));
+        $resExpCalc = calculate_expected_passing_year($resSessVal, $resDurY);
+        $resExpPassing = $resExpCalc ? (int)$resExpCalc['expected_year'] : null;
+      ?>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:0.75rem 2rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:1.25rem 1.5rem; margin-bottom:2rem; font-size:0.88rem; overflow-wrap:anywhere;">
         <div>
           <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Student Name:</span> <strong><?= e($student['full_name']) ?></strong></div>
-          <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Student ID / Roll:</span> <strong style="font-family:monospace; color:var(--sp-primary); font-size:0.95rem;"><?= e($student['student_id']) ?></strong></div>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Student ID / Roll:</span> <strong style="font-family:monospace; color:var(--sp-primary); font-size:0.95rem;"><?= e($student['student_id']) ?><?= !empty($student['roll_number']) ? ' / ' . e($student['roll_number']) : '' ?></strong></div>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Degree / Course Type:</span> <strong><?= e($progStruct['degree_type'] ?? 'Bachelor / Honours') ?> (<?= e($progStruct['duration_label'] ?? "{$totalSemesters} Semesters") ?>)</strong></div>
           <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Program of Study:</span> <strong><?= e($student['program_name'] ?? 'B.Sc. in Computer Science & Engineering') ?></strong></div>
           <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Academic Department:</span> <strong><?= e($student['department_name'] ?? 'Computer Science & Engineering') ?></strong></div>
           <div style="padding:2px 0;"><span style="color:#64748b; width:150px; display:inline-block;">Faculty:</span> <strong><?= e($academicSummary['student']['faculty_name'] ?? 'Faculty of Science & Engineering') ?></strong></div>
         </div>
         <div>
-          <div style="padding:2px 0;"><span style="color:#64748b; width:160px; display:inline-block;">Academic Session:</span> <strong><?= e($student['batch']) ?></strong></div>
-          <div style="padding:2px 0;"><span style="color:#64748b; width:160px; display:inline-block;">Semester / Term:</span> <strong style="color:#0f2c59;">All Semesters (1st to 8th)</strong></div>
-          <div style="padding:2px 0;"><span style="color:#64748b; width:160px; display:inline-block;">Current Academic Status:</span> <strong style="color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0284c7' ?>;"><?= e($student['status']) ?> (<?= ($student['status'] === 'Graduated') ? 'Degree Awarded' : 'Undergraduate' ?>)</strong></div>
-          <div style="padding:2px 0;"><span style="color:#64748b; width:160px; display:inline-block;">Medium of Instruction:</span> <strong>English</strong></div>
-          <div style="padding:2px 0; margin-top:2px;"><span style="color:#64748b; width:160px; display:inline-block;">Cumulative CGPA:</span> <strong style="color:#15803d; font-size:1.05rem;"><?= number_format($finalCgpa, 2) ?></strong> / 4.00</div>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Academic Session:</span> <strong><?= e($resSessVal) ?></strong></div>
+          <?php if (!empty($student['passing_year'])): ?>
+            <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Passing Year:</span> <strong><?= e($student['passing_year']) ?></strong><?php if ($resExpPassing !== null): ?> <small style="color:#64748b;">(Expected: <?= (int)$resExpPassing ?> — Advisory)</small><?php endif; ?></div>
+          <?php elseif ($resExpPassing !== null): ?>
+            <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Expected Passing:</span> <strong><?= (int)$resExpPassing ?></strong> <small style="color:#64748b;">(Advisory)</small></div>
+          <?php endif; ?>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Semester / Term:</span> <strong style="color:#0f2c59;">All Semesters (1st to <?= e($lastSemOrd) ?>)</strong></div>
+          <?php if ($pubDateDisplay !== ''): ?>
+            <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Result Publication Date:</span> <strong><?= e($pubDateDisplay) ?></strong></div>
+          <?php endif; ?>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Current Academic Status:</span> <strong style="color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0284c7' ?>;"><?= e($student['status']) ?></strong></div>
+          <div style="padding:2px 0;"><span style="color:#64748b; width:165px; display:inline-block;">Medium of Instruction:</span> <strong>English</strong></div>
+          <div style="padding:2px 0; margin-top:2px;"><span style="color:#64748b; width:165px; display:inline-block;">Cumulative CGPA:</span> <strong style="color:#15803d; font-size:1.05rem;"><?= number_format($finalCgpa, 2) ?></strong> / 4.00</div>
         </div>
       </div>
 
       <!-- Semester-wise Tables with Subject Marks, Credits, Grades, SGPA -->
-      <?php foreach ($semesters as $semTitle => $semData): ?>
-        <?php 
-          $sNum = $semData['semester_number'];
+      <?php foreach ($orderedSemRenderList as $semEntry): ?>
+        <?php
+          $sNum = (int)$semEntry['num'];
+          $semTitle = (string)$semEntry['title'];
+          $semData = $semEntry['data'];
+          $hasCourses = ($semData !== null && !empty($semData['courses']));
         ?>
         <div style="margin-bottom:2.5rem;" id="sem-block-<?= $sNum ?>">
-          <!-- Semester Header Strip -->
-          <div style="display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg, #1e73be 0%, #0f2c59 100%); color:#ffffff; padding:0.75rem 1.25rem; border-radius:6px 6px 0 0; font-size:0.92rem; font-weight:700; flex-wrap:wrap; gap:0.6rem;">
-            <span style="display:flex; align-items:center; gap:0.6rem;">
-              <span style="background:#f59e0b; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:900; font-size:0.85rem;">
-                <?= $sNum ?>
-              </span>
-              <span>Semester <?= $sNum ?>: <?= e($semTitle) ?></span>
-              <?php if (!empty($semData['is_estimated'])): ?>
-                <span style="background:#fef3c7; color:#92400e; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px; border:1px solid #fde68a; text-transform:uppercase;">
-                  ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+          <?php if ($hasCourses): ?>
+            <!-- Semester Header Strip -->
+            <div style="display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg, #1e73be 0%, #0f2c59 100%); color:#ffffff; padding:0.75rem 1.25rem; border-radius:6px 6px 0 0; font-size:0.92rem; font-weight:700; flex-wrap:wrap; gap:0.6rem;">
+              <span style="display:flex; align-items:center; gap:0.6rem;">
+                <span style="background:#f59e0b; color:#0f172a; padding:2px 8px; border-radius:4px; font-weight:900; font-size:0.85rem;">
+                  <?= $sNum ?>
                 </span>
-              <?php endif; ?>
-            </span>
-            <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.84rem; flex-wrap:wrap;">
-              <span style="background:rgba(255,255,255,0.18); padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.25);">
-                Semester GPA (SGPA): <strong style="font-size:0.92rem;"><?= number_format($semData['sgpa'], 2) ?></strong>
+                <span>Semester <?= $sNum ?>: <?= e($semTitle) ?></span>
+                <?php if (!empty($semData['is_estimated'])): ?>
+                  <span style="background:#fef3c7; color:#92400e; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px; border:1px solid #fde68a; text-transform:uppercase;">
+                    ESTIMATED / AUTO-GENERATED RESULT — NOT AN OFFICIAL UNIVERSITY RESULT
+                  </span>
+                <?php endif; ?>
               </span>
-              <span style="background:#15803d; color:#ffffff; padding:3px 10px; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,0.2);">
-                Cumulative CGPA: <strong style="font-size:0.95rem;"><?= number_format($semData['cumulative_cgpa'], 2) ?></strong> / 4.00
-              </span>
-              <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($semTitle) ?>" target="_blank" class="no-print" style="background:#ffffff; color:#0f2c59; border-radius:4px; padding:3px 10px; font-size:0.78rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.15);">
-                <i class="fas fa-file-pdf" style="color:#dc2626;"></i> PDF Transcript
-              </a>
+              <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.84rem; flex-wrap:wrap;">
+                <span style="background:rgba(255,255,255,0.18); padding:3px 10px; border-radius:4px; border:1px solid rgba(255,255,255,0.25);">
+                  Semester GPA (SGPA): <strong style="font-size:0.92rem;"><?= number_format((float)$semData['sgpa'], 2) ?></strong>
+                </span>
+                <span style="background:#15803d; color:#ffffff; padding:3px 10px; border-radius:4px; box-shadow:0 1px 3px rgba(0,0,0,0.2);">
+                  Cumulative CGPA: <strong style="font-size:0.95rem;"><?= number_format((float)$semData['cumulative_cgpa'], 2) ?></strong> / 4.00
+                </span>
+                <a href="<?= APP_URL ?>/student/semester-transcript.php?semester=<?= urlencode($semTitle) ?>&amp;download=pdf" class="no-print" style="background:#ffffff; color:#0f2c59; border-radius:4px; padding:3px 10px; font-size:0.78rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.15);">
+                  <i class="fas fa-file-pdf" style="color:#dc2626;"></i> PDF Transcript
+                </a>
+              </div>
             </div>
-          </div>
 
-          <!-- Subjects Table with Full Marks & Obtained Marks -->
-          <table class="sp-table" style="border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px;">
-            <thead>
-              <tr>
-                <th style="width:110px;">Subject Code</th>
-                <th>Subject Name</th>
-                <th style="width:75px; text-align:center;">Credit</th>
-                <th style="width:85px; text-align:center;">Full Marks</th>
-                <th style="width:90px; text-align:center;">Obtained</th>
-                <th style="width:80px; text-align:center;">Grade</th>
-                <th style="width:90px; text-align:center;">Grade Point</th>
-                <th style="width:85px; text-align:center;">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php foreach ($semData['courses'] as $c): ?>
+            <!-- Subjects Table with Full Marks & Obtained Marks -->
+            <div style="overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch;">
+            <table class="sp-table" style="border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px;">
+              <thead>
                 <tr>
-                  <td style="font-family:monospace; font-weight:700; color:#1e293b;"><?= e($c['course_code']) ?></td>
-                  <td style="font-weight:600; color:#0f172a;"><?= e($c['course_name']) ?></td>
-                  <td style="text-align:center; font-weight:600;"><?= number_format($c['credit'], 1) ?></td>
-                  <td style="text-align:center; color:#64748b;"><?= (int)$c['full_marks'] ?></td>
-                  <td style="text-align:center; font-weight:700; color:#0f2c59;"><?= ($c['marks'] !== null) ? number_format($c['marks'], 1) : '—' ?></td>
-                  <td style="text-align:center;"><strong style="color:var(--sp-primary); font-size:0.95rem;"><?= e($c['letter_grade']) ?></strong></td>
-                  <td style="text-align:center; font-weight:600;"><?= number_format($c['grade_point'], 2) ?></td>
-                  <td style="text-align:center;">
-                    <span style="color:<?= ($c['status'] === 'Pass') ? '#16a34a' : '#dc2626' ?>; font-weight:700; font-size:0.75rem;">
-                      <?= strtoupper($c['status']) ?>
-                    </span>
+                  <th style="width:110px;">Subject Code</th>
+                  <th>Subject Name</th>
+                  <th style="width:75px; text-align:center;">Credit</th>
+                  <th style="width:85px; text-align:center;">Full Marks</th>
+                  <th style="width:90px; text-align:center;">Obtained</th>
+                  <th style="width:80px; text-align:center;">Grade</th>
+                  <th style="width:90px; text-align:center;">Grade Point</th>
+                  <th style="width:85px; text-align:center;">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($semData['courses'] as $c): ?>
+                  <tr>
+                    <td style="font-family:monospace; font-weight:700; color:#1e293b;"><?= e($c['course_code']) ?></td>
+                    <td style="font-weight:600; color:#0f172a;"><?= e($c['course_name']) ?></td>
+                    <td style="text-align:center; font-weight:600;"><?= number_format($c['credit'], 1) ?></td>
+                    <td style="text-align:center; color:#64748b;"><?= (int)$c['full_marks'] ?></td>
+                    <td style="text-align:center; font-weight:700; color:#0f2c59;"><?= ($c['marks'] !== null) ? number_format($c['marks'], 1) : '—' ?></td>
+                    <td style="text-align:center;"><strong style="color:var(--sp-primary); font-size:0.95rem;"><?= e($c['letter_grade']) ?></strong></td>
+                    <td style="text-align:center; font-weight:600;"><?= number_format($c['grade_point'], 2) ?></td>
+                    <td style="text-align:center;">
+                      <span style="color:<?= ($c['status'] === 'Pass') ? '#16a34a' : '#dc2626' ?>; font-weight:700; font-size:0.75rem;">
+                        <?= strtoupper($c['status']) ?>
+                      </span>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+              <tfoot>
+                <!-- Semester Footer: Total Registered, Total Earned, SGPA, Status -->
+                <tr style="background:#f8fafc; font-weight:700; border-top:2px solid #cbd5e1; font-size:0.86rem;">
+                  <td colspan="2" style="text-align:right; color:#475569;">Semester Summary (<?= e($semTitle) ?>):</td>
+                  <td style="text-align:center; color:#0f172a;"><?= number_format((float)$semData['registered_credits'], 1) ?> Cr</td>
+                  <td colspan="2" style="text-align:center; color:#1e293b;">Earned: <strong><?= number_format((float)$semData['earned_credits'], 1) ?> Cr</strong></td>
+                  <td style="text-align:right; color:#1e73be;">SGPA:</td>
+                  <td style="text-align:center; color:#1e73be; font-size:1.05rem; font-weight:800;"><?= number_format((float)$semData['sgpa'], 2) ?></td>
+                  <td style="text-align:center;"><span style="color:#15803d; font-weight:800; font-size:0.78rem;"><?= e($semData['status']) ?></span></td>
+                </tr>
+                <!-- Cumulative Footer -->
+                <tr style="background:#f0fdf4; font-weight:800; border-top:1px dashed #bbf7d0; font-size:0.86rem;">
+                  <td colspan="2" style="text-align:right; color:#166534;">Cumulative Progress (up to <?= e($semTitle) ?>):</td>
+                  <td style="text-align:center; color:#166534;"><?= number_format((float)($semData['cumulative_reg_credits'] ?? 0), 1) ?> Cr</td>
+                  <td colspan="2" style="text-align:center; color:#166534;">Earned: <?= number_format((float)($semData['cumulative_earned_credits'] ?? 0), 1) ?> Cr</td>
+                  <td style="text-align:right; color:#15803d;">CGPA:</td>
+                  <td colspan="2" style="text-align:center; color:#15803d; font-size:1.1rem; font-weight:900;"><?= number_format((float)($semData['cumulative_cgpa'] ?? 0), 2) ?> / 4.00</td>
+                </tr>
+              </tfoot>
+            </table>
+            </div>
+          <?php else: ?>
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#e2e8f0; color:#0f2c59; padding:0.65rem 1.25rem; border-radius:6px 6px 0 0; font-size:0.9rem; font-weight:700; flex-wrap:wrap; gap:0.5rem; border:1px solid #cbd5e1; border-bottom:none;">
+              <span style="display:flex; align-items:center; gap:0.6rem;">
+                <span style="background:#64748b; color:#ffffff; padding:2px 8px; border-radius:4px; font-weight:900; font-size:0.82rem;">
+                  <?= $sNum ?>
+                </span>
+                <span>Semester <?= $sNum ?>: <?= e($semTitle) ?></span>
+              </span>
+              <span style="background:#ffffff; color:#475569; padding:2px 10px; border-radius:4px; font-size:0.76rem; font-weight:700; border:1px solid #cbd5e1;">
+                Not Published Yet
+              </span>
+            </div>
+            <div style="overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch;">
+            <table class="sp-table" style="border:1px solid #cbd5e1; border-top:none; border-radius:0 0 6px 6px;">
+              <tbody>
+                <tr>
+                  <td colspan="8" style="text-align:center; padding:1.1rem; color:#64748b; font-style:italic; background:#ffffff;">
+                    No published subject results recorded for this semester yet.
                   </td>
                 </tr>
-              <?php endforeach; ?>
-            </tbody>
-            <tfoot>
-              <!-- Semester Footer: Total Registered, Total Earned, SGPA, Status -->
-              <tr style="background:#f8fafc; font-weight:700; border-top:2px solid #cbd5e1; font-size:0.86rem;">
-                <td colspan="2" style="text-align:right; color:#475569;">Semester Summary (<?= e($semTitle) ?>):</td>
-                <td style="text-align:center; color:#0f172a;"><?= number_format($semData['registered_credits'], 1) ?> Cr</td>
-                <td colspan="2" style="text-align:center; color:#1e293b;">Earned: <strong><?= number_format($semData['earned_credits'], 1) ?> Cr</strong></td>
-                <td style="text-align:right; color:#1e73be;">SGPA:</td>
-                <td style="text-align:center; color:#1e73be; font-size:1.05rem; font-weight:800;"><?= number_format($semData['sgpa'], 2) ?></td>
-                <td style="text-align:center;"><span style="color:#15803d; font-weight:800; font-size:0.78rem;"><?= e($semData['status']) ?></span></td>
-              </tr>
-              <!-- Cumulative Footer -->
-              <tr style="background:#f0fdf4; font-weight:800; border-top:1px dashed #bbf7d0; font-size:0.86rem;">
-                <td colspan="2" style="text-align:right; color:#166534;">Cumulative Progress (up to <?= e($semTitle) ?>):</td>
-                <td style="text-align:center; color:#166534;"><?= number_format($semData['cumulative_reg_credits'], 1) ?> Cr</td>
-                <td colspan="2" style="text-align:center; color:#166534;">Earned: <?= number_format($semData['cumulative_earned_credits'], 1) ?> Cr</td>
-                <td style="text-align:right; color:#15803d;">CGPA:</td>
-                <td colspan="2" style="text-align:center; color:#15803d; font-size:1.1rem; font-weight:900;"><?= number_format($semData['cumulative_cgpa'], 2) ?> / 4.00</td>
-              </tr>
-            </tfoot>
-          </table>
+              </tbody>
+              <tfoot>
+                <tr style="background:#f8fafc; font-weight:700; font-size:0.84rem; color:#64748b;">
+                  <td colspan="2" style="text-align:right;">Semester Summary (<?= e($semTitle) ?>):</td>
+                  <td style="text-align:center;">0.0 Cr</td>
+                  <td colspan="2" style="text-align:center;">Earned: 0.0 Cr</td>
+                  <td style="text-align:right;">SGPA:</td>
+                  <td style="text-align:center;">—</td>
+                  <td style="text-align:center;">Pending</td>
+                </tr>
+              </tfoot>
+            </table>
+            </div>
+          <?php endif; ?>
         </div>
       <?php endforeach; ?>
 
@@ -409,11 +603,17 @@ $issueDate = date('d F Y');
         <h4 style="margin:0 0 0.75rem; font-size:1rem; font-weight:800; color:#0f2c59; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #e2e8f0; padding-bottom:6px;">
           <i class="fas fa-clipboard-check" style="color:#16a34a;"></i> Academic Transcript Summary &amp; Degree Status
         </h4>
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1rem; font-size:0.88rem;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap:1rem; font-size:0.88rem;">
+          <div>
+            <div style="color:#64748b; font-size:0.78rem; text-transform:uppercase;">Total Registered Credits</div>
+            <div style="font-size:1.15rem; font-weight:800; color:#0f172a; margin-top:2px;">
+              <?= number_format((float)$totalRegCredits, 1) ?> Credits
+            </div>
+          </div>
           <div>
             <div style="color:#64748b; font-size:0.78rem; text-transform:uppercase;">Total Completed Credits</div>
-            <div style="font-size:1.2rem; font-weight:800; color:#0f172a; margin-top:2px;">
-              <?= (int)$totalEarnedCredits ?> <span style="font-size:0.82rem; color:#64748b; font-weight:500;">/ <?= (int)$student['total_credits_required'] ?> Credits Required</span>
+            <div style="font-size:1.15rem; font-weight:800; color:#0f172a; margin-top:2px;">
+              <?= (int)$totalEarnedCredits ?> <span style="font-size:0.82rem; color:#64748b; font-weight:500;">/ <?= $totalReqCredits ?> Credits Required</span>
             </div>
           </div>
           <div>
@@ -424,8 +624,8 @@ $issueDate = date('d F Y');
           </div>
           <div>
             <div style="color:#64748b; font-size:0.78rem; text-transform:uppercase;">Overall Academic Status</div>
-            <div style="font-size:1.05rem; font-weight:800; color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0369a1' ?>; margin-top:2px;">
-              <?= ($student['status'] === 'Graduated') ? 'DEGREE COMPLETED / GRADUATED' : 'ACTIVE / IN GOOD STANDING' ?>
+            <div style="font-size:0.95rem; font-weight:800; color:<?= ($student['status'] === 'Graduated') ? '#15803d' : '#0369a1' ?>; margin-top:2px;">
+              <?= e($overallStatus) ?>
             </div>
           </div>
           <div>
@@ -439,8 +639,8 @@ $issueDate = date('d F Y');
       </div>
 
       <!-- Signature & Seal Section -->
-      <div style="margin-top:3.5rem; padding-top:1.5rem; border-top:1px dashed #cbd5e1; display:flex; justify-content:space-between; align-items:flex-end;">
-        <div style="text-align:center; width:220px;">
+      <div style="margin-top:3.5rem; padding-top:1.5rem; border-top:1px dashed #cbd5e1; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:1.25rem;">
+        <div style="text-align:center; width:220px; max-width:100%;">
           <div style="font-family:'Brush Script MT', cursive, sans-serif; font-size:1.3rem; color:#0f2c59; transform:rotate(-3deg); height:28px;">A. H. Tanvir</div>
           <div style="border-bottom:1px solid #475569; padding-bottom:5px; margin-bottom:5px; font-size:0.85rem; font-weight:600;">
             Office of Registrar
@@ -456,7 +656,7 @@ $issueDate = date('d F Y');
           </div>
         </div>
 
-        <div style="text-align:center; width:220px;">
+        <div style="text-align:center; width:220px; max-width:100%;">
           <div style="font-family:'Brush Script MT', cursive, sans-serif; font-size:1.4rem; color:#0f2c59; transform:rotate(-4deg); height:28px;">Prof. M. Rahman</div>
           <div style="border-bottom:1px solid #475569; padding-bottom:5px; margin-bottom:5px; font-size:0.85rem; font-weight:700; color:#0f172a;">
             Controller of Examinations
@@ -497,7 +697,7 @@ $issueDate = date('d F Y');
           </p>
         </div>
       <?php else: ?>
-        <div style="overflow-x:auto;">
+        <div style="overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch;">
           <table class="sp-table">
             <thead>
               <tr>
@@ -569,7 +769,7 @@ $issueDate = date('d F Y');
         </h3>
       </div>
       <div class="sp-card-body" style="padding:0;">
-        <div style="overflow-x:auto;">
+        <div style="overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch;">
           <table class="sp-table">
             <thead>
               <tr>
@@ -607,6 +807,7 @@ $issueDate = date('d F Y');
       <h3><i class="fas fa-chart-bar" style="color:var(--sp-primary);"></i> UGC Uniform Grading Scale Reference</h3>
     </div>
     <div class="sp-card-body" style="padding:0;">
+      <div style="overflow-x:auto; max-width:100%; -webkit-overflow-scrolling:touch;">
       <table class="sp-table">
         <thead>
           <tr>
@@ -629,22 +830,23 @@ $issueDate = date('d F Y');
           <tr><td>Less than 40%</td><td><strong style="color:#dc2626;">F</strong></td><td>0.00</td><td>Fail</td></tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 
 </div>
 
 <!-- Modal: Result Review / Correction Request Form -->
-<div id="resultRequestModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:2000; align-items:center; justify-content:center; padding:1.25rem;" class="no-print">
-  <div style="background:#ffffff; border-radius:12px; max-width:540px; width:100%; box-shadow:0 20px 40px rgba(0,0,0,0.25); overflow:hidden;">
+<div id="resultRequestModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,23,42,0.65); z-index:2000; align-items:center; justify-content:center; padding:0.75rem; overflow-y:auto;" class="no-print">
+  <div style="background:#ffffff; border-radius:12px; max-width:540px; width:100%; max-height:92dvh; overflow-y:auto; box-shadow:0 20px 40px rgba(0,0,0,0.25);">
     <div style="background:linear-gradient(135deg, #0f2c59 0%, #1e3a8a 100%); color:#ffffff; padding:1.25rem 1.5rem; display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0; font-size:1.15rem; font-weight:700; display:flex; align-items:center; gap:8px;">
         <i class="fas fa-paper-plane" style="color:#f59e0b;"></i> Request Result Review / Correction
       </h3>
-      <button type="button" onclick="closeRequestModal()" style="background:transparent; border:none; color:#ffffff; font-size:1.3rem; cursor:pointer; line-height:1;">&times;</button>
+      <button type="button" onclick="closeRequestModal()" aria-label="Close modal" style="background:transparent; border:none; color:#ffffff; font-size:1.5rem; cursor:pointer; line-height:1; min-width:44px; min-height:44px; display:inline-flex; align-items:center; justify-content:center;">&times;</button>
     </div>
 
-    <form method="POST" action="" style="padding:1.5rem;">
+    <form method="POST" action="" id="resultRequestForm" style="padding:1.5rem;">
       <?= csrf_field() ?>
       <input type="hidden" name="action" value="submit_result_request">
 
@@ -654,10 +856,10 @@ $issueDate = date('d F Y');
         </label>
         <select name="semester" required style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem; font-weight:600;">
           <?php 
-            $standardOptions = [
-              '1st Semester', '2nd Semester', '3rd Semester', '4th Semester',
-              '5th Semester', '6th Semester', '7th Semester', '8th Semester'
-            ];
+            $standardOptions = [];
+            for ($si = 1; $si <= $totalSemesters; $si++) {
+                $standardOptions[] = get_semester_ordinal_title($si);
+            }
             foreach ($standardOptions as $opt): 
           ?>
             <option value="<?= e($opt) ?>" <?= ($opt === ($student['current_semester'] ?? '')) ? 'selected' : '' ?>><?= e($opt) ?></option>
@@ -665,7 +867,7 @@ $issueDate = date('d F Y');
         </select>
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1rem;">
+      <div class="admin-form-2col" style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin-bottom:1rem;">
         <div>
           <label style="display:block; font-size:0.84rem; font-weight:700; color:#0f2c59; margin-bottom:4px;">
             Inquiry Type *
@@ -728,6 +930,42 @@ window.addEventListener('click', function(e) {
     modal.style.display = 'none';
   }
 });
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    closeRequestModal();
+  }
+});
+
+(function() {
+  var reqForm = document.getElementById('resultRequestForm');
+  function resetReqBtn() {
+    if (!reqForm) return;
+    delete reqForm.dataset.submitted;
+    var btn = reqForm.querySelector('button[type="submit"]');
+    if (btn && btn.dataset.origHtml !== undefined) {
+      btn.disabled = false;
+      btn.innerHTML = btn.dataset.origHtml;
+      delete btn.dataset.origHtml;
+    }
+  }
+  window.addEventListener('pageshow', resetReqBtn);
+  if (reqForm) {
+    reqForm.addEventListener('submit', function(e) {
+      if (e.defaultPrevented) return;
+      if (reqForm.dataset.submitted === '1') {
+        e.preventDefault();
+        return;
+      }
+      reqForm.dataset.submitted = '1';
+      var btn = reqForm.querySelector('button[type="submit"]');
+      if (btn) {
+        btn.dataset.origHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+        setTimeout(function() { btn.disabled = true; }, 0);
+      }
+    });
+  }
+})();
 </script>
 
 <?php require_once __DIR__ . '/includes/student-footer.php'; ?>

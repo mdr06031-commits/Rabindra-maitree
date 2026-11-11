@@ -90,15 +90,30 @@ $whatsappUrl = get_setting('whatsapp_url', 'https://wa.me/8801302991188');
         </div>
       </div>
 
+      <div data-pwa-install-wrap hidden style="display:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-top:1rem; padding:0.75rem 1rem; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.16); border-radius:8px;">
+        <div style="font-size:0.84rem; color:#e2e8f0;">
+          <strong style="color:#ffffff;">RMU Mobile &amp; Desktop App</strong> &mdash; Install for fast home-screen access.
+        </div>
+        <button type="button" data-pwa-install-btn style="display:inline-flex; align-items:center; gap:0.45rem; background:#1e73be; color:#ffffff; border:1px solid #60a5fa; border-radius:6px; padding:0.5rem 1rem; min-height:44px; font-size:0.86rem; font-weight:700; cursor:pointer;">
+          <i class="fas fa-download" aria-hidden="true"></i> Install RMU App
+        </button>
+      </div>
+
+      <div data-pwa-ios-hint hidden style="display:none; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.65rem; margin-top:0.85rem; padding:0.75rem 1rem; background:rgba(30,115,190,0.22); border:1px solid rgba(96,165,250,0.4); border-radius:8px; font-size:0.82rem; color:#e2e8f0;">
+        <span>To install on iPhone or iPad, tap <strong>Share</strong> in Safari and choose <strong>Add to Home Screen</strong>.</span>
+        <button type="button" data-pwa-ios-dismiss aria-label="Dismiss install hint" style="background:rgba(255,255,255,0.14); color:#ffffff; border:1px solid rgba(255,255,255,0.28); border-radius:6px; padding:0.35rem 0.75rem; min-height:38px; cursor:pointer; font-weight:600;">Dismiss</button>
+      </div>
+
       <div style="margin-top:1rem; padding-top:0.8rem; border-top:1px dashed rgba(255,255,255,0.05); font-size:0.75rem; color:#6b7280; text-align:center;">
         <em>Disclaimer: This application is an educational and authorized development reconstruction. It does not replace the official administrative registrar of Rabindra Maitree University.</em>
       </div>
     </div>
   </footer>
 
-  <!-- Scripts (Cache-busted on every deploy) -->
-  <script src="<?= APP_URL ?>/assets/js/main.js?v=<?= time() ?>"></script>
-  <script src="<?= APP_URL ?>/assets/js/validation.js?v=<?= time() ?>"></script>
+  <!-- Scripts (Versioned by asset filemtime) -->
+  <script src="<?= e(rmu_asset_url('assets/js/main.js')) ?>"></script>
+  <script src="<?= e(rmu_asset_url('assets/js/validation.js')) ?>"></script>
+  <script src="<?= e(rmu_asset_url('assets/js/pwa.js')) ?>"></script>
 </body>
 </html>
 

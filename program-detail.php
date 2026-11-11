@@ -65,12 +65,12 @@ include __DIR__ . '/includes/breadcrumbs.php';
           RMU offers generous merit-based tuition fee waivers up to 100% based on combined GPA in SSC and HSC examinations, as well as need-based support via the Mansur Ali &amp; Atharunnesa Trust Scholarship.
         </p>
 
-        <!-- 4-Year Academic Subject Curriculum Breakdown -->
+        <!-- Program Academic Subject Curriculum Breakdown -->
         <?php $curriculum = get_program_curriculum_by_slug($program['slug']); ?>
         <?php if ($curriculum): ?>
           <div style="margin: 2.2rem 0; padding: 1.5rem; background: var(--rmu-bg-light); border: 1px solid var(--rmu-border); border-radius: var(--rmu-radius-md);">
             <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--rmu-dark); margin-bottom: 0.4rem; display: flex; align-items: center; gap: 8px;">
-              <i class="fas fa-graduation-cap" style="color:var(--rmu-primary);"></i> 4-Year Academic Subjects &amp; Curriculum
+              <i class="fas fa-graduation-cap" style="color:var(--rmu-primary);"></i> <?= e($program['duration'] ?: 'Academic') ?> Academic Subjects &amp; Curriculum
             </h3>
             <p style="color: var(--rmu-muted); font-size: 0.92rem; margin-bottom: 1.2rem;">
               Comprehensive course breakdown organized by academic year for <?= e($curriculum['title']) ?>:
@@ -83,9 +83,9 @@ include __DIR__ . '/includes/breadcrumbs.php';
                     <span><i class="fas fa-calendar-alt"></i> <?= e($yrName) ?></span>
                     <span style="font-size: 0.75rem; font-weight: 600; color: #475569; background: #f1f5f9; padding: 2px 8px; border-radius: 12px;"><?= count($subjs) ?> Courses</span>
                   </div>
-                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0.5rem;">
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 0.5rem;">
                     <?php foreach ($subjs as $s): ?>
-                      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.45rem 0.65rem; display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem;">
+                      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.45rem 0.65rem; display: flex; align-items: baseline; gap: 6px; font-size: 0.85rem; min-width: 0;">
                         <span style="font-family: monospace; font-size: 0.75rem; font-weight: 700; color: #1e73be; background: #e0f2fe; padding: 1px 5px; border-radius: 3px; white-space: nowrap;"><?= e($s['code']) ?></span>
                         <span style="color: #1e293b; font-weight: 500; line-height: 1.35;"><?= e($s['name']) ?></span>
                       </div>
@@ -115,25 +115,25 @@ include __DIR__ . '/includes/breadcrumbs.php';
           </h3>
 
           <ul style="list-style: none; padding: 0; font-size: 0.95rem;">
-            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between;">
+            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem;">
               <span style="color: var(--rmu-muted);">Degree Level:</span>
               <strong style="color: var(--rmu-dark);"><?= e($program['degree_level']) ?></strong>
             </li>
-            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between;">
+            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem;">
               <span style="color: var(--rmu-muted);">Duration:</span>
               <strong style="color: var(--rmu-dark);"><?= e($program['duration']) ?></strong>
             </li>
-            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between;">
+            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem;">
               <span style="color: var(--rmu-muted);">Total Credits:</span>
               <strong style="color: var(--rmu-dark);"><?= (int)$program['total_credits'] ?> Credits</strong>
             </li>
-            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between;">
+            <li style="padding: 0.75rem 0; border-bottom: 1px solid var(--rmu-border-light); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem;">
               <span style="color: var(--rmu-muted);">Department:</span>
-              <strong style="color: var(--rmu-dark);"><?= e($program['dept_name']) ?></strong>
+              <strong style="color: var(--rmu-dark); overflow-wrap: anywhere;"><?= e($program['dept_name']) ?></strong>
             </li>
-            <li style="padding: 0.75rem 0; display: flex; justify-content: space-between;">
+            <li style="padding: 0.75rem 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.35rem;">
               <span style="color: var(--rmu-muted);">Application Status:</span>
-              <span class="topbar-badge" style="animation: none;">Open for Fall 2026</span>
+              <span class="topbar-badge" style="animation: none;">Open for <?= e(get_setting('admission_active_term', 'Fall 2026')) ?></span>
             </li>
           </ul>
 
