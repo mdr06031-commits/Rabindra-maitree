@@ -16,13 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fields = [
             'site_name_en', 'site_name_bn', 'campus_address', 'contact_phone',
             'contact_email', 'admission_active_term', 'admission_deadline',
-            'office_hours', 'facebook_url', 'linkedin_url', 'whatsapp_url'
+            'office_hours', 'facebook_url', 'linkedin_url', 'whatsapp_url',
+            'canonical_base_url', 'google_site_verification', 'site_meta_title',
+            'site_meta_description', 'site_meta_keywords'
         ];
 
-        $stmt = $db->prepare("UPDATE site_settings SET setting_value = ? WHERE setting_key = ?");
+        $stmt = $db->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
         foreach ($fields as $key) {
             if (isset($_POST[$key])) {
-                $stmt->execute([trim($_POST[$key]), $key]);
+                $stmt->execute([$key, trim($_POST[$key])]);
             }
         }
 
@@ -129,6 +131,39 @@ include __DIR__ . '/includes/admin-header.php';
         <label class="form-label">WhatsApp URL</label>
         <input type="url" name="whatsapp_url" value="<?= e($settings['whatsapp_url'] ?? '') ?>" class="form-control">
       </div>
+    </div>
+
+    <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--rmu-primary); margin: 1.8rem 0 1.25rem; border-bottom: 2px solid var(--rmu-border); padding-bottom: 0.5rem;">
+      <i class="fas fa-search"></i> Search Engine Optimization (SEO) &amp; Google Indexing
+    </h3>
+
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+      <div class="form-group">
+        <label class="form-label">Canonical Production Domain URL</label>
+        <input type="url" name="canonical_base_url" value="<?= e($settings['canonical_base_url'] ?? 'https://rmu.ac.bd') ?>" class="form-control" placeholder="https://rmu.ac.bd">
+        <small style="color: #64748b; font-size: 0.78rem;">Canonical domain submitted to Google Search Console.</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Google Site Verification Code / Token</label>
+        <input type="text" name="google_site_verification" value="<?= e($settings['google_site_verification'] ?? '') ?>" class="form-control" placeholder="e.g. google-site-verification=abc...">
+        <small style="color: #64748b; font-size: 0.78rem;">Enter the verification token provided by Google Search Console.</small>
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top: 1rem;">
+      <label class="form-label">Default SEO Meta Title</label>
+      <input type="text" name="site_meta_title" value="<?= e($settings['site_meta_title'] ?? 'Rabindra Maitree University - Center of Academic Excellence') ?>" class="form-control">
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Default Meta Description</label>
+      <textarea name="site_meta_description" class="form-control" rows="2"><?= e($settings['site_meta_description'] ?? 'Rabindra Maitree University (RMU), Kushtia - A leading center for higher education, arts, engineering, and cultural enlightenment approved by UGC.') ?></textarea>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">SEO Meta Keywords (comma separated)</label>
+      <input type="text" name="site_meta_keywords" value="<?= e($settings['site_meta_keywords'] ?? 'Rabindra Maitree University, RMU, RMU Kushtia, UGC Approved University, University Admission Bangladesh, Engineering, CSE, BBA, English') ?>" class="form-control">
     </div>
 
     <div style="margin-top: 2rem; border-top: 1px solid var(--rmu-border); padding-top: 1.5rem;">

@@ -1,0 +1,42 @@
+# Robots.txt for Rabindra Maitree University (RMU)
+# Official Website: https://rmu.ac.bd
+# Allows search engines to crawl public academic, admission, notice, and event pages.
+
+User-agent: *
+Allow: /
+Allow: /index.php
+Allow: /about.php
+Allow: /academics.php
+Allow: /admissions.php
+Allow: /apply.php
+Allow: /admission-form.php
+Allow: /admission-status.php
+Allow: /faculty.php
+Allow: /notices.php
+Allow: /notice-detail.php
+Allow: /events.php
+Allow: /event-detail.php
+Allow: /news.php
+Allow: /news-detail.php
+Allow: /program-detail.php
+Allow: /department-detail.php
+Allow: /faculty-detail.php
+Allow: /contact.php
+Allow: /verify.php
+Allow: /verify-certificate.php
+Allow: /verify-application.php
+Allow: /sitemap.xml
+Allow: /sitemap.php
+Allow: /assets/
+
+# Disallow administrative and private areas
+Disallow: /admin/
+Disallow: /student/
+Disallow: /actions/
+Disallow: /config/
+Disallow: /database/
+Disallow: /storage/
+Disallow: /tests/
+
+# Sitemap Location
+Sitemap: https://rmu.ac.bd/sitemap.xml

@@ -12,6 +12,14 @@ $facebookUrl = get_setting('facebook_url', 'https://www.facebook.com/rmukushtia'
 $linkedinUrl = get_setting('linkedin_url', 'https://www.linkedin.com/school/rmukushtia/');
 $whatsappUrl = get_setting('whatsapp_url', 'https://wa.me/8801302991188');
 $currentTerm = get_setting('admission_active_term', 'Fall 2026');
+
+// SEO & Google Indexing Meta
+$metaDescription = isset($metaDescription) ? $metaDescription : get_setting('site_meta_description', 'Rabindra Maitree University (RMU), Kushtia - A center of excellence in higher education, arts, engineering, and cultural enlightenment.');
+$metaKeywords = isset($metaKeywords) ? $metaKeywords : get_setting('site_meta_keywords', 'Rabindra Maitree University, RMU, RMU Kushtia, University Admission Bangladesh, UGC Approved University, CSE, EEE, BBA, English, Bangla');
+$canonicalBase = get_setting('canonical_base_url', defined('APP_URL') ? APP_URL : 'https://rmu.ac.bd');
+$currentUri = $_SERVER['REQUEST_URI'] ?? '/';
+$canonicalUrl = rtrim($canonicalBase, '/') . '/' . ltrim($currentUri, '/');
+$googleSiteVerification = get_setting('google_site_verification', '');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -19,7 +27,54 @@ $currentTerm = get_setting('admission_active_term', 'Fall 2026');
   <meta charset="UTF-8">
   <?php include BASE_PATH . '/includes/pwa-head.php'; ?>
   <title><?= e($pageTitle) ?></title>
-  <meta name="description" content="Rabindra Maitree University (RMU), Kushtia - A center of excellence in higher education, arts, engineering, and cultural enlightenment.">
+  
+  <!-- Search Engine Optimization (SEO) & Indexing -->
+  <meta name="description" content="<?= e($metaDescription) ?>">
+  <meta name="keywords" content="<?= e($metaKeywords) ?>">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <link rel="canonical" href="<?= e($canonicalUrl) ?>">
+  <?php if (!empty($googleSiteVerification)): ?>
+  <meta name="google-site-verification" content="<?= e($googleSiteVerification) ?>">
+  <?php endif; ?>
+
+  <!-- OpenGraph Metadata (Facebook, LinkedIn) -->
+  <meta property="og:locale" content="en_US">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="<?= e($pageTitle) ?>">
+  <meta property="og:description" content="<?= e($metaDescription) ?>">
+  <meta property="og:url" content="<?= e($canonicalUrl) ?>">
+  <meta property="og:site_name" content="<?= e(APP_NAME) ?>">
+  <meta property="og:image" content="<?= APP_URL ?>/assets/images/logo.jpg">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="<?= e($pageTitle) ?>">
+  <meta name="twitter:description" content="<?= e($metaDescription) ?>">
+  <meta name="twitter:image" content="<?= APP_URL ?>/assets/images/logo.jpg">
+
+  <!-- JSON-LD Educational Organization Schema for Google Rich Snippets -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "CollegeOrUniversity",
+    "name": "Rabindra Maitree University",
+    "alternateName": "RMU",
+    "url": "<?= e($canonicalBase) ?>",
+    "logo": "<?= APP_URL ?>/assets/images/logo.jpg",
+    "address": {
+      "@type": "PostalAddress",
+      "addressLocality": "Kushtia",
+      "addressCountry": "BD"
+    },
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "telephone": "<?= e($contactPhone) ?>",
+      "contactType": "admissions",
+      "email": "<?= e($contactEmail) ?>"
+    }
+  }
+  </script>
+
   <link rel="icon" type="image/jpeg" href="<?= APP_URL ?>/assets/images/logo.jpg">
   
   <!-- Google Fonts: Poppins, Roboto Slab -->
