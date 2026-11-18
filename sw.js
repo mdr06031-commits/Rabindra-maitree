@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const CACHE_NAME = 'rmu-pwa-v1';
+const CACHE_NAME = 'rmu-pwa-v2';
 const SCOPE_URL = new URL('./', self.registration.scope);
 const OFFLINE_URL = new URL('offline.php', SCOPE_URL).href;
 

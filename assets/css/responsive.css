@@ -49,6 +49,10 @@
     display: none !important;
   }
 
+  body.rmu-drawer-open .rmu-navbar {
+    z-index: 999995 !important;
+  }
+
   .nav-menu.mobile-open {
     display: flex !important;
     flex-direction: column !important;
@@ -64,6 +68,8 @@
     box-shadow: -6px 0 25px rgba(0,0,0,0.15) !important;
     border-left: 1px solid #cbd5e1 !important;
     z-index: 999999 !important;
+    pointer-events: auto !important;
+    touch-action: pan-y !important;
     overflow-y: auto !important;
     overscroll-behavior: contain !important;
     padding: max(1.25rem, env(safe-area-inset-top, 0px)) 1rem max(3rem, env(safe-area-inset-bottom, 0px)) !important;
@@ -73,6 +79,12 @@
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     -webkit-font-smoothing: antialiased !important;
+  }
+
+  .nav-menu.mobile-open a,
+  .nav-menu.mobile-open button {
+    touch-action: manipulation !important;
+    pointer-events: auto !important;
   }
 
   .nav-menu.mobile-open .nav-item {

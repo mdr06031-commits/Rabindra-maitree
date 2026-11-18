@@ -548,8 +548,6 @@ img {
   z-index: 1010;
 }
 
-.nav-item:hover > .dropdown-menu,
-.nav-item:focus-within > .dropdown-menu,
 .nav-item.dropdown-show > .dropdown-menu {
   display: block !important;
 }

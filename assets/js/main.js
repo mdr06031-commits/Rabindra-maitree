@@ -100,6 +100,12 @@ document.addEventListener('DOMContentLoaded', function () {
     backdrop.className = 'mobile-backdrop';
     document.body.appendChild(backdrop);
 
+    // Move drawer menu to document.body right after backdrop so it escapes .rmu-navbar's
+    // sticky z-index:1000 stacking context and ALWAYS sits above .mobile-backdrop on Android/iOS/Desktop.
+    if (navMenu && navMenu.parentNode !== document.body) {
+      document.body.appendChild(navMenu);
+    }
+
     // Centralized action debounce to eliminate ANY double-execution
     let lastActionTime = 0;
     let lastActionTarget = null;
@@ -182,7 +188,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Close all open submenus
     function closeAllSubmenus(exceptItem = null) {
-      document.querySelectorAll('.rmu-navbar .nav-item.has-dropdown').forEach(el => {
+      document.querySelectorAll('.nav-menu .nav-item.has-dropdown, .rmu-navbar .nav-item.has-dropdown').forEach(el => {
         if (el !== exceptItem) {
           el.classList.remove('dropdown-show');
           const link = el.querySelector('.dropdown-toggle') || el.querySelector('.nav-link');
@@ -337,8 +343,8 @@ document.addEventListener('DOMContentLoaded', function () {
       });
     };
 
-    // Single click handler per dropdown link
-    document.querySelectorAll('.rmu-navbar .nav-item.has-dropdown > .nav-link').forEach(link => {
+    // Single click handler per dropdown link inside drawer and navbar
+    document.querySelectorAll('.nav-menu .nav-item.has-dropdown > .nav-link, .rmu-navbar .nav-item.has-dropdown > .nav-link').forEach(link => {
       link.onclick = function (e) {
         if (this.id === 'programsMenuLink' || this.closest('.programs-nav-item')) {
           if (window.toggleProgramsDropdown) {
@@ -375,21 +381,29 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // Close drawer when selecting an actual page link (not dropdown toggle)
-    rmuNavbar.addEventListener('click', function (e) {
+    const handleNavLinkClick = function (e) {
       const pageLink = e.target.closest('a');
       if (pageLink && !pageLink.classList.contains('dropdown-toggle') && pageLink.getAttribute('href') !== 'javascript:void(0);') {
         closeDrawer();
       }
-    });
+    };
+    rmuNavbar.addEventListener('click', handleNavLinkClick);
+    if (navMenu) {
+      navMenu.addEventListener('click', handleNavLinkClick);
+    }
 
     // Keyboard support for submenu toggles
-    rmuNavbar.addEventListener('keydown', function (e) {
+    const handleNavKeydown = function (e) {
       const toggleLink = e.target.closest('.nav-item.has-dropdown > .nav-link, .nav-item.has-dropdown .dropdown-toggle');
       if (toggleLink && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         toggleSubmenu(toggleLink);
       }
-    });
+    };
+    rmuNavbar.addEventListener('keydown', handleNavKeydown);
+    if (navMenu) {
+      navMenu.addEventListener('keydown', handleNavKeydown);
+    }
 
     // Automated verification triggers for testing
     try {
