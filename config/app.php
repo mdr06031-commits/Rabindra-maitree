@@ -17,16 +17,15 @@ $isHttpsRequest = (
 
 // Session configuration for security
 if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
-    // Ensure a valid, writable session directory on shared cPanel/CloudLinux hosts
-    $currentSavePath = (string)ini_get('session.save_path');
-    if ($currentSavePath === '' || !@is_dir($currentSavePath) || !@is_writable($currentSavePath)) {
-        $fallbackSessionDir = dirname(__DIR__) . '/storage/sessions';
-        if (!is_dir($fallbackSessionDir)) {
-            @mkdir($fallbackSessionDir, 0700, true);
-        }
-        if (is_dir($fallbackSessionDir) && is_writable($fallbackSessionDir)) {
-            session_save_path($fallbackSessionDir);
-        }
+    // Use project-local session directory so shared cPanel/CloudLinux hosts never fail on missing system session paths
+    $localSessionDir = dirname(__DIR__) . '/storage/sessions';
+    if (!is_dir($localSessionDir)) {
+        @mkdir($localSessionDir, 0755, true);
+    }
+    if (is_dir($localSessionDir) && is_writable($localSessionDir)) {
+        @ini_set('session.save_handler', 'files');
+        @ini_set('session.save_path', $localSessionDir);
+        @session_save_path($localSessionDir);
     }
     ini_set('session.cookie_httponly', 1);
     ini_set('session.use_only_cookies', 1);
