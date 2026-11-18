@@ -14,7 +14,7 @@
     RewriteRule (^|/)\.(?!well-known) - [F]
 
     # Block direct HTTP access to sensitive project directories
-    RewriteRule ^(config|database|tests|storage/logs)/ - [F,L]
+    RewriteRule ^(config|database|tests|storage/logs|storage/sessions)/ - [F,L]
     
     # Block direct HTTP access to SQL dumps and raw config files
     <FilesMatch "\.(sql|log|ini|sh|bak)$">

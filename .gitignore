@@ -10,6 +10,8 @@ storage/downloads/*
 !storage/downloads/.gitkeep
 storage/admissions/*
 !storage/admissions/.gitkeep
+storage/sessions/*
+!storage/sessions/.gitkeep
 
 # Operating System & IDE Artifacts
 .DS_Store
