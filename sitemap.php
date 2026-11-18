@@ -7,9 +7,9 @@ require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/includes/functions.php';
 
 // Determine canonical base URL
-$baseUrl = get_setting('canonical_base_url', '');
-if (empty($baseUrl)) {
-    $baseUrl = defined('APP_URL') ? APP_URL : 'https://rmu.ac.bd';
+$baseUrl = trim((string)get_setting('canonical_base_url', ''));
+if ($baseUrl === '' || (php_sapi_name() !== 'cli' && stripos($baseUrl, 'rmu.ac.bd') !== false && !empty($_SERVER['HTTP_HOST']) && stripos((string)$_SERVER['HTTP_HOST'], 'rmu.ac.bd') === false)) {
+    $baseUrl = (defined('APP_URL') && php_sapi_name() !== 'cli') ? APP_URL : 'https://rmuresultportal-acbd.com';
 }
 $baseUrl = rtrim($baseUrl, '/');
 
@@ -17,7 +17,7 @@ $urls = [];
 
 // Helper to add a URL entry
 $addUrl = function($path, $priority, $changefreq, $lastmod = null) use (&$urls, $baseUrl) {
-    $loc = $baseUrl . '/' . ltrim($path, '/');
+    $loc = $path === '' ? $baseUrl . '/' : $baseUrl . '/' . ltrim($path, '/');
     $urls[] = [
         'loc'        => htmlspecialchars($loc, ENT_QUOTES, 'UTF-8'),
         'lastmod'    => $lastmod ? date('Y-m-d', strtotime($lastmod)) : date('Y-m-d'),
@@ -26,21 +26,30 @@ $addUrl = function($path, $priority, $changefreq, $lastmod = null) use (&$urls, 
     ];
 };
 
-// 1. Core Static Pages
+// 1. Core Verified Public Pages (100% 200 OK routes, zero 404s)
 $addUrl('', 1.0, 'daily');
-$addUrl('index.php', 1.0, 'daily');
 $addUrl('about.php', 0.8, 'monthly');
-$addUrl('academics.php', 0.9, 'weekly');
+$addUrl('history.php', 0.7, 'monthly');
+$addUrl('mission-vision.php', 0.7, 'monthly');
+$addUrl('leadership.php', 0.8, 'monthly');
+$addUrl('administration.php', 0.7, 'monthly');
+$addUrl('board-of-trustees.php', 0.7, 'monthly');
+$addUrl('faculties.php', 0.9, 'weekly');
+$addUrl('departments.php', 0.9, 'weekly');
+$addUrl('programs.php', 0.9, 'weekly');
 $addUrl('admissions.php', 0.9, 'weekly');
 $addUrl('admission-form.php', 0.9, 'weekly');
 $addUrl('admission-status.php', 0.8, 'daily');
-$addUrl('faculty.php', 0.8, 'monthly');
+$addUrl('tuition-fees.php', 0.8, 'monthly');
+$addUrl('scholarships.php', 0.8, 'monthly');
+$addUrl('faqs.php', 0.7, 'monthly');
 $addUrl('notices.php', 0.9, 'daily');
 $addUrl('events.php', 0.8, 'weekly');
 $addUrl('news.php', 0.8, 'weekly');
+$addUrl('downloads.php', 0.7, 'monthly');
+$addUrl('campus.php', 0.7, 'monthly');
 $addUrl('contact.php', 0.7, 'monthly');
-$addUrl('verify.php', 0.7, 'monthly');
-$addUrl('verify-certificate.php', 0.7, 'monthly');
+$addUrl('privacy-policy.php', 0.5, 'yearly');
 $addUrl('verify-application.php', 0.7, 'monthly');
 
 // 2. Dynamic Content from Database
@@ -117,6 +126,10 @@ $xml .= "</urlset>\n";
 // Write static sitemap.xml fallback file if possible
 @file_put_contents(__DIR__ . '/sitemap.xml', $xml);
 
-// Deliver XML to client/crawler
-header('Content-Type: application/xml; charset=utf-8');
+// Deliver clean crawlable XML to Googlebot / clients
+if (!headers_sent()) {
+    header_remove('Pragma');
+    header('Content-Type: application/xml; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+}
 echo $xml;

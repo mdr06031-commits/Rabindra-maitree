@@ -16,10 +16,19 @@ $currentTerm = get_setting('admission_active_term', 'Fall 2026');
 // SEO & Google Indexing Meta
 $metaDescription = isset($metaDescription) ? $metaDescription : get_setting('site_meta_description', 'Rabindra Maitree University (RMU), Kushtia - A center of excellence in higher education, arts, engineering, and cultural enlightenment.');
 $metaKeywords = isset($metaKeywords) ? $metaKeywords : get_setting('site_meta_keywords', 'Rabindra Maitree University, RMU, RMU Kushtia, University Admission Bangladesh, UGC Approved University, CSE, EEE, BBA, English, Bangla');
-$canonicalBase = get_setting('canonical_base_url', defined('APP_URL') ? APP_URL : 'https://rmu.ac.bd');
+$canonicalBase = trim((string)get_setting('canonical_base_url', ''));
+if ($canonicalBase === '' || (php_sapi_name() !== 'cli' && stripos($canonicalBase, 'rmu.ac.bd') !== false && !empty($_SERVER['HTTP_HOST']) && stripos((string)$_SERVER['HTTP_HOST'], 'rmu.ac.bd') === false)) {
+    $canonicalBase = defined('APP_URL') ? APP_URL : 'https://rmuresultportal-acbd.com';
+}
 $currentUri = $_SERVER['REQUEST_URI'] ?? '/';
 $canonicalUrl = rtrim($canonicalBase, '/') . '/' . ltrim($currentUri, '/');
-$googleSiteVerification = get_setting('google_site_verification', '');
+$googleSiteVerification = trim((string)get_setting('google_site_verification', 'j63_eVzP6dlo0LrXme84FcqMaNmdnjrDNty8vh7f2L4'));
+if (preg_match('/content=["\']([^"\']+)["\']/i', $googleSiteVerification, $gsvMatch)) {
+    $googleSiteVerification = trim($gsvMatch[1]);
+}
+if ($googleSiteVerification === '') {
+    $googleSiteVerification = 'j63_eVzP6dlo0LrXme84FcqMaNmdnjrDNty8vh7f2L4';
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

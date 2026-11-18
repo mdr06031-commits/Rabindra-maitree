@@ -1,0 +1,5 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/rakmsuac/rmuresultportal-acbd.com/
+    - /usr/bin/rsync -av --exclude='.git' --exclude='.gitignore' --exclude='.cpanel.yml' --exclude='config/database.php' --exclude='.htaccess' --exclude='storage/uploads/*' --exclude='storage/sessions/*' --exclude='storage/admissions/*' ./ $DEPLOYPATH

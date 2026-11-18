@@ -1,29 +1,38 @@
 # Robots.txt for Rabindra Maitree University (RMU)
-# Official Website: https://rmu.ac.bd
+# Official Website: https://rmuresultportal-acbd.com
 # Allows search engines to crawl public academic, admission, notice, and event pages.
 
 User-agent: *
 Allow: /
 Allow: /index.php
 Allow: /about.php
-Allow: /academics.php
+Allow: /history.php
+Allow: /mission-vision.php
+Allow: /leadership.php
+Allow: /administration.php
+Allow: /board-of-trustees.php
+Allow: /faculties.php
+Allow: /faculty-detail.php
+Allow: /departments.php
+Allow: /department-detail.php
+Allow: /programs.php
+Allow: /program-detail.php
 Allow: /admissions.php
-Allow: /apply.php
 Allow: /admission-form.php
 Allow: /admission-status.php
-Allow: /faculty.php
+Allow: /tuition-fees.php
+Allow: /scholarships.php
+Allow: /faqs.php
 Allow: /notices.php
 Allow: /notice-detail.php
 Allow: /events.php
 Allow: /event-detail.php
 Allow: /news.php
 Allow: /news-detail.php
-Allow: /program-detail.php
-Allow: /department-detail.php
-Allow: /faculty-detail.php
+Allow: /downloads.php
+Allow: /campus.php
 Allow: /contact.php
-Allow: /verify.php
-Allow: /verify-certificate.php
+Allow: /privacy-policy.php
 Allow: /verify-application.php
 Allow: /sitemap.xml
 Allow: /sitemap.php
@@ -39,4 +48,4 @@ Disallow: /storage/
 Disallow: /tests/
 
 # Sitemap Location
-Sitemap: https://rmu.ac.bd/sitemap.xml
+Sitemap: https://rmuresultportal-acbd.com/sitemap.xml
