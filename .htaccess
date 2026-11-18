@@ -7,8 +7,8 @@
     RewriteEngine On
     RewriteBase /
 
-    # Dynamic Google XML Sitemap route
-    RewriteRule ^sitemap\.xml$ sitemap.php [L]
+    # Serve static sitemap.xml directly for Googlebot (refresh via /sitemap.php)
+    # RewriteRule ^sitemap\.xml$ sitemap.php [L]
 
     # Block access to hidden files and directories (e.g. .git, .env)
     RewriteRule (^|/)\.(?!well-known) - [F]
