@@ -57,7 +57,7 @@ INSERT INTO `site_settings` (`id`, `setting_key`, `setting_value`, `setting_grou
 (18, 'site_meta_keywords', 'Rabindra Maitree University, RMU, RMU Kushtia, Private University Kushtia, UGC Approved University, CSE, BBA, English, Law, Admission 2026, Bangladesh Universities', 'seo', 'Target keywords for university website indexing', '2026-11-15 22:58:50'),
 (19, 'google_site_verification', '', 'seo', 'Google Search Console verification code (content of google-site-verification meta tag)', '2026-11-15 22:58:50'),
 (20, 'canonical_base_url', 'https://rmu.ac.bd', 'seo', 'Canonical production base URL for Google Indexing (update to your live domain)', '2026-11-15 22:58:50'),
-(21, 'payment_bkash_no', '01302991188', 'payment', 'bKash Merchant / Personal Account Number', '2026-11-19 20:30:00'),
+(21, 'payment_bkash_no', '01336367336', 'payment', 'bKash Merchant / Personal Account Number', '2026-11-19 20:30:00'),
 (22, 'payment_nagad_no', '01302991188', 'payment', 'Nagad Merchant / Personal Account Number', '2026-11-19 20:30:00'),
 (23, 'payment_rocket_no', '01302991188-7', 'payment', 'DBBL Rocket Account Number', '2026-11-19 20:30:00'),
 (24, 'payment_merchant_account', '01336367336', 'payment', 'Official Gateway Merchant ID / Number', '2026-11-19 20:30:00'),

@@ -12,7 +12,7 @@ $studentId = (int)$student['id'];
 
 $allowedMethods = ['bKash', 'Nagad', 'DBBL Rocket', 'Visa / Mastercard', 'Bank Transfer'];
 
-$bkashNo = get_setting('payment_bkash_no', '01302991188');
+$bkashNo = get_setting('payment_bkash_no', '01336367336');
 $nagadNo = get_setting('payment_nagad_no', '01302991188');
 $rocketNo = get_setting('payment_rocket_no', '01302991188-7');
 $bankInfo = get_setting('payment_bank_info', 'Dutch-Bangla Bank Ltd, Kushtia Branch. A/C: 115-120-998822');

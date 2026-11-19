@@ -127,7 +127,7 @@ include __DIR__ . '/includes/admin-header.php';
         <label class="form-label" style="font-weight: 700; color: #be123c;">
           <i class="fas fa-mobile-alt"></i> bKash Merchant / Personal Number
         </label>
-        <input type="text" name="payment_bkash_no" value="<?= e($settings['payment_bkash_no'] ?? '01302991188') ?>" class="form-control" placeholder="01XXXXXXXXX" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
+        <input type="text" name="payment_bkash_no" value="<?= e($settings['payment_bkash_no'] ?? '01336367336') ?>" class="form-control" placeholder="01XXXXXXXXX" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
         <small style="color: #64748b; font-size: 0.78rem;">স্টুডেন্ট পোর্টালে বিকাশ ফি পেমেন্টের জন্য প্রদর্শিত হবে।</small>
       </div>
 
