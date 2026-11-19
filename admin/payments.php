@@ -157,6 +157,11 @@ include __DIR__ . '/includes/admin-header.php';
       Admission Application Fees (৳150) &amp; Semester Tuition Invoices &bull; Gateway Audit &amp; Verification
     </p>
   </div>
+  <div>
+    <a href="<?= APP_URL ?>/admin/settings.php#payment-settings" class="btn" style="background:#15803d; color:#ffffff; padding:0.6rem 1.15rem; border-radius:6px; font-size:0.88rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:8px; box-shadow:0 2px 5px rgba(21,128,61,0.25);">
+      <i class="fas fa-mobile-alt"></i> Change Payment Numbers (পেমেন্ট নম্বর পরিবর্তন)
+    </a>
+  </div>
 </div>
 
 <!-- KPI Cards -->

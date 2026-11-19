@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `site_settings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
--- Dumping data for table `site_settings` (20 rows)
+-- Dumping data for table `site_settings` (26 rows)
 --
 INSERT INTO `site_settings` (`id`, `setting_key`, `setting_value`, `setting_group`, `description`, `updated_at`) VALUES
 (1, 'site_name_en', 'Rabindra Maitree University', 'general', 'University English Name', '2026-10-17 12:39:47'),
@@ -92,7 +92,13 @@ INSERT INTO `site_settings` (`id`, `setting_key`, `setting_value`, `setting_grou
 (17, 'site_meta_description', 'Rabindra Maitree University (RMU), Kushtia - A center of excellence in higher education, arts, engineering, and cultural enlightenment approved by UGC and the Govt. of Bangladesh.', 'seo', 'Meta Description tag for Google search result snippets', '2026-11-15 22:58:50'),
 (18, 'site_meta_keywords', 'Rabindra Maitree University, RMU, RMU Kushtia, Private University Kushtia, UGC Approved University, CSE, BBA, English, Law, Admission 2026, Bangladesh Universities', 'seo', 'Target keywords for university website indexing', '2026-11-15 22:58:50'),
 (19, 'google_site_verification', '', 'seo', 'Google Search Console verification code (content of google-site-verification meta tag)', '2026-11-15 22:58:50'),
-(20, 'canonical_base_url', 'https://rmu.ac.bd', 'seo', 'Canonical production base URL for Google Indexing (update to your live domain)', '2026-11-15 22:58:50');
+(20, 'canonical_base_url', 'https://rmu.ac.bd', 'seo', 'Canonical production base URL for Google Indexing (update to your live domain)', '2026-11-15 22:58:50'),
+(21, 'payment_bkash_no', '01302991188', 'payment', 'bKash Merchant / Personal Account Number', '2026-11-19 20:30:00'),
+(22, 'payment_nagad_no', '01302991188', 'payment', 'Nagad Merchant / Personal Account Number', '2026-11-19 20:30:00'),
+(23, 'payment_rocket_no', '01302991188-7', 'payment', 'DBBL Rocket Account Number', '2026-11-19 20:30:00'),
+(24, 'payment_merchant_account', '01336367336', 'payment', 'Official Gateway Merchant ID / Number', '2026-11-19 20:30:00'),
+(25, 'payment_bank_info', 'Dutch-Bangla Bank Ltd, Kushtia Branch. A/C: 115-120-998822', 'payment', 'Bank Direct Transfer Account Details', '2026-11-19 20:30:00'),
+(26, 'payment_instructions', 'পেমেন্ট করার সময় রেফারেন্সে অবশ্যই আপনার Student ID অথবা Admission Roll নম্বর লিখবেন।', 'payment', 'Payment Instructions and Reference Guidelines', '2026-11-19 20:30:00');
 
 -- -----------------------------------------------------
 -- Table structure for table `audit_logs`

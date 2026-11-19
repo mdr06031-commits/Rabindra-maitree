@@ -12,6 +12,12 @@ $studentId = (int)$student['id'];
 
 $allowedMethods = ['bKash', 'Nagad', 'DBBL Rocket', 'Visa / Mastercard', 'Bank Transfer'];
 
+$bkashNo = get_setting('payment_bkash_no', '01302991188');
+$nagadNo = get_setting('payment_nagad_no', '01302991188');
+$rocketNo = get_setting('payment_rocket_no', '01302991188-7');
+$bankInfo = get_setting('payment_bank_info', 'Dutch-Bangla Bank Ltd, Kushtia Branch. A/C: 115-120-998822');
+$paymentNotes = get_setting('payment_instructions', 'Use Student ID as reference');
+
 // Handle payment submission BEFORE sending header output
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
@@ -328,11 +334,11 @@ $csrfToken = csrf_token();
           <div>
             <label style="display:block; font-size:0.82rem; font-weight:700; color:#334155; margin-bottom:0.35rem;">Payment Gateway / Method *</label>
             <select name="payment_method" style="width:100%; padding:0.5rem 0.75rem; border:1px solid #cbd5e1; border-radius:6px; font-size:0.88rem; background:#fff; font-weight:600;">
-              <option value="bKash">bKash (01302991188)</option>
-              <option value="Nagad">Nagad (01302991188)</option>
-              <option value="DBBL Rocket">DBBL Rocket</option>
+              <option value="bKash">bKash (<?= e($bkashNo) ?>)</option>
+              <option value="Nagad">Nagad (<?= e($nagadNo) ?>)</option>
+              <option value="DBBL Rocket">DBBL Rocket (<?= e($rocketNo) ?>)</option>
               <option value="Visa / Mastercard">Visa / Mastercard / NexusPay</option>
-              <option value="Bank Transfer">Dutch-Bangla Bank Direct Transfer</option>
+              <option value="Bank Transfer">Direct Bank Transfer</option>
             </select>
           </div>
 
@@ -358,16 +364,20 @@ $csrfToken = csrf_token();
     <div class="sp-card-body">
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap:1rem;">
         <div style="background:#fdf2f8; border:1px solid #fbcfe8; padding:1rem; border-radius:8px;">
-          <h4 style="margin:0 0 0.3rem; color:#be185d;"><i class="fas fa-mobile-alt"></i> bKash Merchant Payment</h4>
-          <p style="margin:0; font-size:0.8rem; color:#64748b;">Merchant A/C: <strong>01302991188</strong> (Use Student ID as reference)</p>
+          <h4 style="margin:0 0 0.3rem; color:#be185d;"><i class="fas fa-mobile-alt"></i> bKash Merchant / Payment</h4>
+          <p style="margin:0; font-size:0.8rem; color:#64748b;">A/C: <strong><?= e($bkashNo) ?></strong> (<?= e($paymentNotes) ?>)</p>
         </div>
         <div style="background:#fff7ed; border:1px solid #fed7aa; padding:1rem; border-radius:8px;">
-          <h4 style="margin:0 0 0.3rem; color:#c2410c;"><i class="fas fa-mobile-alt"></i> Nagad Online Gateway</h4>
-          <p style="margin:0; font-size:0.8rem; color:#64748b;">Merchant A/C: <strong>01302991188</strong> (Enter 11-digit Student ID)</p>
+          <h4 style="margin:0 0 0.3rem; color:#c2410c;"><i class="fas fa-mobile-alt"></i> Nagad Merchant / Gateway</h4>
+          <p style="margin:0; font-size:0.8rem; color:#64748b;">A/C: <strong><?= e($nagadNo) ?></strong> (<?= e($paymentNotes) ?>)</p>
+        </div>
+        <div style="background:#faf5ff; border:1px solid #e9d5ff; padding:1rem; border-radius:8px;">
+          <h4 style="margin:0 0 0.3rem; color:#7c3aed;"><i class="fas fa-mobile-alt"></i> Rocket Payment</h4>
+          <p style="margin:0; font-size:0.8rem; color:#64748b;">A/C: <strong><?= e($rocketNo) ?></strong> (<?= e($paymentNotes) ?>)</p>
         </div>
         <div style="background:#eff6ff; border:1px solid #bfdbfe; padding:1rem; border-radius:8px;">
           <h4 style="margin:0 0 0.3rem; color:#1d4ed8;"><i class="fas fa-university"></i> Bank Direct Transfer</h4>
-          <p style="margin:0; font-size:0.8rem; color:#64748b;">Dutch-Bangla Bank Ltd, Kushtia Branch. A/C: 115-120-998822</p>
+          <p style="margin:0; font-size:0.8rem; color:#64748b;"><?= e($bankInfo) ?></p>
         </div>
       </div>
     </div>

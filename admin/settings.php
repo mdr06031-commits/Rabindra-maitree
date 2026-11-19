@@ -18,7 +18,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'contact_email', 'admission_active_term', 'admission_deadline',
             'office_hours', 'facebook_url', 'linkedin_url', 'whatsapp_url',
             'canonical_base_url', 'google_site_verification', 'site_meta_title',
-            'site_meta_description', 'site_meta_keywords'
+            'site_meta_description', 'site_meta_keywords',
+            'payment_bkash_no', 'payment_nagad_no', 'payment_rocket_no',
+            'payment_merchant_account', 'payment_bank_info', 'payment_instructions'
         ];
 
         $stmt = $db->prepare("INSERT INTO site_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
@@ -110,6 +112,65 @@ include __DIR__ . '/includes/admin-header.php';
         <label class="form-label">Application Deadline</label>
         <input type="date" name="admission_deadline" value="<?= e($settings['admission_deadline'] ?? '') ?>" class="form-control">
       </div>
+    </div>
+
+    <!-- Payment & MFS Accounts Configuration -->
+    <h3 id="payment-settings" style="font-size: 1.15rem; font-weight: 700; color: #15803d; margin: 1.8rem 0 0.5rem; border-bottom: 2px solid #86efac; padding-bottom: 0.5rem;">
+      <i class="fas fa-money-check-alt"></i> Mobile Banking &amp; Payment Accounts (পেমেন্ট নম্বর সেটিংস)
+    </h3>
+    <p style="color: #64748b; font-size: 0.83rem; margin: 0 0 1.25rem;">
+      এখানে দেওয়া বিকাশ, নগদ ও রকেট নম্বরসমূহ স্টুডেন্ট ফি পেমেন্ট ও এডমিশন রিসিটে স্বয়ংক্রিয়ভাবে প্রদর্শিত হবে।
+    </p>
+
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;">
+      <div class="form-group">
+        <label class="form-label" style="font-weight: 700; color: #be123c;">
+          <i class="fas fa-mobile-alt"></i> bKash Merchant / Personal Number
+        </label>
+        <input type="text" name="payment_bkash_no" value="<?= e($settings['payment_bkash_no'] ?? '01302991188') ?>" class="form-control" placeholder="01XXXXXXXXX" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
+        <small style="color: #64748b; font-size: 0.78rem;">স্টুডেন্ট পোর্টালে বিকাশ ফি পেমেন্টের জন্য প্রদর্শিত হবে।</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" style="font-weight: 700; color: #c2410c;">
+          <i class="fas fa-mobile-alt"></i> Nagad Merchant / Personal Number
+        </label>
+        <input type="text" name="payment_nagad_no" value="<?= e($settings['payment_nagad_no'] ?? '01302991188') ?>" class="form-control" placeholder="01XXXXXXXXX" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
+        <small style="color: #64748b; font-size: 0.78rem;">স্টুডেন্ট পোর্টালে নগদ ফি পেমেন্টের জন্য প্রদর্শিত হবে।</small>
+      </div>
+    </div>
+
+    <div class="admin-form-2col" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-top: 1rem;">
+      <div class="form-group">
+        <label class="form-label" style="font-weight: 700; color: #6d28d9;">
+          <i class="fas fa-mobile-alt"></i> DBBL Rocket Account Number
+        </label>
+        <input type="text" name="payment_rocket_no" value="<?= e($settings['payment_rocket_no'] ?? '01302991188-7') ?>" class="form-control" placeholder="01XXXXXXXXX-X" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
+        <small style="color: #64748b; font-size: 0.78rem;">রকেট একাউন্ট নম্বর (১২ ডিজিট)।</small>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" style="font-weight: 700; color: #0f2c59;">
+          <i class="fas fa-university"></i> Official Gateway Merchant ID / No
+        </label>
+        <input type="text" name="payment_merchant_account" value="<?= e($settings['payment_merchant_account'] ?? '01336367336') ?>" class="form-control" placeholder="01XXXXXXXXX" style="font-family: monospace; font-size: 1rem; font-weight: 600;">
+        <small style="color: #64748b; font-size: 0.78rem;">এডমিশন পেমেন্ট ও অফিসিয়াল গেটওয়ে রিসিটের মার্চেন্ট আইডি।</small>
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top: 1rem;">
+      <label class="form-label" style="font-weight: 700; color: #1e40af;">
+        <i class="fas fa-university"></i> Bank Direct Transfer Account Details
+      </label>
+      <input type="text" name="payment_bank_info" value="<?= e($settings['payment_bank_info'] ?? 'Dutch-Bangla Bank Ltd, Kushtia Branch. A/C: 115-120-998822') ?>" class="form-control" placeholder="Bank Name, Branch, Account Number">
+      <small style="color: #64748b; font-size: 0.78rem;">ব্যাংক ট্রান্সফারের মাধ্যমে টিউশন ফি দেওয়ার নির্দেশাবলি।</small>
+    </div>
+
+    <div class="form-group" style="margin-top: 1rem;">
+      <label class="form-label" style="font-weight: 700; color: #334155;">
+        <i class="fas fa-info-circle"></i> Payment Guidelines / Instructions
+      </label>
+      <textarea name="payment_instructions" class="form-control" rows="2" placeholder="পেমেন্ট করার নিয়ম বা বিশেষ নির্দেশনা"><?= e($settings['payment_instructions'] ?? 'পেমেন্ট করার সময় রেফারেন্সে অবশ্যই আপনার Student ID অথবা Admission Roll নম্বর লিখবেন।') ?></textarea>
     </div>
 
     <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--rmu-primary); margin: 1.8rem 0 1.25rem; border-bottom: 2px solid var(--rmu-border); padding-bottom: 0.5rem;">

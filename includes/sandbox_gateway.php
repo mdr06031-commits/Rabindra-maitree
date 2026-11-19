@@ -18,7 +18,8 @@ if (!defined('RMU_ADMISSION_FEE_CURRENCY')) {
     define('RMU_ADMISSION_FEE_CURRENCY', 'BDT');
 }
 if (!defined('RMU_SANDBOX_OFFICIAL_MERCHANT')) {
-    define('RMU_SANDBOX_OFFICIAL_MERCHANT', '01336367336');
+    $dynMerchant = function_exists('get_setting') ? get_setting('payment_merchant_account', '01336367336') : '01336367336';
+    define('RMU_SANDBOX_OFFICIAL_MERCHANT', (!empty($dynMerchant) ? $dynMerchant : '01336367336'));
 }
 
 function rmu_sandbox_valid_methods(): array {
@@ -194,6 +195,7 @@ function rmu_generate_admission_payment_slip_svg(
     $receiptSender = htmlspecialchars($senderNumber, ENT_XML1, 'UTF-8');
     $receiptTrx    = htmlspecialchars($transactionId, ENT_XML1, 'UTF-8');
     $receiptTime   = htmlspecialchars($verifiedAt ?: date('Y-m-d H:i:s'), ENT_XML1, 'UTF-8');
+    $receiptMerchant = htmlspecialchars(defined('RMU_SANDBOX_OFFICIAL_MERCHANT') ? RMU_SANDBOX_OFFICIAL_MERCHANT : '01336367336', ENT_XML1, 'UTF-8');
 
     return <<<SVG
 <svg xmlns="http://www.w3.org/2000/svg" width="600" height="445" viewBox="0 0 600 445">
@@ -211,7 +213,7 @@ function rmu_generate_admission_payment_slip_svg(
   <text x="45" y="204" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Candidate Legal Name:</text>
   <text x="230" y="204" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0f172a">{$receiptName}</text>
   <text x="45" y="236" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Payment Recipient No:</text>
-  <text x="230" y="236" font-family="monospace" font-size="14" font-weight="bold" fill="#15803d">01336367336 (RMU Merchant)</text>
+  <text x="230" y="236" font-family="monospace" font-size="14" font-weight="bold" fill="#15803d">{$receiptMerchant} (RMU Merchant)</text>
   <text x="45" y="268" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Payment Method:</text>
   <text x="230" y="268" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#be123c">{$receiptMethod} (Sandbox)</text>
   <text x="45" y="300" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Sender Mobile Number:</text>
